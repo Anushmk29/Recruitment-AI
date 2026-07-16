@@ -7,6 +7,7 @@ import NotificationBell from "./NotificationBell.jsx";
 
 const LINKS = [
   { to: "/", label: "Careers" },
+  { to: "/welcome", label: "How it Works" },
   { to: "/resume", label: "My Resumes" },
   { to: "/portal/dashboard", label: "Interview Dashboard" },
 ];

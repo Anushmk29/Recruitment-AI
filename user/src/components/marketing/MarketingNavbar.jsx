@@ -5,7 +5,8 @@ import Button from "../ui/Button.jsx";
 
 const LINKS = [
   { label: "Jobs", href: "/" },
-  { label: "Interview Tips", href: "/welcome#tips" },
+  { label: "Features", href: "/welcome#features" },
+  { label: "How it Works", href: "/welcome#how-it-works" },
   { label: "About", href: "/welcome#about" },
   { label: "Contact", href: "/welcome#contact" },
 ];

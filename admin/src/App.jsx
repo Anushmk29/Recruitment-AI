@@ -23,10 +23,22 @@ import Notifications from "./pages/dashboard/Notifications.jsx";
 import SettingsPage from "./pages/dashboard/SettingsPage.jsx";
 import DashboardShell from "./components/dashboard/DashboardShell.jsx";
 import RequireAdmin from "./auth/RequireAdmin.jsx";
+import { useAdminAuth } from "./auth/useAdminAuth.js";
+
+function Root() {
+  const { isAuthenticated } = useAdminAuth();
+  if (!isAuthenticated) return <Landing />;
+  return (
+    <DashboardShell>
+      <DashboardHome />
+    </DashboardShell>
+  );
+}
 
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<Root />} />
       <Route path="/welcome" element={<Landing />} />
       <Route path="/demo" element={<Demo />} />
       <Route path="/register-company" element={<RegisterCompany />} />
@@ -44,7 +56,6 @@ export default function App() {
           <RequireAdmin>
             <DashboardShell>
               <Routes>
-                <Route path="/" element={<DashboardHome />} />
                 <Route path="/jobs" element={<JobList />} />
                 <Route path="/jobs/new" element={<JobForm />} />
                 <Route path="/jobs/:id/edit" element={<JobForm />} />
