@@ -1,0 +1,168 @@
+import { useState } from "react";
+import { NavLink, useNavigate } from "react-router-dom";
+import {
+  LayoutDashboard,
+  Briefcase,
+  Users,
+  Bot,
+  BarChart3,
+  CreditCard,
+  Bell,
+  Settings,
+  LogOut,
+  Sparkles,
+  Menu,
+  X,
+  ChevronDown,
+} from "lucide-react";
+import { useAdminAuth } from "../../auth/useAdminAuth.js";
+import { clearAdminAuth } from "../../auth/adminAuth.js";
+import { CompanyDataProvider, useCompanyData } from "../../context/CompanyDataContext.jsx";
+import { NotificationProvider } from "../../context/NotificationContext.jsx";
+import NotificationBell from "./NotificationBell.jsx";
+
+const NAV_ITEMS = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/jobs", label: "Jobs", icon: Briefcase },
+  { to: "/candidates", label: "Candidates", icon: Users },
+  { to: "/ai-interviews", label: "AI Interviews", icon: Bot },
+  { to: "/reports", label: "Reports", icon: BarChart3 },
+  { to: "/subscription", label: "Subscription", icon: CreditCard },
+  { to: "/notifications", label: "Notifications", icon: Bell },
+  { to: "/settings", label: "Settings", icon: Settings },
+];
+
+function SidebarContent({ onNavigate }) {
+  return (
+    <>
+      <div className="flex h-16 items-center gap-2 px-5 font-display text-lg font-bold text-white">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-brand-300">
+          <Sparkles className="h-4.5 w-4.5" />
+        </span>
+        HireFlow AI
+      </div>
+      <nav className="mt-4 flex flex-1 flex-col gap-1 px-3">
+        {NAV_ITEMS.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              `flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition ${
+                isActive ? "bg-brand-600 text-white shadow-soft" : "text-slate-300 hover:bg-white/5 hover:text-white"
+              }`
+            }
+          >
+            <item.icon className="h-4.5 w-4.5" />
+            {item.label}
+          </NavLink>
+        ))}
+      </nav>
+    </>
+  );
+}
+
+function TopNav({ onMenuClick }) {
+  const { user } = useAdminAuth();
+  const { me } = useCompanyData();
+  const navigate = useNavigate();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const companyName = me?.company?.name || "Your Workspace";
+
+  return (
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
+      <div className="flex items-center gap-3">
+        <button className="text-slate-500 lg:hidden" onClick={onMenuClick} aria-label="Open menu">
+          <Menu className="h-5.5 w-5.5" />
+        </button>
+        <div>
+          <p className="text-sm font-semibold text-slate-800">{companyName}</p>
+          <p className="text-xs text-slate-400">{me?.company?.companyCode}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <NotificationBell />
+
+        <div className="relative">
+          <button
+            onClick={() => setProfileOpen((v) => !v)}
+            className="flex items-center gap-2 rounded-full px-2 py-1.5 transition hover:bg-slate-100"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-100 text-sm font-bold text-brand-700">
+              {(user?.name || "A")[0].toUpperCase()}
+            </span>
+            <span className="hidden text-sm font-medium text-slate-700 sm:block">{user?.name}</span>
+            <ChevronDown className="h-4 w-4 text-slate-400" />
+          </button>
+          {profileOpen && (
+            <div
+              className="absolute right-0 mt-2 w-48 rounded-xl border border-slate-200 bg-white py-1.5 shadow-soft"
+              onMouseLeave={() => setProfileOpen(false)}
+            >
+              <button
+                onClick={() => navigate("/settings")}
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-slate-600 hover:bg-slate-50"
+              >
+                <Settings className="h-4 w-4" /> Settings
+              </button>
+              <button
+                onClick={() => {
+                  clearAdminAuth();
+                  navigate("/login");
+                }}
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+              >
+                <LogOut className="h-4 w-4" /> Log Out
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function ShellInner({ children }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  return (
+    <div className="flex min-h-screen bg-slate-50">
+      <aside className="hidden w-64 shrink-0 flex-col bg-slate-900 lg:flex">
+        <SidebarContent />
+      </aside>
+
+      {mobileOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden">
+          <div className="absolute inset-0 bg-slate-900/50" onClick={() => setMobileOpen(false)} />
+          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col bg-slate-900">
+            <button
+              className="absolute right-3 top-4 text-slate-400"
+              onClick={() => setMobileOpen(false)}
+              aria-label="Close menu"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <SidebarContent onNavigate={() => setMobileOpen(false)} />
+          </aside>
+        </div>
+      )}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TopNav onMenuClick={() => setMobileOpen(true)} />
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+      </div>
+    </div>
+  );
+}
+
+export default function DashboardShell({ children }) {
+  return (
+    <CompanyDataProvider>
+      <NotificationProvider>
+        <ShellInner>{children}</ShellInner>
+      </NotificationProvider>
+    </CompanyDataProvider>
+  );
+}

@@ -1,0 +1,326 @@
+function escapeHtml(str) {
+  return String(str || "").replace(/[&<>"']/g, (ch) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+  ));
+}
+
+function formatDate(date) {
+  return date.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+}
+
+function formatTime(date) {
+  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+const DEFAULT_INSTRUCTIONS =
+  "Join from a quiet, well-lit location with a stable internet connection. " +
+  "Make sure your camera and microphone are working, and keep a government-issued photo ID handy for identity verification.";
+
+function rejectionEmailTemplate(candidate, job) {
+  const name = candidate.basicDetails.name;
+  const subject = `Update on your application for ${job.title}`;
+  const text =
+    `Hi ${name},\n\n` +
+    `Thank you for applying for the ${job.title} position. After reviewing your application, ` +
+    `we will not be moving forward at this time.\n\n` +
+    `We appreciate your interest and wish you the best in your search.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(name)},</p>` +
+    `<p>Thank you for applying for the <strong>${escapeHtml(job.title)}</strong> position. ` +
+    `After reviewing your application, we will not be moving forward at this time.</p>` +
+    `<p>We appreciate your interest and wish you the best in your search.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
+function interviewInvitationEmailTemplate(candidate, job, session) {
+  const name = candidate.basicDetails.name;
+  const date = formatDate(session.interviewAt);
+  const time = formatTime(session.interviewAt);
+  const instructions = session.instructions || DEFAULT_INSTRUCTIONS;
+
+  const subject = `You're invited to interview for ${job.title}`;
+  const text =
+    `Hi ${name},\n\n` +
+    `Congratulations! You've cleared the initial screening for the ${job.title} position, ` +
+    `and we'd like to invite you to an interview.\n\n` +
+    `Interview Date: ${date}\n` +
+    `Interview Time: ${time}\n` +
+    `Interview Link: ${session.interviewUrl}\n\n` +
+    `Instructions:\n${instructions}\n\n` +
+    `This link is valid until ${session.expiresAt.toLocaleString("en-US")}.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(name)},</p>` +
+    `<p>Congratulations! You've cleared the initial screening for the <strong>${escapeHtml(job.title)}</strong> ` +
+    `position, and we'd like to invite you to an interview.</p>` +
+    `<table cellpadding="4" cellspacing="0">` +
+    `<tr><td><strong>Interview Date</strong></td><td>${escapeHtml(date)}</td></tr>` +
+    `<tr><td><strong>Interview Time</strong></td><td>${escapeHtml(time)}</td></tr>` +
+    `<tr><td><strong>Interview Link</strong></td><td><a href="${escapeHtml(session.interviewUrl)}">${escapeHtml(session.interviewUrl)}</a></td></tr>` +
+    `</table>` +
+    `<p><strong>Instructions:</strong><br/>${escapeHtml(instructions)}</p>` +
+    `<p>This link is valid until ${escapeHtml(session.expiresAt.toLocaleString("en-US"))}.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
+function verificationEmailTemplate(user, verifyUrl) {
+  const subject = "Verify your email address";
+  const text =
+    `Hi ${user.name},\n\n` +
+    `Please verify your email address by opening the link below:\n\n` +
+    `${verifyUrl}\n\n` +
+    `This link expires in 24 hours. If you didn't create this account, you can ignore this email.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(user.name)},</p>` +
+    `<p>Please verify your email address by clicking the button below:</p>` +
+    `<p><a href="${escapeHtml(verifyUrl)}" style="display:inline-block;padding:10px 18px;background:#2a5f4f;color:#fff;text-decoration:none;border-radius:6px;">Verify Email</a></p>` +
+    `<p>Or open this link: <a href="${escapeHtml(verifyUrl)}">${escapeHtml(verifyUrl)}</a></p>` +
+    `<p>This link expires in 24 hours. If you didn't create this account, you can ignore this email.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
+function passwordResetEmailTemplate(user, resetUrl) {
+  const subject = "Reset your password";
+  const text =
+    `Hi ${user.name},\n\n` +
+    `We received a request to reset your password. Open the link below to choose a new one:\n\n` +
+    `${resetUrl}\n\n` +
+    `This link expires in 30 minutes. If you didn't request this, you can ignore this email — your password will not change.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(user.name)},</p>` +
+    `<p>We received a request to reset your password. Click the button below to choose a new one:</p>` +
+    `<p><a href="${escapeHtml(resetUrl)}" style="display:inline-block;padding:10px 18px;background:#2a5f4f;color:#fff;text-decoration:none;border-radius:6px;">Reset Password</a></p>` +
+    `<p>Or open this link: <a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>` +
+    `<p>This link expires in 30 minutes. If you didn't request this, you can ignore this email — your password will not change.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
+function otpEmailTemplate(companyName, otp) {
+  const subject = "Your verification code";
+  const text =
+    `Hi,\n\n` +
+    `Your verification code for ${companyName} is: ${otp}\n\n` +
+    `This code expires in 10 minutes. If you didn't request this, you can ignore this email.\n\n` +
+    `Regards,\nRecruitment Platform`;
+  const html =
+    `<p>Hi,</p>` +
+    `<p>Your verification code for <strong>${escapeHtml(companyName)}</strong> is:</p>` +
+    `<p style="font-size:28px;font-weight:700;letter-spacing:6px;">${escapeHtml(otp)}</p>` +
+    `<p>This code expires in 10 minutes. If you didn't request this, you can ignore this email.</p>` +
+    `<p>Regards,<br/>Recruitment Platform</p>`;
+
+  return { subject, text, html };
+}
+
+function workspaceReadyEmailTemplate(company, adminName) {
+  const subject = `Your ${company.name} workspace is ready`;
+  const text =
+    `Hi ${adminName},\n\n` +
+    `Payment received — your workspace for ${company.name} is now active.\n\n` +
+    `Company ID: ${company.companyCode}\n\n` +
+    `You can now log in and start posting jobs.\n\n` +
+    `Regards,\nRecruitment Platform`;
+  const html =
+    `<p>Hi ${escapeHtml(adminName)},</p>` +
+    `<p>Payment received — your workspace for <strong>${escapeHtml(company.name)}</strong> is now active.</p>` +
+    `<p><strong>Company ID:</strong> ${escapeHtml(company.companyCode)}</p>` +
+    `<p>You can now log in and start posting jobs.</p>` +
+    `<p>Regards,<br/>Recruitment Platform</p>`;
+
+  return { subject, text, html };
+}
+
+function welcomeEmailTemplate(user) {
+  const subject = "Welcome to your candidate dashboard";
+  const text =
+    `Hi ${user.name},\n\n` +
+    `Your candidate dashboard is ready. Upload your resume, complete your profile, and start applying to jobs.\n\n` +
+    `Regards,\nRecruitment Platform`;
+  const html =
+    `<p>Hi ${escapeHtml(user.name)},</p>` +
+    `<p>Your candidate dashboard is ready. Upload your resume, complete your profile, and start applying to jobs.</p>` +
+    `<p>Regards,<br/>Recruitment Platform</p>`;
+
+  return { subject, text, html };
+}
+
+function applicationSubmittedEmailTemplate(candidate, job) {
+  const name = candidate.basicDetails.name;
+  const subject = `Application received for ${job.title}`;
+  const text =
+    `Hi ${name},\n\n` +
+    `We've received your application for the ${job.title} position. Our team (and our ATS engine) will review it shortly ` +
+    `and you'll be notified of the outcome by email and on your dashboard.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(name)},</p>` +
+    `<p>We've received your application for the <strong>${escapeHtml(job.title)}</strong> position. Our team (and our ATS ` +
+    `engine) will review it shortly and you'll be notified of the outcome by email and on your dashboard.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
+function interviewReminderEmailTemplate(candidate, job, session) {
+  const name = candidate.basicDetails.name;
+  const date = formatDate(session.interviewAt);
+  const time = formatTime(session.interviewAt);
+
+  const subject = `Reminder: your interview for ${job.title} is coming up`;
+  const text =
+    `Hi ${name},\n\n` +
+    `This is a reminder that your interview for the ${job.title} position is coming up.\n\n` +
+    `Interview Date: ${date}\n` +
+    `Interview Time: ${time}\n\n` +
+    `Please use the interview link from your original invitation email, and complete your pre-interview device checks a few minutes early.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(name)},</p>` +
+    `<p>This is a reminder that your interview for the <strong>${escapeHtml(job.title)}</strong> position is coming up.</p>` +
+    `<table cellpadding="4" cellspacing="0">` +
+    `<tr><td><strong>Interview Date</strong></td><td>${escapeHtml(date)}</td></tr>` +
+    `<tr><td><strong>Interview Time</strong></td><td>${escapeHtml(time)}</td></tr>` +
+    `</table>` +
+    `<p>Please use the interview link from your original invitation email, and complete your pre-interview device checks a few minutes early.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
+function offerLetterEmailTemplate(candidate, job, offer) {
+  const name = candidate.basicDetails.name;
+  const subject = `Offer Letter — ${job.title}`;
+  const text =
+    `Hi ${name},\n\n` +
+    `Congratulations! We are pleased to offer you the ${job.title} position.\n\n` +
+    (offer?.message ? `${offer.message}\n\n` : "") +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(name)},</p>` +
+    `<p>Congratulations! We are pleased to offer you the <strong>${escapeHtml(job.title)}</strong> position.</p>` +
+    (offer?.message ? `<p>${escapeHtml(offer.message)}</p>` : "") +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
+function paymentSuccessEmailTemplate(company, admin, payment) {
+  const subject = `Payment received — ${company.name}`;
+  const text =
+    `Hi ${admin.name},\n\n` +
+    `We've received your payment of ${payment.currency} ${payment.amount} for the ${payment.billingCycle} plan.\n\n` +
+    `Regards,\nRecruitment Platform`;
+  const html =
+    `<p>Hi ${escapeHtml(admin.name)},</p>` +
+    `<p>We've received your payment of <strong>${escapeHtml(payment.currency)} ${escapeHtml(String(payment.amount))}</strong> ` +
+    `for the ${escapeHtml(payment.billingCycle)} plan.</p>` +
+    `<p>Regards,<br/>Recruitment Platform</p>`;
+
+  return { subject, text, html };
+}
+
+function paymentFailedEmailTemplate(company, admin, payment) {
+  const subject = `Payment failed — ${company.name}`;
+  const text =
+    `Hi ${admin.name},\n\n` +
+    `Your payment attempt for the ${payment.billingCycle} plan failed: ${payment.failureReason || "Unknown error"}.\n\n` +
+    `Please log in and retry your payment to keep your workspace active.\n\n` +
+    `Regards,\nRecruitment Platform`;
+  const html =
+    `<p>Hi ${escapeHtml(admin.name)},</p>` +
+    `<p>Your payment attempt for the ${escapeHtml(payment.billingCycle)} plan failed: ` +
+    `${escapeHtml(payment.failureReason || "Unknown error")}.</p>` +
+    `<p>Please log in and retry your payment to keep your workspace active.</p>` +
+    `<p>Regards,<br/>Recruitment Platform</p>`;
+
+  return { subject, text, html };
+}
+
+function invoiceEmailTemplate(company, admin, invoice) {
+  const subject = `Invoice ${invoice.invoiceNumber} — ${company.name}`;
+  const text =
+    `Hi ${admin.name},\n\n` +
+    `Here are your invoice details:\n\n` +
+    `Invoice Number: ${invoice.invoiceNumber}\n` +
+    `Plan: ${invoice.planName}\n` +
+    `Billing Cycle: ${invoice.billingCycle}\n` +
+    `Amount: ${invoice.currency} ${invoice.amount}\n\n` +
+    `Regards,\nRecruitment Platform`;
+  const html =
+    `<p>Hi ${escapeHtml(admin.name)},</p>` +
+    `<p>Here are your invoice details:</p>` +
+    `<table cellpadding="4" cellspacing="0">` +
+    `<tr><td><strong>Invoice Number</strong></td><td>${escapeHtml(invoice.invoiceNumber)}</td></tr>` +
+    `<tr><td><strong>Plan</strong></td><td>${escapeHtml(invoice.planName)}</td></tr>` +
+    `<tr><td><strong>Billing Cycle</strong></td><td>${escapeHtml(invoice.billingCycle)}</td></tr>` +
+    `<tr><td><strong>Amount</strong></td><td>${escapeHtml(invoice.currency)} ${escapeHtml(String(invoice.amount))}</td></tr>` +
+    `</table>` +
+    `<p>Regards,<br/>Recruitment Platform</p>`;
+
+  return { subject, text, html };
+}
+
+function subscriptionExpiryReminderEmailTemplate(company, admin, subscription) {
+  const endDate = subscription.currentPeriodEnd.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  const subject = `Your ${company.name} subscription is expiring soon`;
+  const text =
+    `Hi ${admin.name},\n\n` +
+    `Your subscription is set to expire on ${endDate}. Renew before then to avoid any interruption to your workspace.\n\n` +
+    `Regards,\nRecruitment Platform`;
+  const html =
+    `<p>Hi ${escapeHtml(admin.name)},</p>` +
+    `<p>Your subscription is set to expire on <strong>${escapeHtml(endDate)}</strong>. Renew before then to avoid any ` +
+    `interruption to your workspace.</p>` +
+    `<p>Regards,<br/>Recruitment Platform</p>`;
+
+  return { subject, text, html };
+}
+
+function passwordChangedEmailTemplate(user) {
+  const subject = "Your password was changed";
+  const text =
+    `Hi ${user.name},\n\n` +
+    `This is a confirmation that your account password was just changed. If you didn't make this change, please contact ` +
+    `support immediately.\n\n` +
+    `Regards,\nRecruitment Platform`;
+  const html =
+    `<p>Hi ${escapeHtml(user.name)},</p>` +
+    `<p>This is a confirmation that your account password was just changed. If you didn't make this change, please ` +
+    `contact support immediately.</p>` +
+    `<p>Regards,<br/>Recruitment Platform</p>`;
+
+  return { subject, text, html };
+}
+
+module.exports = {
+  rejectionEmailTemplate,
+  interviewInvitationEmailTemplate,
+  verificationEmailTemplate,
+  passwordResetEmailTemplate,
+  otpEmailTemplate,
+  workspaceReadyEmailTemplate,
+  welcomeEmailTemplate,
+  applicationSubmittedEmailTemplate,
+  interviewReminderEmailTemplate,
+  offerLetterEmailTemplate,
+  paymentSuccessEmailTemplate,
+  paymentFailedEmailTemplate,
+  invoiceEmailTemplate,
+  subscriptionExpiryReminderEmailTemplate,
+  passwordChangedEmailTemplate,
+};

@@ -1,0 +1,31 @@
+{
+  "name": "recruitment-admin",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5173",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.4.0",
+    "axios": "^1.7.2",
+    "framer-motion": "^12.42.2",
+    "lucide-react": "^1.24.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hook-form": "^7.81.0",
+    "react-router-dom": "^6.25.1",
+    "socket.io-client": "^4.8.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.2",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.5.3",
+    "postcss": "^8.5.19",
+    "tailwindcss": "^4.3.2",
+    "vite": "^5.3.4"
+  }
+}
