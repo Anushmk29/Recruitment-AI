@@ -1,22 +1,13 @@
-const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
 
-const uploadDir = path.join(__dirname, "..", "uploads", "resumes");
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${unique}${path.extname(file.originalname)}`);
-  },
-});
-
+// Memory storage so the file buffer can be handed to storageService (S3/MinIO in
+// production, local disk in dev). Avoids the multi-instance defect where a file
+// written to one instance's local disk is invisible to the others.
 const allowedTypes = new Set([".pdf", ".doc", ".docx"]);
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (!allowedTypes.has(path.extname(file.originalname).toLowerCase())) {

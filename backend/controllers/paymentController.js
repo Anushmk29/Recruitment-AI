@@ -172,9 +172,10 @@ async function webhook(req, res) {
 async function retryPayment(req, res) {
   const { paymentId } = req.params;
   const previous = await Payment.findById(paymentId);
-  if (!previous) return res.status(404).json({ error: "Payment not found" });
-  if (String(previous.company) !== String(req.user.company)) {
-    return res.status(403).json({ error: "You do not have access to this payment" });
+  // Return 404 (not 403) on a foreign id so the endpoint isn't an existence oracle.
+  // tenantScope already restricts this findById to the caller's company.
+  if (!previous || String(previous.company) !== String(req.user.company)) {
+    return res.status(404).json({ error: "Payment not found" });
   }
   if (previous.status !== "failed" && previous.status !== "cancelled") {
     return res.status(400).json({ error: "Only failed or cancelled payments can be retried" });
@@ -218,9 +219,8 @@ async function retryPayment(req, res) {
 async function cancelPayment(req, res) {
   const { paymentId } = req.params;
   const payment = await Payment.findById(paymentId);
-  if (!payment) return res.status(404).json({ error: "Payment not found" });
-  if (String(payment.company) !== String(req.user.company)) {
-    return res.status(403).json({ error: "You do not have access to this payment" });
+  if (!payment || String(payment.company) !== String(req.user.company)) {
+    return res.status(404).json({ error: "Payment not found" });
   }
   if (payment.status !== "created") {
     return res.status(400).json({ error: "Only a payment awaiting completion can be cancelled" });
@@ -238,9 +238,8 @@ async function paymentHistory(req, res) {
 
 async function getInvoice(req, res) {
   const invoice = await Invoice.findById(req.params.id);
-  if (!invoice) return res.status(404).json({ error: "Invoice not found" });
-  if (String(invoice.company) !== String(req.user.company)) {
-    return res.status(403).json({ error: "You do not have access to this invoice" });
+  if (!invoice || String(invoice.company) !== String(req.user.company)) {
+    return res.status(404).json({ error: "Invoice not found" });
   }
   res.json(invoice);
 }

@@ -7,6 +7,7 @@ import ResumeUpload from "./pages/ResumeUpload.jsx";
 import InterviewLogin from "./pages/InterviewLogin.jsx";
 import InterviewDashboard from "./pages/InterviewDashboard.jsx";
 import PreInterviewCheck from "./pages/PreInterviewCheck.jsx";
+import InterviewRoom from "./pages/InterviewRoom.jsx";
 import Register from "./pages/Register.jsx";
 import Login from "./pages/Login.jsx";
 import VerifyEmail from "./pages/VerifyEmail.jsx";
@@ -53,10 +54,18 @@ export default function App() {
                   </RequireAccount>
                 }
               />
-              <Route path="/resume" element={<ResumeUpload />} />
+              <Route
+                path="/resume"
+                element={
+                  <RequireAccount>
+                    <ResumeUpload />
+                  </RequireAccount>
+                }
+              />
               <Route path="/interview/:token" element={<InterviewLogin />} />
               <Route path="/portal/dashboard" element={<InterviewDashboard />} />
               <Route path="/portal/pre-check" element={<PreInterviewCheck />} />
+              <Route path="/portal/interview" element={<InterviewRoom />} />
               <Route
                 path="/account"
                 element={

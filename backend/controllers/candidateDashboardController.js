@@ -117,7 +117,9 @@ async function updateProfile(req, res) {
 async function toggleSavedJob(req, res) {
   const { jobId } = req.params;
   const job = await Job.findById(jobId);
-  if (!job) return res.status(404).json({ error: "Job not found" });
+  // Only published jobs are candidate-visible — don't let a candidate save/probe another
+  // tenant's draft/closed posting by id.
+  if (!job || job.status !== "published") return res.status(404).json({ error: "Job not found" });
 
   const profile = await getOrCreateProfile(req.user._id);
   const index = profile.savedJobs.findIndex((id) => String(id) === String(jobId));

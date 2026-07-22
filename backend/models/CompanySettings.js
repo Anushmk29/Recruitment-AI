@@ -23,8 +23,43 @@ const companySettingsSchema = new mongoose.Schema(
     dashboardPreferences: {
       defaultView: { type: String, default: "overview" },
     },
+
+    // Per-tenant AI interview configuration. `model` overrides the global
+    // AI_INTERVIEW_MODEL; `monthlyBudgetCents` caps spend (0 = uncapped); when
+    // `hardCap` is true the engine degrades to the deterministic fallback once the
+    // budget is exhausted instead of continuing to spend.
+    ai: {
+      model: { type: String, trim: true },
+      monthlyBudgetCents: { type: Number, default: 0, min: 0 },
+      hardCap: { type: Boolean, default: true },
+      temperature: { type: Number, default: 0, min: 0, max: 2 },
+    },
+
+    // Compliance / governance controls (DPDP + fair-hiring).
+    compliance: {
+      // Require explicit candidate consent before any resume/answer text is sent to
+      // the external LLM. When required and not given, the interview runs on the
+      // local deterministic engine (no PII leaves the system).
+      aiConsentRequired: { type: Boolean, default: true },
+      // Allow the ATS to auto-reject + email below-threshold candidates without human
+      // review. Off by default — the safe/defensible default keeps a human in the loop.
+      autoRejectAllowed: { type: Boolean, default: false },
+      // Data-retention window for interview/resume artifacts (days). Enforced nightly by
+      // jobs/retentionJob.js — candidate PII untouched for longer than this is hard-deleted.
+      retentionDays: { type: Number, default: 365, min: 1 },
+      // Grievance / Data-Protection Officer contact, surfaced to candidates (DPDP §5.2
+      // data-principal rights). Shown on the apply form and returned by the public
+      // /api/data-rights/dpo/:companyId endpoint.
+      dpo: {
+        name: { type: String, trim: true },
+        email: { type: String, trim: true, lowercase: true },
+        phone: { type: String, trim: true },
+      },
+    },
   },
   { timestamps: true }
 );
+
+companySettingsSchema.plugin(require("./plugins/tenantScope"));
 
 module.exports = mongoose.model("CompanySettings", companySettingsSchema);

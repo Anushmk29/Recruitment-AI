@@ -30,6 +30,150 @@ const identityVerificationSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// One recorded integrity event during the interview (a capped recent tail is kept for the admin
+// timeline; per-type `counts` on the parent are the authoritative tally). `severity` and the risk
+// score are assigned server-side from the type — the client only reports the type + a little meta.
+const proctoringEventSchema = new mongoose.Schema(
+  {
+    type: { type: String, required: true },
+    severity: { type: String, enum: ["low", "medium", "high"], default: "low" },
+    meta: { type: mongoose.Schema.Types.Mixed },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+// Proctoring / anti-cheat state for the interview. Browser signals (tab-switch, fullscreen exit,
+// copy/paste) + in-browser vision (face presence, multi-face, gaze, identity match) stream in as
+// events; the derived `riskScore` is deterministic (utils/proctoring.js). Advisory only — never
+// auto-rejects. Camera/vision processing runs entirely in the candidate's browser: only event
+// metadata reaches the server, never raw video (DPDP-friendly).
+const proctoringSchema = new mongoose.Schema(
+  {
+    consent: {
+      given: { type: Boolean, default: false },
+      declined: { type: Boolean, default: false },
+      at: { type: Date },
+    },
+    visionEnabled: { type: Boolean, default: false }, // in-browser face detection was active
+    riskScore: { type: Number, default: 0 }, // 0-100, derived server-side
+    riskBand: { type: String, enum: ["low", "medium", "high"], default: "low" },
+    counts: { type: mongoose.Schema.Types.Mixed, default: () => ({}) }, // { [type]: occurrences }
+    totalEvents: { type: Number, default: 0 },
+    identityMatch: {
+      status: { type: String, enum: ["unknown", "match", "mismatch"], default: "unknown" },
+      distance: { type: Number }, // face-descriptor euclidean distance (lower = closer match)
+      checkedAt: { type: Date },
+    },
+    events: { type: [proctoringEventSchema], default: () => [] }, // capped recent tail
+    lastEventAt: { type: Date },
+  },
+  { _id: false }
+);
+
+// Raw prosody measurements for a spoken answer, computed in-browser during recording. These
+// are inputs; the derived delivery/confidence score is computed server-side (not client-trusted).
+const acousticSchema = new mongoose.Schema(
+  {
+    wordsPerMinute: { type: Number },
+    pauseRatio: { type: Number }, // fraction of the answer that was silence
+    fillerRate: { type: Number }, // filler words ("um", "uh") per 100 words
+    pitchVariance: { type: Number },
+    energyVariance: { type: Number },
+    deliveryScore: { type: Number }, // 0-100, derived server-side (V3)
+  },
+  { _id: false }
+);
+
+// One conversational turn of the AI interview. `role` is who spoke; `kind`
+// classifies the turn so the UI and evaluator can distinguish intro/question/
+// answer/closing. `answerScore` is the AI's per-answer 0-100 judgement (only on
+// candidate answers).
+const interviewTurnSchema = new mongoose.Schema(
+  {
+    role: { type: String, enum: ["ai", "candidate"], required: true },
+    kind: { type: String, enum: ["intro", "question", "answer", "closing"], default: "question" },
+    text: { type: String, required: true },
+    topic: { type: String, trim: true },
+    difficulty: { type: String, enum: ["easy", "medium", "hard"] },
+    answerScore: { type: Number },
+    // Voice metadata — present on spoken candidate answers (inputMode "voice").
+    inputMode: { type: String, enum: ["text", "voice"], default: "text" },
+    audioPath: { type: String }, // storage key for the answer audio, when persisted (report playback)
+    audioDurationMs: { type: Number },
+    transcriptConfidence: { type: Number }, // STT confidence 0-1
+    acoustic: { type: acousticSchema },
+    // Per-turn provenance so a mixed AI/fallback interview is auditable turn-by-turn.
+    engine: { type: String, enum: ["ai", "fallback"] },
+    model: { type: String, trim: true },
+    latencyMs: { type: Number },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+const interviewPlanSchema = new mongoose.Schema(
+  {
+    role: { type: String, trim: true },
+    difficultyEstimate: { type: String, enum: ["easy", "medium", "hard"], default: "medium" },
+    topics: { type: [String], default: [] },
+    focusAreas: { type: [String], default: [] },
+    summary: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
+const interviewEvaluationSchema = new mongoose.Schema(
+  {
+    overallScore: { type: Number },
+    communication: { type: Number },
+    technicalKnowledge: { type: Number },
+    problemSolving: { type: Number },
+    // Voice-only: derived from answer prosody (0-100), present when the interview was spoken.
+    delivery: { type: Number },
+    confidence: { type: Number },
+    strengths: { type: [String], default: [] },
+    weaknesses: { type: [String], default: [] },
+    missingSkills: { type: [String], default: [] },
+    // "review" = no automated recommendation; requires human judgement. The deterministic
+    // fallback ALWAYS emits "review" — it must never produce an adverse hiring decision.
+    recommendation: { type: String, enum: ["strong_hire", "hire", "maybe", "no_hire", "review"] },
+    summary: { type: String, trim: true },
+    generatedBy: { type: String, enum: ["ai", "fallback"], default: "ai" },
+    generatedAt: { type: Date },
+    // Provenance for reproducibility / legal defensibility of an automated decision (W4).
+    model: { type: String, trim: true },
+    provider: { type: String, trim: true },
+    promptVersion: { type: String, trim: true },
+    temperature: { type: Number },
+    promptTokens: { type: Number },
+    completionTokens: { type: Number },
+    latencyMs: { type: Number },
+  },
+  { _id: false }
+);
+
+// The text-first AI interview state embedded on the session (1:1 with the
+// candidate). See services/aiInterviewService.js for the orchestration.
+const aiInterviewSchema = new mongoose.Schema(
+  {
+    status: { type: String, enum: ["not_started", "in_progress", "completed"], default: "not_started" },
+    engine: { type: String, enum: ["ai", "fallback"], default: "ai" },
+    // How the candidate answered — set to "voice" once any spoken answer is received.
+    modality: { type: String, enum: ["text", "voice"], default: "text" },
+    plan: { type: interviewPlanSchema, default: () => ({}) },
+    currentDifficulty: { type: String, enum: ["easy", "medium", "hard"], default: "medium" },
+    turns: { type: [interviewTurnSchema], default: () => [] },
+    askedQuestions: { type: [String], default: () => [] },
+    questionCount: { type: Number, default: 0 },
+    maxQuestions: { type: Number, default: 8 },
+    evaluation: { type: interviewEvaluationSchema, default: () => ({}) },
+    startedAt: { type: Date },
+    completedAt: { type: Date },
+  },
+  { _id: false }
+);
+
 const interviewSessionSchema = new mongoose.Schema(
   {
     candidate: { type: mongoose.Schema.Types.ObjectId, ref: "Candidate", required: true, unique: true },
@@ -41,18 +185,28 @@ const interviewSessionSchema = new mongoose.Schema(
     expiresAt: { type: Date, required: true },
     instructions: { type: String, trim: true },
 
-    status: { type: String, enum: ["scheduled", "in_progress", "expired", "cancelled"], default: "scheduled" },
+    status: { type: String, enum: ["scheduled", "in_progress", "completed", "expired", "cancelled"], default: "scheduled" },
     accessedAt: { type: Date },
     startedAt: { type: Date },
+    completedAt: { type: Date },
 
     deviceCheck: { type: deviceCheckSchema, default: () => ({}) },
     speedTest: { type: speedTestSchema, default: () => ({}) },
     identityVerification: { type: identityVerificationSchema, default: () => ({}) },
+    proctoring: { type: proctoringSchema, default: () => ({}) },
+
+    aiInterview: { type: aiInterviewSchema, default: () => ({}) },
 
     reminder24hSent: { type: Boolean, default: false },
     reminder1hSent: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
+
+// Reminder cron scans scheduled sessions due within a time window, across tenants
+// (jobs/interviewReminderJob). candidate and tokenHash are already uniquely indexed.
+interviewSessionSchema.index({ status: 1, interviewAt: 1 });
+
+interviewSessionSchema.plugin(require("./plugins/tenantScope"));
 
 module.exports = mongoose.model("InterviewSession", interviewSessionSchema);

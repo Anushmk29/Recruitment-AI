@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { CheckCircle2, XCircle, Circle, Camera, Mic, ScreenShare, Maximize, Cpu, Gauge, ScanFace } from "lucide-react";
 import api from "../api/client.js";
 import { getAuth, authHeader } from "../portal/portalAuth.js";
+import * as faceVision from "../portal/faceVision.js";
 import { Card } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 
@@ -57,9 +58,9 @@ export default function PreInterviewCheck() {
   const [speedStatus, setSpeedStatus] = useState("pending");
   const [speedMbps, setSpeedMbps] = useState(null);
   const [identityStatus, setIdentityStatus] = useState("pending");
+  const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     if (!getAuth()?.jwt) {
@@ -153,6 +154,16 @@ export default function PreInterviewCheck() {
           headers: { ...authHeader(), "Content-Type": "multipart/form-data" },
         });
         setIdentityStatus("ok");
+        // Best-effort: compute a face descriptor from this same frame (entirely client-side) and
+        // stash it so the interview room can match the live camera against it. If the vision model
+        // isn't installed, identity match just stays unavailable — nothing here can block the flow.
+        faceVision
+          .ensureLoaded()
+          .then(() => faceVision.analyzeFrame(canvas))
+          .then((res) => {
+            if (res?.descriptor) sessionStorage.setItem("proctorRefDescriptor", JSON.stringify(res.descriptor));
+          })
+          .catch(() => {});
       } catch (err) {
         setIdentityStatus("failed");
         setError(err.response?.data?.error || "Could not upload identity photo");
@@ -167,7 +178,8 @@ export default function PreInterviewCheck() {
     fullscreen === "ok" &&
     deviceCompat.status === "ok" &&
     speedStatus === "ok" &&
-    identityStatus === "ok";
+    identityStatus === "ok" &&
+    consent;
 
   async function handleConfirm() {
     setSubmitting(true);
@@ -186,28 +198,15 @@ export default function PreInterviewCheck() {
         },
         { headers: authHeader() }
       );
+      await api.post("/interview-portal/proctoring/consent", { given: true }, { headers: authHeader() });
       await api.post("/interview-portal/start", {}, { headers: authHeader() });
       cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
-      setReady(true);
+      navigate("/portal/interview");
     } catch (err) {
       setError(err.response?.data?.error || "Could not complete pre-interview checks");
     } finally {
       setSubmitting(false);
     }
-  }
-
-  if (ready) {
-    return (
-      <Card className="text-center">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-          <CheckCircle2 className="h-7 w-7" />
-        </div>
-        <h1 className="text-lg font-semibold text-slate-900">You're All Set</h1>
-        <p className="mt-2 text-sm text-slate-500">
-          Your pre-interview checks are complete. Please stay on this page — your interview will begin shortly.
-        </p>
-      </Card>
-    );
   }
 
   return (
@@ -279,6 +278,23 @@ export default function PreInterviewCheck() {
             {identityStatus === "uploading" ? "Uploading…" : identityStatus === "ok" ? "Photo Captured" : "Capture Photo"}
           </Button>
         </CheckCard>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <label className="flex items-start gap-3 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            checked={consent}
+            onChange={(e) => setConsent(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+          />
+          <span>
+            This is a <span className="font-medium text-slate-800">monitored interview</span>. I consent to my camera and
+            on-screen activity being monitored for integrity during the session (tab-switching, leaving fullscreen, and
+            camera checks such as face presence and identity matching). Camera analysis runs in my browser — raw video is
+            not uploaded; only integrity signals are recorded for the hiring team's review.
+          </span>
+        </label>
       </div>
 
       <Button size="lg" onClick={handleConfirm} loading={submitting} disabled={!allDone}>

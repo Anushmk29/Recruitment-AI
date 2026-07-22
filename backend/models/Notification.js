@@ -2,8 +2,8 @@ const mongoose = require("mongoose");
 
 const notificationSchema = new mongoose.Schema(
   {
-    candidate: { type: mongoose.Schema.Types.ObjectId, ref: "Candidate", index: true },
-    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
+    candidate: { type: mongoose.Schema.Types.ObjectId, ref: "Candidate" },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     type: {
       type: String,
       enum: [
@@ -17,6 +17,9 @@ const notificationSchema = new mongoose.Schema(
         "next_round_scheduled",
         "offer_letter",
         "rejection",
+        "stage_changed",
+        "offer_accepted",
+        "joined",
         "profile_updated",
         "password_changed",
       ],
@@ -29,5 +32,11 @@ const notificationSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// A logged-in candidate's notifications are keyed by user OR by owned application ids,
+// always listed newest-first (notificationController). These compounds replace the
+// redundant single-field candidate/user indexes.
+notificationSchema.index({ user: 1, createdAt: -1 });
+notificationSchema.index({ candidate: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Notification", notificationSchema);

@@ -70,6 +70,8 @@ export default function ApplyForm() {
   const [skillsInput, setSkillsInput] = useState("");
   const [projects, setProjects] = useState([]);
   const [certificates, setCertificates] = useState([]);
+  const [consentData, setConsentData] = useState(false);
+  const [consentAi, setConsentAi] = useState(false);
 
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
@@ -88,6 +90,10 @@ export default function ApplyForm() {
       setError("Please attach your resume");
       return;
     }
+    if (!consentData) {
+      setError("Please agree to the processing of your application data to continue.");
+      return;
+    }
     setError("");
     setStatus("submitting");
 
@@ -101,6 +107,8 @@ export default function ApplyForm() {
     data.append("skills", JSON.stringify(skills));
     data.append("projects", JSON.stringify(projects));
     data.append("certificates", JSON.stringify(certificates));
+    data.append("consentDataProcessing", consentData);
+    data.append("consentAiProcessing", consentAi);
 
     try {
       await api.post(`/jobs/${id}/apply`, data, {
@@ -279,6 +287,36 @@ export default function ApplyForm() {
               </>
             )}
           />
+
+          <FormGroup className="mt-4">
+            <Label>Consent &amp; Privacy</Label>
+            <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <label className="flex items-start gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={consentData}
+                  onChange={(e) => setConsentData(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-400"
+                />
+                <span>
+                  I consent to {job.company?.name || "the employer"} processing my application data (resume, profile, and
+                  interview responses) for this recruitment process. <span className="text-red-600">*</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={consentAi}
+                  onChange={(e) => setConsentAi(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-400"
+                />
+                <span>
+                  I consent to an AI-assisted interview that may use a third-party AI model to generate questions and
+                  assess my answers. If left unchecked, a non-AI interview is used instead.
+                </span>
+              </label>
+            </div>
+          </FormGroup>
 
           <Button type="submit" size="lg" loading={status === "submitting"} className="mt-2 w-full sm:w-auto">
             Submit Application

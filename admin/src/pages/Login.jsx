@@ -31,7 +31,7 @@ export default function Login() {
         setError("This account does not have admin access.");
         return;
       }
-      saveAdminAuth({ token: res.data.token, user: res.data.user });
+      saveAdminAuth({ token: res.data.token, refreshToken: res.data.refreshToken, user: res.data.user });
       const redirectTo = location.state?.from || "/";
       navigate(redirectTo, { replace: true });
     } catch (err) {
@@ -39,7 +39,11 @@ export default function Login() {
       if (code === "EMAIL_NOT_VERIFIED") {
         setNeedsVerification(true);
       } else if (code === "PAYMENT_REQUIRED" && err.response.data.token) {
-        saveAdminAuth({ token: err.response.data.token, user: err.response.data.user });
+        saveAdminAuth({
+          token: err.response.data.token,
+          refreshToken: err.response.data.refreshToken,
+          user: err.response.data.user,
+        });
         navigate("/pricing", { replace: true });
         return;
       }

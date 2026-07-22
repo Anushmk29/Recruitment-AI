@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { LogOut, User } from "lucide-react";
 import api from "../api/client.js";
 import { accountAuthHeader, clearAccountAuth } from "../auth/accountAuth.js";
+import { logoutAccount } from "../auth/logout.js";
 import { Card, Badge, Skeleton } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 
@@ -31,7 +32,7 @@ export default function Account() {
   }, [navigate]);
 
   function handleLogout() {
-    clearAccountAuth();
+    logoutAccount();
     navigate("/login", { replace: true });
   }
 

@@ -1,17 +1,10 @@
-const fs = require("fs/promises");
-const path = require("path");
 const crypto = require("crypto");
 const Resume = require("../models/Resume");
+const storageService = require("../services/storageService");
 const extractResumeText = require("../utils/extractResumeText");
 const { detectFileType } = require("../utils/verifyFileSignature");
 
-const STORAGE_DIR = path.join(__dirname, "..", "uploads", "resume-library");
-
 async function uploadResume(req, res) {
-  const { email } = req.body;
-  if (!email) {
-    return res.status(400).json({ error: "email is required" });
-  }
   if (!req.file) {
     return res.status(400).json({ error: "Resume file is required" });
   }
@@ -24,7 +17,9 @@ async function uploadResume(req, res) {
   }
 
   const checksum = crypto.createHash("sha256").update(buffer).digest("hex");
-  const candidateEmail = email.trim().toLowerCase();
+  // Identity comes from the authenticated account, never from the request body,
+  // so a candidate can only ever write to their own resume library.
+  const candidateEmail = req.user.email.trim().toLowerCase();
 
   const existing = await Resume.findOne({ candidateEmail, checksum });
   if (existing) {
@@ -33,17 +28,17 @@ async function uploadResume(req, res) {
 
   const { text, status } = await extractResumeText(buffer, mimetype);
 
-  const ext = path.extname(originalname).toLowerCase();
-  const storedFileName = `${crypto.randomBytes(16).toString("hex")}${ext}`;
-  await fs.mkdir(STORAGE_DIR, { recursive: true });
-  const filePath = path.join(STORAGE_DIR, storedFileName);
-  await fs.writeFile(filePath, buffer);
+  const key = await storageService.putObject({
+    buffer,
+    key: storageService.buildKey("resume-library", { originalName: originalname }),
+    contentType: mimetype,
+  });
 
   const resume = await Resume.create({
     candidateEmail,
     originalName: originalname,
-    storedFileName,
-    filePath,
+    storedFileName: key.split("/").pop(),
+    filePath: key,
     mimeType: mimetype,
     sizeBytes: size,
     checksum,
@@ -54,24 +49,23 @@ async function uploadResume(req, res) {
   res.status(201).json(resume);
 }
 
+// Ownership is enforced by scoping the query to the caller's own email, and a
+// mismatch returns 404 (not 403) so an attacker can't use this as an oracle to
+// confirm which resume ids exist.
 async function getResume(req, res) {
-  const resume = await Resume.findById(req.params.id);
+  const resume = await Resume.findOne({ _id: req.params.id, candidateEmail: req.user.email });
   if (!resume) return res.status(404).json({ error: "Resume not found" });
   res.json(resume);
 }
 
 async function downloadResume(req, res) {
-  const resume = await Resume.findById(req.params.id);
+  const resume = await Resume.findOne({ _id: req.params.id, candidateEmail: req.user.email });
   if (!resume) return res.status(404).json({ error: "Resume not found" });
-  res.download(resume.filePath, resume.originalName);
+  await storageService.sendDownload(res, resume.filePath, resume.originalName, resume.mimeType);
 }
 
 async function listResumeHistory(req, res) {
-  const { email } = req.query;
-  if (!email) {
-    return res.status(400).json({ error: "email query parameter is required" });
-  }
-  const resumes = await Resume.find({ candidateEmail: email.trim().toLowerCase() })
+  const resumes = await Resume.find({ candidateEmail: req.user.email })
     .select("-extractedText")
     .sort({ createdAt: -1 });
   res.json(resumes);

@@ -21,4 +21,16 @@ function getRedisConnection() {
   return connection;
 }
 
-module.exports = { getRedisConnection };
+// Dedicated pub/sub client pair for the Socket.io Redis adapter. A subscriber
+// connection can't issue normal commands, so these must be separate from the shared
+// BullMQ connection above. Returns null when Redis isn't configured (single-instance dev).
+function getRedisPubSub() {
+  if (!process.env.REDIS_URL) return null;
+  const pub = new IORedis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
+  const sub = pub.duplicate();
+  pub.on("error", (err) => console.error("[redis] pub error:", err.message));
+  sub.on("error", (err) => console.error("[redis] sub error:", err.message));
+  return { pub, sub };
+}
+
+module.exports = { getRedisConnection, getRedisPubSub };

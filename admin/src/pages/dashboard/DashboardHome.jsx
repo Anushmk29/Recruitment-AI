@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Briefcase, Users, Bot, TrendingUp, Clock, ArrowUpRight } from "lucide-react";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
+import { stageLabel, stageTone } from "../../lib/pipeline.js";
 
 function timeAgo(date) {
   const diff = Date.now() - new Date(date).getTime();
@@ -12,10 +13,6 @@ function timeAgo(date) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
-}
-
-function statusTone(status) {
-  return { applied: "slate", interview_queue: "brand", shortlisted: "green", next_round: "brand", rejected: "red" }[status] || "slate";
 }
 
 export default function DashboardHome() {
@@ -90,7 +87,7 @@ export default function DashboardHome() {
                   {c.ats?.overallScore != null && (
                     <span className="text-sm font-bold text-slate-700">{c.ats.overallScore}%</span>
                   )}
-                  <Badge tone={statusTone(c.status)}>{c.status.replace("_", " ")}</Badge>
+                  <Badge tone={stageTone(c.status)}>{stageLabel(c.status)}</Badge>
                 </div>
               </div>
             ))}

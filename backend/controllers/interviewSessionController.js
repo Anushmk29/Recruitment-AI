@@ -1,5 +1,7 @@
 const InterviewSession = require("../models/InterviewSession");
-const { hashToken } = require("../services/interviewInvitationService");
+const Candidate = require("../models/Candidate");
+const Job = require("../models/Job");
+const { hashToken, resendOrRescheduleInterview } = require("../services/interviewInvitationService");
 
 async function verifyToken(req, res) {
   const { token } = req.params;
@@ -44,4 +46,44 @@ async function getForCandidate(req, res) {
   res.json(session);
 }
 
-module.exports = { verifyToken, getForCandidate };
+// Load the session + its candidate + job for an admin action, all scoped to the
+// caller's company (tenantScope also enforces this as a safety net). Returns null
+// if the candidate has no interview session yet.
+async function loadAdminSessionContext(candidateId, companyId) {
+  const session = await InterviewSession.findOne({ candidate: candidateId, company: companyId });
+  if (!session) return null;
+  const candidate = await Candidate.findOne({ _id: candidateId, company: companyId });
+  const job = candidate ? await Job.findById(candidate.job) : null;
+  return { session, candidate, job };
+}
+
+// POST /interview-sessions/candidate/:id/resend
+// Re-send the interview invitation (rotates the magic-link token, refreshes the
+// validity window, keeps the same scheduled time).
+async function resendInterview(req, res) {
+  const ctx = await loadAdminSessionContext(req.params.id, req.user.company);
+  if (!ctx) return res.status(404).json({ error: "No interview session found for this candidate" });
+  if (!ctx.candidate || !ctx.job) return res.status(404).json({ error: "Candidate or job not found for this session" });
+
+  const { session, interviewUrl } = await resendOrRescheduleInterview(ctx.session, ctx.candidate, ctx.job, {});
+  res.json({ ok: true, interviewUrl, interviewAt: session.interviewAt, expiresAt: session.expiresAt, status: session.status });
+}
+
+// POST /interview-sessions/candidate/:id/reschedule  body: { interviewAt }
+// Move the interview to a new time and re-send the invitation with a fresh link.
+async function rescheduleInterview(req, res) {
+  const { interviewAt } = req.body;
+  if (!interviewAt) return res.status(400).json({ error: "interviewAt is required" });
+  const when = new Date(interviewAt);
+  if (Number.isNaN(when.getTime())) return res.status(400).json({ error: "interviewAt is not a valid date" });
+  if (when.getTime() <= Date.now()) return res.status(400).json({ error: "interviewAt must be in the future" });
+
+  const ctx = await loadAdminSessionContext(req.params.id, req.user.company);
+  if (!ctx) return res.status(404).json({ error: "No interview session found for this candidate" });
+  if (!ctx.candidate || !ctx.job) return res.status(404).json({ error: "Candidate or job not found for this session" });
+
+  const { session, interviewUrl } = await resendOrRescheduleInterview(ctx.session, ctx.candidate, ctx.job, { interviewAt: when });
+  res.json({ ok: true, interviewUrl, interviewAt: session.interviewAt, expiresAt: session.expiresAt, status: session.status });
+}
+
+module.exports = { verifyToken, getForCandidate, resendInterview, rescheduleInterview };

@@ -1,14 +1,7 @@
 import { BarChart3 } from "lucide-react";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { Card, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
-
-const STATUS_LABELS = {
-  applied: "Applied",
-  interview_queue: "In AI Interview Queue",
-  shortlisted: "Shortlisted",
-  next_round: "Next Round",
-  rejected: "Rejected",
-};
+import { ALL_STAGES, stageLabel, normalizeStage } from "../../lib/pipeline.js";
 
 function Bar({ label, value, total, color }) {
   const pct = total ? Math.round((value / total) * 100) : 0;
@@ -33,10 +26,10 @@ export default function Reports() {
   const failCount = allCandidates.filter((c) => c.ats?.decision === "fail").length;
   const pendingCount = allCandidates.filter((c) => !c.ats?.decision || c.ats.decision === "pending").length;
 
-  const byStatus = Object.keys(STATUS_LABELS).map((status) => ({
+  const byStatus = ALL_STAGES.map((status) => ({
     status,
-    count: allCandidates.filter((c) => c.status === status).length,
-  }));
+    count: allCandidates.filter((c) => normalizeStage(c.status) === status).length,
+  })).filter((s) => s.count > 0);
 
   const byJob = jobs
     .map((job) => ({ job, count: allCandidates.filter((c) => (c.job?._id || c.job) === job._id).length }))
@@ -74,7 +67,7 @@ export default function Reports() {
             <h2 className="mb-5 text-base font-semibold text-slate-900">Pipeline by Status</h2>
             <div className="space-y-4">
               {byStatus.map((s) => (
-                <Bar key={s.status} label={STATUS_LABELS[s.status]} value={s.count} total={total} color="bg-brand-600" />
+                <Bar key={s.status} label={stageLabel(s.status)} value={s.count} total={total} color="bg-brand-600" />
               ))}
             </div>
           </Card>

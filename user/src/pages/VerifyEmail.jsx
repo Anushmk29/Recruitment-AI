@@ -22,7 +22,7 @@ export default function VerifyEmail() {
       try {
         const res = await api.post("/auth/verify-email", { token });
         if (cancelled) return;
-        saveAccountAuth({ token: res.data.token, user: res.data.user });
+        saveAccountAuth({ token: res.data.token, refreshToken: res.data.refreshToken, user: res.data.user });
         setStatus("done");
       } catch (err) {
         if (cancelled) return;

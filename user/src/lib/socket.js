@@ -9,7 +9,11 @@ export function connectSocket(token) {
   if (socket) {
     socket.disconnect();
   }
-  socket = io(SOCKET_URL, { auth: { token }, transports: ["websocket", "polling"] });
+  // Polling-first, then transparently upgrade to WebSocket. More reliable behind
+  // proxies/tunnels (e.g. VS Code dev tunnels), where a straight WS upgrade can be
+  // dropped — avoids the noisy "WebSocket is closed before…" console error while
+  // still using WS once the connection is clean.
+  socket = io(SOCKET_URL, { auth: { token }, transports: ["polling", "websocket"] });
   return socket;
 }
 

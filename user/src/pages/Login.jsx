@@ -29,7 +29,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       const res = await api.post("/auth/login", form);
-      saveAccountAuth({ token: res.data.token, user: res.data.user, remember });
+      saveAccountAuth({ token: res.data.token, refreshToken: res.data.refreshToken, user: res.data.user, remember });
       const redirectTo = location.state?.from || getReturnTo() || "/dashboard";
       clearReturnTo();
       navigate(redirectTo, { replace: true });

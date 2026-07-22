@@ -20,6 +20,18 @@ async function listPublishedJobs(req, res) {
 async function getJob(req, res) {
   const job = await Job.findByIdOrSlug(req.params.id);
   if (!job) return res.status(404).json({ error: "Job not found" });
+  // Public callers may only see PUBLISHED jobs. An authenticated admin of the owning
+  // company may see it at any status (for editing drafts). Without this, draft/closed
+  // postings — including atsThreshold and interview instructions — leak to anyone by
+  // guessable slug (tenant-isolation defect F1).
+  const isOwningAdmin =
+    req.user &&
+    req.user.role === "admin" &&
+    req.user.company &&
+    String(job.company) === String(req.user.company);
+  if (job.status !== "published" && !isOwningAdmin) {
+    return res.status(404).json({ error: "Job not found" });
+  }
   await job.populate("company", "name");
   res.json(job);
 }

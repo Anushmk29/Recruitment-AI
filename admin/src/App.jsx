@@ -3,6 +3,7 @@ import JobList from "./pages/JobList.jsx";
 import JobForm from "./pages/JobForm.jsx";
 import CandidateList from "./pages/CandidateList.jsx";
 import CandidateDetail from "./pages/CandidateDetail.jsx";
+import InterviewReport from "./pages/InterviewReport.jsx";
 import Login from "./pages/Login.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
@@ -16,6 +17,7 @@ import PaymentSuccess from "./pages/PaymentSuccess.jsx";
 import PaymentFailed from "./pages/PaymentFailed.jsx";
 import DashboardHome from "./pages/dashboard/DashboardHome.jsx";
 import CandidatesAll from "./pages/dashboard/CandidatesAll.jsx";
+import HiringPipeline from "./pages/dashboard/HiringPipeline.jsx";
 import AIInterviews from "./pages/dashboard/AIInterviews.jsx";
 import Reports from "./pages/dashboard/Reports.jsx";
 import SubscriptionPage from "./pages/dashboard/SubscriptionPage.jsx";
@@ -61,7 +63,9 @@ export default function App() {
                 <Route path="/jobs/:id/edit" element={<JobForm />} />
                 <Route path="/jobs/:id/candidates" element={<CandidateList />} />
                 <Route path="/candidates" element={<CandidatesAll />} />
+                <Route path="/pipeline" element={<HiringPipeline />} />
                 <Route path="/candidates/:id" element={<CandidateDetail />} />
+                <Route path="/candidates/:id/interview-report" element={<InterviewReport />} />
                 <Route path="/ai-interviews" element={<AIInterviews />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/subscription" element={<SubscriptionPage />} />

@@ -1,6 +1,7 @@
 const cron = require("node-cron");
 const Subscription = require("../models/Subscription");
 const Company = require("../models/Company");
+const tenantContext = require("../utils/tenantContext");
 const { notifyAdmin } = require("../services/notificationService");
 
 const REMINDER_WINDOW_DAYS = Number(process.env.SUBSCRIPTION_EXPIRY_REMINDER_DAYS) || 7;
@@ -9,14 +10,27 @@ const RESEND_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 async function sendDueReminders() {
   const now = new Date();
   const windowEnd = new Date(now.getTime() + REMINDER_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const cooldownThreshold = new Date(now.getTime() - RESEND_COOLDOWN_MS);
 
   const subscriptions = await Subscription.find({
     status: "active",
     currentPeriodEnd: { $gte: now, $lte: windowEnd },
-    $or: [{ expiryReminderSentAt: null }, { expiryReminderSentAt: { $lt: new Date(now.getTime() - RESEND_COOLDOWN_MS) } }],
-  }).populate("plan");
+    $or: [{ expiryReminderSentAt: null }, { expiryReminderSentAt: { $lt: cooldownThreshold } }],
+  }).select("_id");
 
-  for (const subscription of subscriptions) {
+  for (const { _id } of subscriptions) {
+    // Atomic claim-before-send (same reasoning as the interview reminder job): stamping
+    // expiryReminderSentAt inside the filter guard means only one worker sends.
+    const subscription = await Subscription.findOneAndUpdate(
+      {
+        _id,
+        $or: [{ expiryReminderSentAt: null }, { expiryReminderSentAt: { $lt: cooldownThreshold } }],
+      },
+      { $set: { expiryReminderSentAt: now } },
+      { new: true }
+    ).populate("plan");
+    if (!subscription) continue; // another worker already claimed it
+
     const company = await Company.findById(subscription.company);
     if (!company) continue;
 
@@ -34,16 +48,17 @@ async function sendDueReminders() {
       });
     } catch (err) {
       console.error("[subscriptionExpiryJob] failed to notify admin:", err.message);
+      // Release the claim so the next daily tick retries.
+      await Subscription.updateOne({ _id: subscription._id }, { $set: { expiryReminderSentAt: null } });
     }
-
-    subscription.expiryReminderSentAt = now;
-    await subscription.save();
   }
 }
 
 function startSubscriptionExpiryJob() {
   cron.schedule("0 8 * * *", () => {
-    sendDueReminders().catch((err) => console.error("[subscriptionExpiryJob] run failed:", err.message));
+    tenantContext
+      .runAsSystem(() => sendDueReminders())
+      .catch((err) => console.error("[subscriptionExpiryJob] run failed:", err.message));
   });
   console.log("[subscriptionExpiryJob] scheduled daily at 08:00");
 }

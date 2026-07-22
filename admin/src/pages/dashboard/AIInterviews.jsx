@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Bot, ExternalLink } from "lucide-react";
+import { Bot, ExternalLink, Sparkles } from "lucide-react";
 import api from "../../api/client.js";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
@@ -81,6 +81,14 @@ export default function AIInterviews() {
                           size="sm"
                         >
                           View <ExternalLink className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          as={Link}
+                          to={`/candidates/${entry.candidate?._id}/interview-report`}
+                          variant="ghost"
+                          size="sm"
+                        >
+                          <Sparkles className="h-3.5 w-3.5" /> Report
                         </Button>
                         <Button
                           variant="ghost"

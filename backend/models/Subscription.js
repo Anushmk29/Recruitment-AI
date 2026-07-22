@@ -13,4 +13,10 @@ const subscriptionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Expiry-reminder cron scans active subscriptions ending within the reminder window
+// (jobs/subscriptionExpiryJob). This is a cross-tenant system scan.
+subscriptionSchema.index({ status: 1, currentPeriodEnd: 1 });
+
+subscriptionSchema.plugin(require("./plugins/tenantScope"));
+
 module.exports = mongoose.model("Subscription", subscriptionSchema);

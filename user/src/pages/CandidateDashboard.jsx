@@ -9,12 +9,16 @@ import {
   Bookmark,
   Sparkles,
   ExternalLink,
+  ListChecks,
+  Clock,
 } from "lucide-react";
 import api from "../api/client.js";
 import { accountAuthHeader, clearAccountAuth } from "../auth/accountAuth.js";
+import { getSocket } from "../lib/socket.js";
 import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
 import { Input, Textarea, Label, FormGroup } from "../components/ui/Field.jsx";
 import Button from "../components/ui/Button.jsx";
+import { stageLabel, stageTone, stageProgress, isRejected } from "../lib/pipeline.js";
 
 function SectionCard({ title, icon: Icon, children }) {
   return (
@@ -24,6 +28,57 @@ function SectionCard({ title, icon: Icon, children }) {
       </h3>
       {children}
     </Card>
+  );
+}
+
+function formatWhen(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+// One card per application: current stage, a progress bar, and a compact
+// timeline of the most recent stage changes.
+function ApplicationStatus({ application }) {
+  const { job, status, stageHistory = [], offer } = application;
+  const rejected = isRejected(status);
+  const pct = Math.round(stageProgress(status) * 100);
+  const recent = [...stageHistory].reverse().slice(0, 4);
+
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-800">{job?.title || "Application"}</p>
+          <p className="truncate text-xs text-slate-500">{job?.company?.name}</p>
+        </div>
+        <Badge tone={stageTone(status)}>{stageLabel(status)}</Badge>
+      </div>
+
+      {!rejected && (
+        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+          <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      {offer?.status && offer.status !== "none" && (
+        <p className="mt-2 text-xs font-medium text-amber-700">
+          Offer {offer.status}
+          {offer.sentAt ? ` · sent ${formatWhen(offer.sentAt)}` : ""}
+        </p>
+      )}
+
+      {recent.length > 0 && (
+        <ul className="mt-3 space-y-1.5">
+          {recent.map((h, i) => (
+            <li key={i} className="flex items-center gap-2 text-xs text-slate-500">
+              <Clock className="h-3 w-3 shrink-0 text-slate-400" />
+              <span className="font-medium text-slate-600">{stageLabel(h.stage)}</span>
+              <span className="text-slate-400">{formatWhen(h.at)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -53,6 +108,16 @@ export default function CandidateDashboard() {
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  // Live-refresh the dashboard when an admin moves this candidate's stage — no
+  // page refresh required (Module 11 realtime requirement).
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const onStage = () => load();
+    socket.on("candidate:stage", onStage);
+    return () => socket.off("candidate:stage", onStage);
   }, [load]);
 
   async function handleProfileSave(e) {
@@ -151,6 +216,22 @@ export default function CandidateDashboard() {
         </form>
       </Card>
 
+      <SectionCard title="Application Status" icon={ListChecks}>
+        {data.appliedJobs.length === 0 ? (
+          <EmptyState
+            icon={ListChecks}
+            title="No applications yet"
+            description="Apply to a job and you'll be able to track its progress here in real time."
+          />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {data.appliedJobs.map((application) => (
+              <ApplicationStatus key={application._id} application={application} />
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
       <div className="grid gap-6 lg:grid-cols-2">
         <SectionCard title="Resume" icon={FileText}>
           {data.resume.hasResume ? (
@@ -231,11 +312,12 @@ export default function CandidateDashboard() {
           ) : (
             <div className="space-y-3">
               {data.appliedJobs.map((c) => (
-                <div key={c._id} className="rounded-lg bg-slate-50 p-3">
-                  <p className="text-sm font-semibold text-slate-800">{c.job?.title}</p>
-                  <p className="text-xs text-slate-500">
-                    {c.job?.company?.name} · status: {c.status}
-                  </p>
+                <div key={c._id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 p-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-800">{c.job?.title}</p>
+                    <p className="truncate text-xs text-slate-500">{c.job?.company?.name}</p>
+                  </div>
+                  <Badge tone={stageTone(c.status)}>{stageLabel(c.status)}</Badge>
                 </div>
               ))}
             </div>

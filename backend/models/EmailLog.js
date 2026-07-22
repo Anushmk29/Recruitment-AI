@@ -6,6 +6,10 @@ const mongoose = require("mongoose");
 // collection would just require a join back to this one for no benefit.
 const emailLogSchema = new mongoose.Schema(
   {
+    // Optional tenant tag for per-company audit/filtering. Not tenant-scoped by the
+    // plugin (EmailLog has no tenant-facing read path today), but populated when the
+    // dispatch context knows the company so it's ready if that changes.
+    company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", index: true },
     to: { type: String, required: true, trim: true, lowercase: true, index: true },
     subject: { type: String, required: true },
     text: { type: String },

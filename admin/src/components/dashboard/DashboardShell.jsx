@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Briefcase,
   Users,
+  KanbanSquare,
   Bot,
   BarChart3,
   CreditCard,
@@ -16,7 +17,8 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useAdminAuth } from "../../auth/useAdminAuth.js";
-import { clearAdminAuth } from "../../auth/adminAuth.js";
+import { clearAdminAuth, getAdminRefreshToken } from "../../auth/adminAuth.js";
+import api from "../../api/client.js";
 import { CompanyDataProvider, useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { NotificationProvider } from "../../context/NotificationContext.jsx";
 import NotificationBell from "./NotificationBell.jsx";
@@ -25,6 +27,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/jobs", label: "Jobs", icon: Briefcase },
   { to: "/candidates", label: "Candidates", icon: Users },
+  { to: "/pipeline", label: "Pipeline", icon: KanbanSquare },
   { to: "/ai-interviews", label: "AI Interviews", icon: Bot },
   { to: "/reports", label: "Reports", icon: BarChart3 },
   { to: "/subscription", label: "Subscription", icon: CreditCard },
@@ -109,6 +112,12 @@ function TopNav({ onMenuClick }) {
               </button>
               <button
                 onClick={() => {
+                  // Best-effort server-side revocation of the refresh-token family, then
+                  // clear local state regardless of the request outcome.
+                  const refreshToken = getAdminRefreshToken();
+                  if (refreshToken) {
+                    api.post("/auth/logout", { refreshToken }).catch(() => {});
+                  }
                   clearAdminAuth();
                   navigate("/login");
                 }}

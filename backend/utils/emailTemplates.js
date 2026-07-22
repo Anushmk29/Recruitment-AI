@@ -215,6 +215,29 @@ function offerLetterEmailTemplate(candidate, job, offer) {
   return { subject, text, html };
 }
 
+function stageUpdateEmailTemplate(candidate, job, stageLabel, note) {
+  const name = candidate.basicDetails.name;
+  const subject = `Update on your application for ${job.title}`;
+  const text =
+    `Hi ${name},\n\n` +
+    `There's an update on your application for the ${job.title} position.\n\n` +
+    `Current stage: ${stageLabel}\n` +
+    (note ? `Note: ${note}\n` : "") +
+    `\nYou can track your full application timeline from your candidate dashboard.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(name)},</p>` +
+    `<p>There's an update on your application for the <strong>${escapeHtml(job.title)}</strong> position.</p>` +
+    `<table cellpadding="4" cellspacing="0">` +
+    `<tr><td><strong>Current stage</strong></td><td>${escapeHtml(stageLabel)}</td></tr>` +
+    (note ? `<tr><td><strong>Note</strong></td><td>${escapeHtml(note)}</td></tr>` : "") +
+    `</table>` +
+    `<p>You can track your full application timeline from your candidate dashboard.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
 function paymentSuccessEmailTemplate(company, admin, payment) {
   const subject = `Payment received — ${company.name}`;
   const text =
@@ -318,6 +341,7 @@ module.exports = {
   applicationSubmittedEmailTemplate,
   interviewReminderEmailTemplate,
   offerLetterEmailTemplate,
+  stageUpdateEmailTemplate,
   paymentSuccessEmailTemplate,
   paymentFailedEmailTemplate,
   invoiceEmailTemplate,

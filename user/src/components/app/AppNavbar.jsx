@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Sparkles, Menu, X, LogOut, LayoutDashboard } from "lucide-react";
 import { useAccountAuth } from "../../auth/useAccountAuth.js";
-import { clearAccountAuth } from "../../auth/accountAuth.js";
+import { logoutAccount } from "../../auth/logout.js";
 import NotificationBell from "./NotificationBell.jsx";
 
 const LINKS = [
@@ -46,7 +46,7 @@ function AccountLinks({ onNavigate }) {
       <button
         type="button"
         onClick={() => {
-          clearAccountAuth();
+          logoutAccount();
           onNavigate?.();
           navigate("/login");
         }}

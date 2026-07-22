@@ -1,0 +1,160 @@
+// Speech provider abstraction (STT + TTS) for the voice interview.
+//
+// Deliberately a thin seam so the provider can be swapped without touching callers — the
+// current backend responsibility is only to mint a SHORT-LIVED streaming credential; the
+// browser streams mic audio straight to the provider (real-time STT) and plays its TTS, so
+// raw audio never transits our server. `DEEPGRAM_API_KEY` therefore stays server-side and is
+// never shipped to the client.
+//
+// Provider: Deepgram (for the demo). Post-demo residency swap (self-hosted Whisper / Sarvam AI,
+// keeping candidate voice in India for DPDP) replaces `grantStreamingToken` + the client config
+// block only — the endpoint/controller contract is unchanged. See [[voice-interview-priority]].
+//
+// Zero-dependency on purpose (matches utils/logger.js, utils/metrics.js, utils/pdf.js): the
+// token grant is a plain HTTPS POST, no SDK on the backend.
+
+const https = require("https");
+
+const GRANT_HOST = "api.deepgram.com";
+const GRANT_PATH = "/v1/auth/grant";
+
+function cfg() {
+  return {
+    apiKey: process.env.DEEPGRAM_API_KEY || "",
+    sttModel: process.env.DEEPGRAM_STT_MODEL || "nova-3",
+    ttsModel: process.env.DEEPGRAM_TTS_MODEL || "aura-2-thalia-en",
+    language: process.env.DEEPGRAM_STT_LANGUAGE || "en",
+    utteranceEndMs: Number(process.env.DEEPGRAM_UTTERANCE_END_MS || 2000),
+    ttlSeconds: Number(process.env.VOICE_TOKEN_TTL_SECONDS || 60),
+  };
+}
+
+function isEnabled() {
+  return Boolean(cfg().apiKey);
+}
+
+function provider() {
+  return "deepgram";
+}
+
+// POST https://api.deepgram.com/v1/auth/grant  (Authorization: Token <API_KEY>)
+// → { access_token, expires_in }. TTL is short (default 60s) — it only has to survive the
+// initial WebSocket handshake; the socket then stays open for the whole answer.
+function requestGrant(apiKey, ttlSeconds) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ ttl_seconds: ttlSeconds });
+    const req = https.request(
+      {
+        host: GRANT_HOST,
+        path: GRANT_PATH,
+        method: "POST",
+        headers: {
+          Authorization: `Token ${apiKey}`,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 8000,
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            return reject(new Error(`Deepgram grant failed (${res.statusCode}): ${data.slice(0, 200)}`));
+          }
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            reject(new Error("Deepgram grant returned invalid JSON"));
+          }
+        });
+        // Without this, a connection reset mid-response (Deepgram closing the socket early)
+        // is an unhandled 'error' on the response stream — Node treats that as fatal.
+        res.on("error", reject);
+      }
+    );
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error("Deepgram grant request timed out")));
+    req.write(body);
+    req.end();
+  });
+}
+
+// POST https://api.deepgram.com/v1/speak — server-side text-to-speech (Aura). Proxied through
+// our backend (not called from the browser) so the API key stays server-side and we dodge
+// browser CORS/token-scope pitfalls. Returns raw MP3 bytes.
+function requestTts(apiKey, model, text) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ text });
+    const req = https.request(
+      {
+        host: GRANT_HOST,
+        path: `/v1/speak?model=${encodeURIComponent(model)}&encoding=mp3`,
+        method: "POST",
+        headers: {
+          Authorization: `Token ${apiKey}`,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 15000,
+      },
+      (res) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          let e = "";
+          res.on("data", (c) => (e += c));
+          res.on("end", () => reject(new Error(`Deepgram TTS failed (${res.statusCode}): ${e.slice(0, 200)}`)));
+          return;
+        }
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve(Buffer.concat(chunks)));
+        // Same as requestGrant: a mid-stream reset must reject the promise, not crash the process.
+        res.on("error", reject);
+      }
+    );
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error("Deepgram TTS request timed out")));
+    req.write(body);
+    req.end();
+  });
+}
+
+// Synthesize a spoken question. Returns { audio: Buffer, contentType }.
+async function synthesize(text) {
+  const c = cfg();
+  if (!c.apiKey) throw Object.assign(new Error("Voice interview is not configured"), { status: 503 });
+  const clean = String(text || "").trim().slice(0, 2000);
+  if (!clean) throw Object.assign(new Error("text is required"), { status: 400 });
+  const audio = await requestTts(c.apiKey, c.ttsModel, clean);
+  return { audio, contentType: "audio/mpeg" };
+}
+
+// Mint a short-lived streaming credential + the client-side STT/TTS config the browser needs.
+async function grantStreamingToken() {
+  const c = cfg();
+  if (!c.apiKey) throw Object.assign(new Error("Voice interview is not configured"), { status: 503 });
+
+  const resp = await requestGrant(c.apiKey, c.ttlSeconds);
+  const accessToken = resp.access_token || resp.accessToken;
+  const expiresIn = resp.expires_in || resp.expiresIn || c.ttlSeconds;
+  if (!accessToken) throw new Error("Deepgram grant returned no access_token");
+
+  return {
+    provider: "deepgram",
+    accessToken,
+    expiresIn,
+    // Streaming STT params (browser passes these to listen.v1.connect). utterance_end_ms +
+    // interim_results drive end-of-turn detection so we know when an answer is complete.
+    stt: {
+      model: c.sttModel,
+      language: c.language,
+      interimResults: true,
+      utteranceEndMs: c.utteranceEndMs,
+      punctuate: true,
+      smartFormat: true,
+    },
+    tts: { model: c.ttsModel },
+  };
+}
+
+module.exports = { isEnabled, provider, grantStreamingToken, synthesize };

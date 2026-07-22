@@ -1,16 +1,27 @@
+const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const Company = require("../models/Company");
+const RefreshToken = require("../models/RefreshToken");
 const { hashPassword, comparePassword } = require("../utils/passwords");
-const { hashToken, generateVerificationToken, generateResetToken } = require("../utils/authTokens");
+const {
+  hashToken,
+  generateVerificationToken,
+  generateResetToken,
+  generateRefreshToken,
+} = require("../utils/authTokens");
 const { sendVerificationEmail, sendPasswordResetEmail } = require("../utils/mailer");
 const { isStrongPassword, isValidPhone } = require("../utils/validators");
 const { initializeDashboard } = require("./candidateDashboardController");
 const { notifyAdmin, notifyCandidate } = require("../services/notificationService");
 const { dispatchEmail } = require("../services/emailDispatchService");
 const { passwordChangedEmailTemplate } = require("../utils/emailTemplates");
+const { writeAuditLog } = require("../middleware/auditLog");
 
-const JWT_EXPIRES_IN = "7d";
+// Short-lived access token — the frontends transparently refresh it via /auth/refresh.
+// Configurable so ops can tune it without a code change. Refresh-token lifetime lives in
+// authTokens.js (REFRESH_TOKEN_TTL_DAYS).
+const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || "2h";
 const STRONG_PASSWORD_MESSAGE =
   "Password must be at least 8 characters and include an uppercase letter, a lowercase letter, a number, and a special character";
 
@@ -28,8 +39,24 @@ function sanitizeUser(user) {
 
 function signUser(user) {
   return jwt.sign({ userId: String(user._id), role: user.role }, process.env.AUTH_JWT_SECRET, {
-    expiresIn: JWT_EXPIRES_IN,
+    expiresIn: ACCESS_TOKEN_TTL,
   });
+}
+
+// Issue a short-lived access token plus a persisted, rotating refresh token. Pass an
+// existing `family` when rotating so the new token stays in the same lineage; omit it on
+// a fresh login/verify to start a new family. Returns { token, refreshToken }.
+async function issueTokens(user, req, family) {
+  const gen = generateRefreshToken();
+  await RefreshToken.create({
+    user: user._id,
+    tokenHash: gen.tokenHash,
+    family: family || gen.family,
+    expiresAt: gen.expiresAt,
+    userAgent: req?.headers?.["user-agent"],
+    ip: req?.ip,
+  });
+  return { token: signUser(user), refreshToken: gen.token };
 }
 
 function originForRole(role) {
@@ -90,9 +117,19 @@ async function register(req, res) {
 // Bootstraps a platform superadmin (not tied to any company). Company-scoped
 // admin accounts are created automatically via the company registration +
 // subscription flow (see companyAuthController), not through this endpoint.
+// Constant-time compare so the signup key can't be recovered via response
+// timing. timingSafeEqual requires equal-length buffers, so guard length first.
+function signupKeyMatches(provided) {
+  const expected = process.env.ADMIN_SIGNUP_KEY;
+  if (!expected || !provided) return false;
+  const a = Buffer.from(String(provided), "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 async function adminRegister(req, res) {
   const signupKey = req.headers["x-admin-signup-key"];
-  if (!signupKey || signupKey !== process.env.ADMIN_SIGNUP_KEY) {
+  if (!signupKeyMatches(signupKey)) {
     return res.status(403).json({ error: "Invalid admin signup key" });
   }
 
@@ -134,11 +171,21 @@ async function login(req, res) {
 
   const user = await User.findOne({ email: email.trim().toLowerCase() });
   if (!user) {
+    writeAuditLog({ req, action: "auth.login_failed", statusCode: 401, meta: { email: email.trim().toLowerCase() } });
     return res.status(401).json({ error: "Invalid email or password" });
   }
 
   const valid = await comparePassword(password, user.passwordHash);
   if (!valid) {
+    writeAuditLog({
+      req,
+      action: "auth.login_failed",
+      resourceType: "User",
+      resourceId: user._id,
+      company: user.company,
+      statusCode: 401,
+      meta: { email: user.email },
+    });
     return res.status(401).json({ error: "Invalid email or password" });
   }
 
@@ -150,13 +197,15 @@ async function login(req, res) {
     const company = await Company.findById(user.company);
     if (!company || company.status === "pending_payment") {
       // Authentication itself succeeded — only full product access is gated.
-      // Issue a token anyway so the frontend can carry the admin straight to
+      // Issue tokens anyway so the frontend can carry the admin straight to
       // checkout instead of leaving them stuck if they closed the browser
       // mid-onboarding.
+      const { token, refreshToken } = await issueTokens(user, req);
       return res.status(403).json({
         error: "Please complete your subscription payment to activate your workspace",
         code: "PAYMENT_REQUIRED",
-        token: signUser(user),
+        token,
+        refreshToken,
         user: sanitizeUser(user),
       });
     }
@@ -168,8 +217,16 @@ async function login(req, res) {
     }
   }
 
-  const token = signUser(user);
-  res.json({ token, user: sanitizeUser(user) });
+  const { token, refreshToken } = await issueTokens(user, req);
+  writeAuditLog({
+    req,
+    action: "auth.login",
+    resourceType: "User",
+    resourceId: user._id,
+    company: user.company,
+    statusCode: 200,
+  });
+  res.json({ token, refreshToken, user: sanitizeUser(user) });
 }
 
 async function verifyEmail(req, res) {
@@ -190,8 +247,78 @@ async function verifyEmail(req, res) {
     await initializeDashboard(user._id, user.name, user.email);
   }
 
-  const jwtToken = signUser(user);
-  res.json({ message: "Email verified successfully", token: jwtToken, user: sanitizeUser(user) });
+  const issued = await issueTokens(user, req);
+  res.json({
+    message: "Email verified successfully",
+    token: issued.token,
+    refreshToken: issued.refreshToken,
+    user: sanitizeUser(user),
+  });
+}
+
+// Exchange a valid refresh token for a fresh access token + a rotated refresh token.
+// Rotation + reuse-detection: presenting an already-rotated (revoked) token revokes the
+// whole family (treat as theft). Public route — the refresh token IS the credential.
+async function refresh(req, res) {
+  const { refreshToken } = req.body || {};
+  if (!refreshToken) return res.status(400).json({ error: "refreshToken is required" });
+
+  const existing = await RefreshToken.findOne({ tokenHash: hashToken(refreshToken) });
+  if (!existing) return res.status(401).json({ error: "Invalid session, please log in again" });
+
+  if (existing.revokedAt) {
+    await RefreshToken.updateMany(
+      { family: existing.family, revokedAt: null },
+      { $set: { revokedAt: new Date() } }
+    );
+    writeAuditLog({
+      req,
+      action: "auth.refresh_reuse",
+      resourceType: "User",
+      resourceId: existing.user,
+      statusCode: 401,
+      meta: { family: existing.family },
+    });
+    return res.status(401).json({ error: "Session invalidated, please log in again" });
+  }
+  if (existing.expiresAt < new Date()) {
+    return res.status(401).json({ error: "Session expired, please log in again" });
+  }
+
+  const user = await User.findById(existing.user);
+  if (!user) return res.status(401).json({ error: "Account not found" });
+
+  // Rotate in place: mint a new token in the same family, revoke + link the old one.
+  const rotated = generateRefreshToken();
+  await RefreshToken.create({
+    user: user._id,
+    tokenHash: rotated.tokenHash,
+    family: existing.family,
+    expiresAt: rotated.expiresAt,
+    userAgent: req?.headers?.["user-agent"],
+    ip: req?.ip,
+  });
+  existing.revokedAt = new Date();
+  existing.replacedByHash = rotated.tokenHash;
+  await existing.save();
+
+  res.json({ token: signUser(user), refreshToken: rotated.token, user: sanitizeUser(user) });
+}
+
+// Revoke the presented refresh token's entire family, ending that session lineage.
+// Idempotent — always 200 so a stale/absent token doesn't leave the client stuck.
+async function logout(req, res) {
+  const { refreshToken } = req.body || {};
+  if (refreshToken) {
+    const existing = await RefreshToken.findOne({ tokenHash: hashToken(refreshToken) });
+    if (existing && !existing.revokedAt) {
+      await RefreshToken.updateMany(
+        { family: existing.family, revokedAt: null },
+        { $set: { revokedAt: new Date() } }
+      );
+    }
+  }
+  res.json({ message: "Logged out" });
 }
 
 async function resendVerification(req, res) {
@@ -303,5 +430,7 @@ module.exports = {
   resendVerification,
   forgotPassword,
   resetPassword,
+  refresh,
+  logout,
   me,
 };

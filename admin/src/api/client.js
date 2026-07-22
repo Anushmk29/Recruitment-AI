@@ -1,9 +1,14 @@
 import axios from "axios";
-import { getAdminAuth, clearAdminAuth } from "../auth/adminAuth.js";
+import {
+  getAdminAuth,
+  getAdminRefreshToken,
+  updateAdminTokens,
+  clearAdminAuth,
+} from "../auth/adminAuth.js";
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:9000/api",
-});
+const baseURL = import.meta.env.VITE_API_URL || "http://localhost:9000/api";
+
+const api = axios.create({ baseURL });
 
 api.interceptors.request.use((config) => {
   const auth = getAdminAuth();
@@ -13,14 +18,60 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Silent access-token refresh. Access tokens are short-lived; when one expires the API
+// returns 401 and we transparently exchange the stored refresh token for a fresh pair,
+// then replay the original request. Concurrent 401s share a single in-flight refresh so
+// we don't hammer /auth/refresh (and don't trip its rotation reuse-detection).
+let refreshPromise = null;
+
+function refreshTokens() {
+  if (!refreshPromise) {
+    const refreshToken = getAdminRefreshToken();
+    if (!refreshToken) return Promise.reject(new Error("no refresh token"));
+    // Bare axios (not `api`) so this request skips the interceptors and can't recurse.
+    refreshPromise = axios
+      .post(`${baseURL}/auth/refresh`, { refreshToken })
+      .then((res) => {
+        updateAdminTokens({ token: res.data.token, refreshToken: res.data.refreshToken });
+        return res.data.token;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
+function forceLogout() {
+  clearAdminAuth();
+  if (window.location.pathname !== "/login") {
+    window.location.assign("/login");
+  }
+}
+
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      clearAdminAuth();
-      if (window.location.pathname !== "/login") {
-        window.location.assign("/login");
+  async (error) => {
+    const original = error.config;
+    const status = error.response?.status;
+    const isRefreshCall = original?.url?.includes("/auth/refresh");
+
+    // Only try to refresh once per request, and never for the refresh call itself.
+    if (status === 401 && original && !original._retry && !isRefreshCall && getAdminRefreshToken()) {
+      original._retry = true;
+      try {
+        const newToken = await refreshTokens();
+        original.headers = original.headers || {};
+        original.headers.Authorization = `Bearer ${newToken}`;
+        return api(original);
+      } catch {
+        forceLogout();
+        return Promise.reject(error);
       }
+    }
+
+    if (status === 401) {
+      forceLogout();
     }
     return Promise.reject(error);
   }

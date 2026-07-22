@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const jobSchema = new mongoose.Schema(
   {
-    company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true, index: true },
+    company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true },
     title: { type: String, required: true, trim: true },
     slug: { type: String, unique: true, sparse: true, index: true },
     department: { type: String, trim: true },
@@ -26,5 +26,14 @@ jobSchema.statics.findByIdOrSlug = function (idOrSlug) {
   }
   return this.findOne({ slug: idOrSlug });
 };
+
+// Recruiter job list — a tenant's jobs newest-first (jobController.listJobs). Leading
+// `company` also covers the tenant-scope plugin's injected equality (redundant single-field
+// company index dropped).
+jobSchema.index({ company: 1, createdAt: -1 });
+// Public job board — published jobs newest-first, across tenants (jobController.listPublicJobs).
+jobSchema.index({ status: 1, createdAt: -1 });
+
+jobSchema.plugin(require("./plugins/tenantScope"));
 
 module.exports = mongoose.model("Job", jobSchema);

@@ -1,6 +1,8 @@
 const { Server } = require("socket.io");
+const { createAdapter } = require("@socket.io/redis-adapter");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const { getRedisPubSub } = require("./redis");
 
 let io = null;
 
@@ -19,6 +21,17 @@ function initSocket(httpServer) {
       credentials: true,
     },
   });
+
+  // Multi-instance real-time: without the Redis adapter, an event emitted on instance
+  // B never reaches a socket held on instance A (rooms are per-process). With Redis,
+  // emits fan out across all instances. Single-instance dev runs fine without it.
+  const pubSub = getRedisPubSub();
+  if (pubSub) {
+    io.adapter(createAdapter(pubSub.pub, pubSub.sub));
+    console.log("[socket] Redis adapter enabled (multi-instance real-time)");
+  } else {
+    console.warn("[socket] REDIS_URL not set — real-time events only work with a single backend instance");
+  }
 
   io.use(async (socket, next) => {
     try {

@@ -16,4 +16,6 @@ const invoiceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+invoiceSchema.plugin(require("./plugins/tenantScope"));
+
 module.exports = mongoose.model("Invoice", invoiceSchema);

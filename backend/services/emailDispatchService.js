@@ -28,10 +28,10 @@ async function sendInline(log, attempt = 1) {
 // configured (this project's default local setup) it sends inline with one
 // manual retry, mirroring the try/catch-and-log pattern already used
 // throughout the codebase for email sends.
-async function dispatchEmail({ to, subject, text, html, category, relatedType, relatedId }) {
+async function dispatchEmail({ to, subject, text, html, category, relatedType, relatedId, company }) {
   if (!to) return null;
 
-  const log = await EmailLog.create({ to, subject, text, html, category, relatedType, relatedId, status: "queued" });
+  const log = await EmailLog.create({ to, subject, text, html, category, relatedType, relatedId, company, status: "queued" });
 
   const queue = getEmailQueue();
   if (queue) {

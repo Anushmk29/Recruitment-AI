@@ -4,15 +4,12 @@ import { ArrowLeft, Users } from "lucide-react";
 import api from "../api/client.js";
 import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
 import { Select } from "../components/ui/Field.jsx";
-
-const STATUSES = ["applied", "shortlisted", "next_round", "rejected"];
-
-function statusTone(status) {
-  return { applied: "slate", interview_queue: "brand", shortlisted: "green", next_round: "brand", rejected: "red" }[status] || "slate";
-}
+import { useToast } from "../components/ui/Toast.jsx";
+import { allowedNextStages, stageLabel } from "../lib/pipeline.js";
 
 export default function CandidateList() {
   const { id } = useParams();
+  const toast = useToast();
   const [job, setJob] = useState(null);
   const [candidates, setCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,9 +26,15 @@ export default function CandidateList() {
 
   useEffect(load, [id]);
 
-  async function handleStatusChange(candidateId, status) {
-    await api.patch(`/candidates/${candidateId}/status`, { status });
-    load();
+  async function handleStatusChange(candidateId, currentStatus, stage) {
+    if (!stage || stage === currentStatus) return;
+    try {
+      await api.patch(`/candidates/${candidateId}/stage`, { stage });
+      toast.success(`Moved to ${stageLabel(stage)}`);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Could not move candidate");
+    }
   }
 
   return (
@@ -83,13 +86,14 @@ export default function CandidateList() {
                     </td>
                     <td className="px-6 py-3">
                       <Select
-                        value={c.status}
-                        onChange={(e) => handleStatusChange(c._id, e.target.value)}
+                        value=""
+                        onChange={(e) => handleStatusChange(c._id, c.status, e.target.value)}
                         className="w-auto py-1.5 text-xs"
                       >
-                        {STATUSES.map((s) => (
+                        <option value="">{stageLabel(c.status)}</option>
+                        {allowedNextStages(c.status).map((s) => (
                           <option key={s} value={s}>
-                            {s.replace("_", " ")}
+                            → {stageLabel(s)}
                           </option>
                         ))}
                       </Select>

@@ -9,4 +9,6 @@ const workspaceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+workspaceSchema.plugin(require("./plugins/tenantScope"));
+
 module.exports = mongoose.model("Workspace", workspaceSchema);
