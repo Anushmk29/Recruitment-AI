@@ -9,9 +9,22 @@ const usageEventSchema = new mongoose.Schema(
     session: { type: mongoose.Schema.Types.ObjectId, ref: "InterviewSession" },
     candidate: { type: mongoose.Schema.Types.ObjectId, ref: "Candidate" },
 
-    kind: { type: String, enum: ["plan", "question", "evaluation", "other"], default: "other" },
+    // Which feature spent this call (Phase 2.3 kind-tagged metering): interview
+    // turns already tag plan/question/evaluation; rubric_compile, claim_extract,
+    // match, probe_gen and report are reserved for Phases 3-8 so per-feature unit
+    // economics and Phase 11 quotas can tell them apart.
+    kind: {
+      type: String,
+      enum: ["plan", "question", "evaluation", "rubric_compile", "claim_extract", "match", "probe_gen", "verdict", "report", "stt", "tts", "other"],
+      default: "other",
+    },
     provider: { type: String, trim: true },
     model: { type: String, trim: true },
+    // Prompt template version that produced this call (Phase 2.6) — required to
+    // reproduce a decision months later in a legal context.
+    promptVersion: { type: String, trim: true },
+    // True when the deterministic cache served the result (zero tokens spent).
+    cached: { type: Boolean, default: false },
 
     promptTokens: { type: Number, default: 0 },
     completionTokens: { type: Number, default: 0 },

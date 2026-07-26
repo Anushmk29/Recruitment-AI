@@ -14,24 +14,26 @@ export function CompanyDataProvider({ children }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [meRes, jobsRes, queueRes] = await Promise.all([
+      // Phase 12.5: ONE paginated company-wide request replaces the old
+      // one-request-per-job fan-out (a 40-job tenant fired 40 requests here).
+      const [meRes, jobsRes, queueRes, candidatesRes] = await Promise.all([
         api.get("/auth/me"),
         api.get("/jobs"),
         api.get("/interview-queue"),
+        api.get("/candidates", { params: { limit: 500 } }).catch(() => ({ data: { items: [] } })),
       ]);
       setMe(meRes.data);
       setJobs(jobsRes.data);
       setQueue(queueRes.data);
 
-      const candidateLists = await Promise.all(
-        jobsRes.data.map((job) =>
-          api
-            .get(`/jobs/${job._id}/candidates`)
-            .then((res) => [job._id, res.data])
-            .catch(() => [job._id, []])
-        )
-      );
-      setCandidatesByJob(Object.fromEntries(candidateLists));
+      const grouped = {};
+      for (const job of jobsRes.data) grouped[job._id] = [];
+      for (const c of candidatesRes.data.items || []) {
+        const jobId = c.job?._id || c.job;
+        if (!grouped[jobId]) grouped[jobId] = [];
+        grouped[jobId].push(c);
+      }
+      setCandidatesByJob(grouped);
 
       try {
         const subRes = await api.get("/subscriptions/me");

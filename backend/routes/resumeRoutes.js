@@ -1,4 +1,5 @@
 const express = require("express");
+const wrapRouter = require("../middleware/wrapRouter");
 const {
   uploadResume,
   getResume,
@@ -21,4 +22,4 @@ router.get("/history", requireCandidate, listResumeHistory);
 router.get("/:id", requireCandidate, getResume);
 router.get("/:id/download", requireCandidate, downloadResume);
 
-module.exports = router;
+module.exports = wrapRouter(router);

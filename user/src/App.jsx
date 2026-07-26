@@ -8,6 +8,7 @@ import InterviewLogin from "./pages/InterviewLogin.jsx";
 import InterviewDashboard from "./pages/InterviewDashboard.jsx";
 import PreInterviewCheck from "./pages/PreInterviewCheck.jsx";
 import InterviewRoom from "./pages/InterviewRoom.jsx";
+import PhoneCam from "./pages/PhoneCam.jsx";
 import Register from "./pages/Register.jsx";
 import Login from "./pages/Login.jsx";
 import VerifyEmail from "./pages/VerifyEmail.jsx";
@@ -16,6 +17,7 @@ import ResetPassword from "./pages/ResetPassword.jsx";
 import Account from "./pages/Account.jsx";
 import CandidateDashboard from "./pages/CandidateDashboard.jsx";
 import NotificationCenter from "./pages/NotificationCenter.jsx";
+import NotFound from "./pages/NotFound.jsx";
 import RequireAccount from "./auth/RequireAccount.jsx";
 import AppNavbar from "./components/app/AppNavbar.jsx";
 import { NotificationProvider } from "./context/NotificationContext.jsx";
@@ -38,6 +40,16 @@ export default function App() {
       <Route path="/verify-email/:token" element={<VerifyEmail />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password/:token" element={<ResetPassword />} />
+
+      {/* Live portal routes sit outside AppShell/AppNavbar — see InterviewShell.jsx for why the
+          marketing navbar is an accidental-exit risk here, not just visual noise. Each page wraps
+          itself in InterviewShell directly, since only the page knows its true live/setup stage
+          (InterviewRoom's stage changes across a single mount as the interview progresses). */}
+      <Route path="/portal/pre-check" element={<PreInterviewCheck />} />
+      <Route path="/portal/interview" element={<InterviewRoom />} />
+      {/* Phase 14.6 — phone companion camera, opened by scanning the pre-check QR.
+          Deliberately outside AppShell: it's a single-purpose kiosk page. */}
+      <Route path="/phone-cam/:token" element={<PhoneCam />} />
 
       <Route
         path="/*"
@@ -64,8 +76,6 @@ export default function App() {
               />
               <Route path="/interview/:token" element={<InterviewLogin />} />
               <Route path="/portal/dashboard" element={<InterviewDashboard />} />
-              <Route path="/portal/pre-check" element={<PreInterviewCheck />} />
-              <Route path="/portal/interview" element={<InterviewRoom />} />
               <Route
                 path="/account"
                 element={
@@ -90,6 +100,7 @@ export default function App() {
                   </RequireAccount>
                 }
               />
+              <Route path="*" element={<NotFound />} />
             </Routes>
           </AppShell>
         }

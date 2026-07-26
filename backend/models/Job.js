@@ -16,6 +16,11 @@ const jobSchema = new mongoose.Schema(
     requiredEducation: { type: String, trim: true },
     atsThreshold: { type: Number, default: 60, min: 0, max: 100 },
     interviewInstructions: { type: String, trim: true },
+    // Optional per-job interview length overrides (Phase 8.3). The interview can
+    // end early once all claim-probes are covered and min is reached; max is the
+    // hard ceiling.
+    interviewMinQuestions: { type: Number, min: 1, max: 30 },
+    interviewMaxQuestions: { type: Number, min: 1, max: 30 },
   },
   { timestamps: true }
 );

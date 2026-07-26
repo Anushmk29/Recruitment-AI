@@ -17,7 +17,12 @@ export default function InterviewLogin() {
       try {
         const res = await api.post("/interview-portal/login", { token });
         if (cancelled) return;
-        saveAuth({ jwt: res.data.token, rawToken: token });
+        saveAuth({
+          jwt: res.data.token,
+          rawToken: token,
+          jobTitle: res.data.session?.jobTitle,
+          candidateName: res.data.session?.candidateName,
+        });
         navigate("/portal/dashboard", { replace: true });
       } catch (err) {
         if (cancelled) return;

@@ -32,6 +32,7 @@ const HELVB = [
 
 // Common Unicode → WinAnsi byte transliterations so pasted resume/transcript text (smart quotes,
 // dashes, bullets) renders instead of dropping out.
+const UNI_ARROWS = { "→": "->", "←": "<-", "⇒": "=>", "✓": "v", "✗": "x" };
 const UNI = {
   "–": 0x96, "—": 0x97, "‘": 0x91, "’": 0x92,
   "“": 0x93, "”": 0x94, "•": 0x95, "…": 0x85,
@@ -47,6 +48,7 @@ function sanitize(input) {
     if (cp === 0x09) { out += " "; continue; }
     if (cp < 0x20 || cp === 0x7f) continue; // drop other control chars (incl. newlines — caller splits)
     if (cp <= 0xff) { out += String.fromCharCode(cp); continue; }
+    if (UNI_ARROWS[ch] != null) { out += UNI_ARROWS[ch]; continue; }
     if (UNI[ch] != null) { out += String.fromCharCode(UNI[ch]); continue; }
     out += "?";
   }

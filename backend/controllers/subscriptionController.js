@@ -17,4 +17,14 @@ async function getCompanySubscription(req, res) {
   res.json(subscription);
 }
 
-module.exports = { listPlans, getCompanySubscription };
+// GET /api/subscriptions/usage — plan-limit usage for the billing screen
+// (Phase 11.3): per-dimension used/limit/remaining plus a nearLimit flag so the
+// UI can warn BEFORE the wall, not at it.
+async function getUsage(req, res) {
+  if (!req.user.company) {
+    return res.status(400).json({ error: "This account is not associated with a company" });
+  }
+  res.json(await require("../services/quotaService").usage(req.user.company));
+}
+
+module.exports = { listPlans, getCompanySubscription, getUsage };

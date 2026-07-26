@@ -1,0 +1,244 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-25T00:00:00.000Z",
+  "title": "Design System: HireFlow AI",
+  "extensions": {
+    "colorMeta": {
+      "verification-blue": {
+        "role": "primary",
+        "displayName": "Verification Blue",
+        "canonical": "#2563eb",
+        "note": "Unmodified Tailwind blue-600. Provisional — the product has no owned accent yet.",
+        "tonalRamp": ["#172554", "#1e3a8a", "#1e40af", "#1d4ed8", "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#0f172a",
+        "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0"]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e2e8f0",
+        "tonalRamp": ["#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0", "#f1f5f9", "#f8fafc"]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Canvas",
+        "canonical": "#f8fafc",
+        "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#64748b", "#cbd5e1", "#e2e8f0", "#f1f5f9", "#f8fafc"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#0f172a", "#334155", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0", "#f8fafc", "#ffffff"]
+      },
+      "verdict-positive": {
+        "role": "tertiary",
+        "displayName": "Verdict Positive",
+        "canonical": "#059669",
+        "note": "Reserved: shortlisted, selected, offer accepted, joined, passing scores, success.",
+        "tonalRamp": ["#064e3b", "#065f46", "#047857", "#059669", "#10b981", "#34d399", "#6ee7b7", "#d1fae5"]
+      },
+      "verdict-pending": {
+        "role": "tertiary",
+        "displayName": "Verdict Pending",
+        "canonical": "#b45309",
+        "note": "Reserved: under review, offer sent — anything awaiting a human decision.",
+        "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fef3c7"]
+      },
+      "verdict-negative": {
+        "role": "tertiary",
+        "displayName": "Verdict Negative",
+        "canonical": "#dc2626",
+        "note": "Reserved: rejected, destructive actions, field errors.",
+        "tonalRamp": ["#450a0a", "#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#ef4444", "#f87171", "#fee2e2"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Marketing hero headline only. Steps 2.25rem → 3rem → 3.4rem across sm and lg." },
+      "headline": { "displayName": "Headline", "purpose": "Marketing section headings. 1.875rem below sm." },
+      "title": { "displayName": "Title", "purpose": "Card titles, dashboard page titles. The workhorse heading inside the app." },
+      "body": { "displayName": "Body", "purpose": "All in-app text at 0.875rem; marketing body steps up to 1.125rem." },
+      "label": { "displayName": "Label", "purpose": "Badges, metadata, form labels, table headers. Semibold, sentence case, never uppercase-tracked." }
+    },
+    "shadows": [
+      {
+        "name": "card",
+        "value": "0 1px 3px rgba(15,23,42,0.06), 0 1px 2px rgba(15,23,42,0.04)",
+        "purpose": "The resting plane. Cards and containers — separates white on canvas without adding weight."
+      },
+      {
+        "name": "soft",
+        "value": "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)",
+        "purpose": "The lifted plane. Primary buttons, popovers, toasts, active nav item, hovered cards. The -8px spread is what makes it read as hovering."
+      }
+    ],
+    "motion": [
+      { "name": "control", "value": "all 150ms cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Button and control state transitions." },
+      { "name": "press", "value": "scale(0.98)", "purpose": "Active-state press feedback on buttons." },
+      { "name": "card-lift", "value": "translateY(-4px)", "purpose": "Interactive card hover, paired with the soft shadow." },
+      { "name": "fade-up", "value": "opacity 0→1, translateY(24px→0) over 500ms", "purpose": "Framer Motion scroll-reveal on marketing sections; fires once at 30% visibility." },
+      { "name": "stagger", "value": "60–80ms per item", "purpose": "Sequential delay across grid children in a revealed section." },
+      { "name": "toast-in", "value": "opacity 0→1, translateY(12px→0), scale(0.96→1)", "purpose": "Toast entry; exits on opacity + scale only." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" },
+      { "name": "2xl", "value": "1536px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single primary action on a surface. Verification Blue with a lifted shadow.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Start Free Trial<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg></button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: none; border-radius: 12px; font-family: Inter, system-ui, sans-serif; font-size: 0.875rem; font-weight: 600; padding: 10px 16px; cursor: pointer; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn:active { transform: scale(0.98); } .ds-btn-primary { background: #2563eb; color: #ffffff; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08); } .ds-btn-primary:hover { background: #1d4ed8; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 4px #93c5fd; } .ds-btn-primary:disabled { background: #93c5fd; cursor: not-allowed; transform: none; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The paired alternative to a primary action. White on a pale blue border.",
+      "html": "<button class=\"ds-btn ds-btn-secondary\">Request Demo</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 12px; font-family: Inter, system-ui, sans-serif; font-size: 0.875rem; font-weight: 600; padding: 10px 16px; cursor: pointer; background: #ffffff; color: #1d4ed8; border: 1px solid #bfdbfe; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-secondary:hover { background: #eff6ff; } .ds-btn-secondary:focus-visible { outline: none; box-shadow: 0 0 0 4px #bfdbfe; } .ds-btn-secondary:active { transform: scale(0.98); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "The shared field shell — inputs, textareas, and selects use this class verbatim.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-label\">Work email<span class=\"ds-required\"> *</span></label><input class=\"ds-input\" type=\"email\" placeholder=\"you@company.com\" /></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; font-family: Inter, system-ui, sans-serif; } .ds-label { margin-bottom: 6px; font-size: 0.875rem; font-weight: 600; color: #334155; } .ds-required { color: #ef4444; } .ds-input { width: 100%; border-radius: 12px; border: 1px solid #cbd5e1; background: #ffffff; padding: 10px 14px; font-size: 0.875rem; color: #0f172a; box-shadow: 0 1px 2px rgba(15,23,42,0.05); transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-input::placeholder { color: #94a3b8; } .ds-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 4px #dbeafe; } .ds-input:disabled { background: #f1f5f9; color: #94a3b8; }"
+    },
+    {
+      "name": "Stage Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "The status primitive. Five tones map to pipeline stage via pipeline.js — never re-derived per component.",
+      "html": "<div class=\"ds-badge-row\"><span class=\"ds-badge ds-badge-slate\">Applied</span><span class=\"ds-badge ds-badge-brand\">AI Interview Completed</span><span class=\"ds-badge ds-badge-amber\">Under Review</span><span class=\"ds-badge ds-badge-green\">Shortlisted</span><span class=\"ds-badge ds-badge-red\">Rejected</span></div>",
+      "css": ".ds-badge-row { display: flex; flex-wrap: wrap; gap: 8px; } .ds-badge { display: inline-flex; align-items: center; border-radius: 9999px; padding: 4px 10px; font-family: Inter, system-ui, sans-serif; font-size: 0.75rem; font-weight: 600; } .ds-badge-slate { background: #f1f5f9; color: #475569; } .ds-badge-brand { background: #dbeafe; color: #1d4ed8; } .ds-badge-amber { background: #fef3c7; color: #b45309; } .ds-badge-green { background: #d1fae5; color: #047857; } .ds-badge-red { background: #fee2e2; color: #b91c1c; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "The container primitive. Hairline border plus the resting shadow; lifts on hover when interactive.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-icon\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"11\" cy=\"11\" r=\"8\"/><path d=\"m21 21-4.3-4.3\"/></svg></div><h3 class=\"ds-card-title\">AI Resume Screening</h3><p class=\"ds-card-body\">Every resume is parsed and scored against the job's real requirements in seconds.</p></div>",
+      "css": ".ds-card { border-radius: 16px; border: 1px solid #e2e8f0; background: #ffffff; padding: 24px; box-shadow: 0 1px 3px rgba(15,23,42,0.06), 0 1px 2px rgba(15,23,42,0.04); font-family: Inter, system-ui, sans-serif; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-card:hover { transform: translateY(-4px); box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08); } .ds-card-icon { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin-bottom: 16px; border-radius: 12px; background: #eff6ff; color: #2563eb; } .ds-card-title { margin: 0; font-family: Lexend, Inter, sans-serif; font-size: 1rem; font-weight: 600; letter-spacing: -0.025em; color: #0f172a; } .ds-card-body { margin: 6px 0 0; font-size: 0.875rem; line-height: 1.6; color: #64748b; }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "The admin shell's 256px ink sidebar. Active item is white on Verification Blue with the lifted shadow.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item ds-nav-item-active\" href=\"#\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"7\" height=\"9\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"5\" x=\"14\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"9\" x=\"14\" y=\"12\" rx=\"1\"/><rect width=\"7\" height=\"5\" x=\"3\" y=\"16\" rx=\"1\"/></svg>Dashboard</a><a class=\"ds-nav-item\" href=\"#\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 7h-9\"/><path d=\"M14 17H5\"/><circle cx=\"17\" cy=\"17\" r=\"3\"/><circle cx=\"7\" cy=\"7\" r=\"3\"/></svg>Pipeline</a><a class=\"ds-nav-item\" href=\"#\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 8V4H8\"/><rect width=\"16\" height=\"12\" x=\"4\" y=\"8\" rx=\"2\"/><path d=\"M2 14h2\"/><path d=\"M20 14h2\"/></svg>AI Interviews</a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 4px; width: 256px; padding: 12px; background: #0f172a; font-family: Inter, system-ui, sans-serif; } .ds-nav-item { display: flex; align-items: center; gap: 12px; border-radius: 12px; padding: 10px 14px; font-size: 0.875rem; font-weight: 500; color: #cbd5e1; text-decoration: none; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-nav-item:hover { background: rgba(255,255,255,0.05); color: #ffffff; } .ds-nav-item:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(37,99,235,0.5); } .ds-nav-item-active { background: #2563eb; color: #ffffff; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08); } .ds-nav-item-active:hover { background: #2563eb; }"
+    },
+    {
+      "name": "Empty State",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "The only place dashed borders are permitted. Circular tinted icon tile, title, muted description, optional action.",
+      "html": "<div class=\"ds-empty\"><div class=\"ds-empty-icon\"><svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"/><path d=\"M16 3.13a4 4 0 0 1 0 7.75\"/></svg></div><h3 class=\"ds-empty-title\">No candidates yet</h3><p class=\"ds-empty-desc\">Applicants appear here the moment someone applies to one of your open roles.</p></div>",
+      "css": ".ds-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 16px; border: 1px dashed #cbd5e1; background: rgba(248,250,252,0.6); padding: 56px 24px; text-align: center; font-family: Inter, system-ui, sans-serif; } .ds-empty-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; margin-bottom: 16px; border-radius: 9999px; background: #dbeafe; color: #2563eb; } .ds-empty-title { margin: 0; font-family: Lexend, Inter, sans-serif; font-size: 1rem; font-weight: 600; letter-spacing: -0.025em; color: #1e293b; } .ds-empty-desc { margin: 6px 0 0; max-width: 24rem; font-size: 0.875rem; line-height: 1.6; color: #64748b; }"
+    },
+    {
+      "name": "Toast",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "Bottom-right transient feedback. Tone-matched border, fill, and text; auto-dismisses at 4s.",
+      "html": "<div class=\"ds-toast ds-toast-success\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21.801 10A10 10 0 1 1 17 3.335\"/><path d=\"m9 11 3 3L22 4\"/></svg><p class=\"ds-toast-msg\">Interview invitation sent to 12 candidates.</p><button class=\"ds-toast-close\" aria-label=\"Dismiss\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M18 6 6 18\"/><path d=\"m6 6 12 12\"/></svg></button></div>",
+      "css": ".ds-toast { display: flex; align-items: flex-start; gap: 10px; max-width: 24rem; border-radius: 12px; border: 1px solid; padding: 12px 16px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08); font-family: Inter, system-ui, sans-serif; } .ds-toast svg { margin-top: 2px; flex-shrink: 0; } .ds-toast-success { border-color: #a7f3d0; background: #ecfdf5; color: #065f46; } .ds-toast-msg { flex: 1; margin: 0; font-size: 0.875rem; font-weight: 500; } .ds-toast-close { border: none; background: none; padding: 0; cursor: pointer; color: currentColor; opacity: 0.6; transition: opacity 150ms; } .ds-toast-close:hover { opacity: 1; } .ds-toast-close:focus-visible { outline: none; box-shadow: 0 0 0 4px rgba(5,150,105,0.25); border-radius: 4px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Evidence Ledger",
+    "overview": "Every number this product shows is supposed to be traceable to a quoted line in a source document. The interface has to behave the same way: it is a ledger, not a dashboard that asserts. Where a competitor's screening tool shows a confident 78 and moves on, this one is obliged to show the criterion, the evidence, and the confidence — and to look like it is keeping a record rather than rendering an opinion. The visual system's job is to make that record legible under pressure and defensible under scrutiny.\n\nThe mood is calm under pressure, efficiently modern, and quietly institutional. Two of the three audiences arrive stressed — a recruiter with a queue and a candidate with a job on the line — so the surface lowers the temperature rather than raising it. It stays inside familiar SaaS conventions so nobody has to learn a new visual language to do their job, and it carries enough weight to acknowledge that these screens decide people's livelihoods. Restraint here is not timidity; it is the correct register for a product whose entire claim is trustworthiness.\n\nThe implemented system is a light, cool, blue-accented SaaS environment: near-white slate canvas, white cards on hairline borders, one blue accent, and a small semantic set for outcome. It is coherent and disciplined — the same UI kit ships byte-identical in both frontends — but its accent ramp is inherited, not authored. Treat the structure as settled and the palette as the open question.",
+    "keyCharacteristics": [
+      "Light, cool, near-white canvas (#f8fafc) with pure-white surfaces and hairline slate borders",
+      "A single blue accent carrying navigation, primary action, and focus — restrained, never decorative",
+      "Two-family type: Lexend for headings and the wordmark, Inter for everything else",
+      "Soft radii (12px controls, 16px containers) with pill-shaped status badges",
+      "A generous 4px focus ring — the single loudest element in the system, and deliberately so",
+      "Outcome color is semantic and reserved: emerald, amber, red mean stage and verdict, never decoration"
+    ],
+    "rules": [
+      {
+        "name": "The Inherited Palette Rule",
+        "body": "The --color-brand-* ramp in src/index.css is unmodified Tailwind blue, and both apps ship it identically. It is recorded here as the current truth and named for its function, but it is provisional — the product has no owned accent yet. Any future brand work should replace the eleven ramp values in one place and expect the entire system to follow. Do not build new surfaces that depend on this specific hue being permanent.",
+        "section": "colors"
+      },
+      {
+        "name": "The Reserved Verdict Rule",
+        "body": "Emerald, amber, and red mean pipeline stage or evaluation outcome. Nothing else. A green button that merely means 'continue', an amber banner that merely means 'note', or a red accent chosen for emphasis all corrupt the one channel the recruiter reads fastest.",
+        "section": "colors"
+      },
+      {
+        "name": "The Honest Reading Rule",
+        "body": "Product truth constrains this palette: a degraded, fallback, or no-key result must never be styled identically to a real measurement. If a score is not a measurement, it does not get the confident emerald/amber/red treatment — it gets a neutral, explicitly labelled one.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Face Rule",
+        "body": "Lexend for headings and the wordmark, Inter for everything else. There is no third family and no mono face — even in report transcripts and code-adjacent contexts, which currently use Inter. Introducing a mono is a system-level decision, not a per-screen one.",
+        "section": "typography"
+      },
+      {
+        "name": "The Sentence-Case Rule",
+        "body": "Labels are semibold small text, not uppercase tracked-out microcopy. The system's smallest text is already dense; adding letter-spacing and caps to it costs legibility for a recruiter scanning a queue.",
+        "section": "typography"
+      },
+      {
+        "name": "The Two-Model Rule",
+        "body": "Marketing centers and constrains; the app fills and flows. Don't apply a max-w-7xl centering container to a dashboard screen — a pipeline board and a candidate table need the full viewport, and the recruiter's monitor is the reason.",
+        "section": "layout"
+      },
+      {
+        "name": "The Two-Shadow Rule",
+        "body": "shadow-card and shadow-soft are the only shadows. No ad-hoc box-shadow values, no shadow-lg/shadow-xl utilities, no colored glows. A new plane picks one of the two; if neither fits, the plane count is wrong.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Lift-on-Intent Rule",
+        "body": "Movement between planes is a response to intent — hover raises a card from shadow-card to shadow-soft with a -translate-y-1; a press drops it via active:scale-[0.98]. Elevation animates; it does not sit and pulse.",
+        "section": "elevation"
+      },
+      {
+        "name": "The 12/16 Rule",
+        "body": "Controls are 12px, containers are 16px. A control that adopts the container radius reads as a card and stops looking pressable; a container at control radius reads as an oversized button.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Pill-Means-Status Rule",
+        "body": "Fully-rounded shapes signal state — a stage, a count, a person. A pill that is actually a button, or a pill used for a section header, breaks the fastest read in the product.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "Do use the 12px control radius and 16px container radius. They are the system's most recognizable measurement — see The 12/16 Rule.",
+      "Do keep the 4px focus ring. It is the accessibility floor of a product that assesses people who may be navigating by keyboard under stress, and it is deliberately the loudest treatment in the system.",
+      "Do read stage labels and tones from pipeline.js. Hard-coding a stage color anywhere else guarantees drift between the board, the badges, and the backend.",
+      "Do reserve emerald, amber, and red for pipeline stage and evaluation outcome — The Reserved Verdict Rule.",
+      "Do label degraded, fallback, and estimated values distinctly from measured ones. A placeholder styled as a measurement is the one failure this product cannot absorb.",
+      "Do keep the two frontends' UI kits identical. Button.jsx, Card.jsx, and Field.jsx are currently byte-identical across admin/ and user/; a change to one is a change to both.",
+      "Do treat the accent ramp as replaceable — The Inherited Palette Rule. Style against brand-* tokens, never a literal #2563eb."
+    ],
+    "donts": [
+      "Don't reach for AI-hype visual clichés — purple-to-blue gradients, glowing orbs, dark 'neural' backdrops, or sparkle icons scattered as decoration. The product's credibility rests on looking measured; looking futuristic actively undermines the claim that a code path, not a vibe, computed the score.",
+      "Don't gamify evaluation. No celebratory percentage rings, no confetti, no leaderboard framing. A number on these screens is a hiring decision about a person, and styling it like a game score is both a taste failure and a liability.",
+      "Don't apply surveillance aesthetics to proctoring — no red alert framing, no crosshairs, no threat-dashboard styling. Integrity signals are reported as observations with their confidence, not as accusations. The candidate consented to monitoring; they did not consent to being framed as a suspect.",
+      "Don't introduce a third font family or a mono face without a system-level decision — The Two-Face Rule.",
+      "Don't add new shadow values. Two exist; pick one — The Two-Shadow Rule.",
+      "Don't use pills for anything that isn't status — The Pill-Means-Status Rule.",
+      "Don't center-constrain dashboard screens with a marketing container. The app fills; marketing centers — The Two-Model Rule.",
+      "Don't use uppercase tracked-out microcopy for labels. The system's smallest text is already dense."
+    ]
+  }
+}

@@ -97,12 +97,15 @@ export async function analyzeFrame(input) {
   const faceCount = results.length;
   let descriptor;
   let gazeAway = false;
+  let faceBox;
   if (faceCount >= 1) {
     const main = results.reduce((a, b) => (a.detection.box.area > b.detection.box.area ? a : b));
     descriptor = main.descriptor ? Array.from(main.descriptor) : undefined;
     gazeAway = estimateGazeAway(main.landmarks, main.detection.box);
+    const box = main.detection.box;
+    faceBox = { x: box.x, y: box.y, width: box.width, height: box.height };
   }
-  return { faceCount, descriptor, gazeAway };
+  return { faceCount, descriptor, gazeAway, faceBox };
 }
 
 // Euclidean distance between two face descriptors (lower = more likely the same person). ~<0.6 is

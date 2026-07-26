@@ -1,4 +1,5 @@
 const express = require("express");
+const wrapRouter = require("../middleware/wrapRouter");
 const { listMine, unreadCount, markRead, markAllRead, remove } = require("../controllers/adminNotificationController");
 const { requireAuth, requireRole } = require("../middleware/auth");
 
@@ -11,4 +12,4 @@ router.patch("/read-all", requireAdmin, markAllRead);
 router.patch("/:id/read", requireAdmin, markRead);
 router.delete("/:id", requireAdmin, remove);
 
-module.exports = router;
+module.exports = wrapRouter(router);

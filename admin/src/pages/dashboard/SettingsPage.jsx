@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Building2, User, Mail, Phone, Bot, ShieldCheck, BellRing, Palette, Save, AlertTriangle } from "lucide-react";
+import { Building2, User, Mail, Phone, Bot, ShieldCheck, BellRing, Palette, Save, AlertTriangle, Globe2, Copy } from "lucide-react";
 import api from "../../api/client.js";
 import { useAdminAuth } from "../../auth/useAdminAuth.js";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
@@ -99,6 +99,190 @@ function toPayload(f) {
     },
     branding: { useCustomBranding: f.brandingCustom, primaryColor: f.brandingColor },
   };
+}
+
+// Phase 15 — distribution: public careers/feed URLs + tenant board credentials.
+// Credentials are WRITE-ONLY: the API never returns stored secrets, so the form
+// always starts blank and only shows "configured / last test" status.
+const CREDENTIAL_FIELDS = {
+  naukri: [
+    { key: "clientId", label: "Client ID" },
+    { key: "apiKey", label: "API key" },
+  ],
+  webhook: [
+    { key: "url", label: "Webhook URL" },
+    { key: "secret", label: "Signing secret" },
+  ],
+  linkedin: [{ key: "accessToken", label: "Access token" }],
+  indeed: [{ key: "accessToken", label: "Access token" }],
+  ziprecruiter: [{ key: "accessToken", label: "Access token" }],
+};
+
+function IntegrationsSection() {
+  const toast = useToast();
+  const [careers, setCareers] = useState(null);
+  const [boards, setBoards] = useState([]);
+  const [drafts, setDrafts] = useState({}); // board → { field: value }
+  const [busyBoard, setBusyBoard] = useState(null);
+
+  useEffect(() => {
+    api.get("/company-settings/careers-info").then((res) => setCareers(res.data)).catch(() => {});
+    loadBoards();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function loadBoards() {
+    try {
+      const res = await api.get("/company-settings/board-credentials");
+      setBoards(res.data.boards || []);
+    } catch {
+      // section stays empty — not fatal for the rest of settings
+    }
+  }
+
+  async function copyText(text, label) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error("Could not copy");
+    }
+  }
+
+  async function saveCredential(board) {
+    const fields = CREDENTIAL_FIELDS[board] || [];
+    const secrets = {};
+    for (const f of fields) {
+      const v = (drafts[board]?.[f.key] || "").trim();
+      if (!v) return toast.error(`${f.label} is required`);
+      secrets[f.key] = v;
+    }
+    setBusyBoard(board);
+    try {
+      await api.put(`/company-settings/board-credentials/${board}`, { secrets });
+      setDrafts((d) => ({ ...d, [board]: {} }));
+      toast.success("Credentials saved (encrypted at rest — never shown again)");
+      await loadBoards();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Could not save credentials");
+    } finally {
+      setBusyBoard(null);
+    }
+  }
+
+  async function testCredential(board) {
+    setBusyBoard(board);
+    try {
+      await api.post(`/company-settings/board-credentials/${board}/test`);
+      toast.success("Connection OK");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Connection test failed");
+    } finally {
+      setBusyBoard(null);
+      await loadBoards();
+    }
+  }
+
+  async function disconnect(board) {
+    if (!confirm(`Disconnect ${board}? The stored credentials are deleted.`)) return;
+    setBusyBoard(board);
+    try {
+      await api.delete(`/company-settings/board-credentials/${board}`);
+      toast.success("Disconnected");
+      await loadBoards();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Could not disconnect");
+    } finally {
+      setBusyBoard(null);
+    }
+  }
+
+  return (
+    <Card>
+      <h2 className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-900">
+        <Globe2 className="h-4.5 w-4.5 text-brand-600" /> Integrations & Distribution
+      </h2>
+      <p className="mb-4 text-sm text-slate-500">
+        Your public careers page and feeds need nobody's permission — Google for Jobs and the aggregator network index
+        them for free. Board accounts you already pay for connect below.
+      </p>
+
+      {careers && (
+        <div className="mb-5 space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+          {[
+            { label: "Careers page", value: careers.careersUrl },
+            { label: "Jobs feed (XML)", value: careers.feedUrl },
+            { label: "Jobs sitemap", value: careers.sitemapUrl },
+          ].map((row) => (
+            <div key={row.label} className="flex items-center justify-between gap-3">
+              <span className="shrink-0 text-slate-400">{row.label}</span>
+              <span className="truncate font-mono text-xs text-slate-600">{row.value}</span>
+              <button onClick={() => copyText(row.value, row.label)} className="shrink-0 text-slate-400 hover:text-brand-700" title="Copy">
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          <p className="pt-1 text-xs text-slate-400">
+            Submit the feed once to Adzuna, Jooble, Talent.com and Careerjet — no contract needed; they crawl it from
+            then on.
+          </p>
+        </div>
+      )}
+
+      <div className="space-y-4">
+        {boards.map((b) => (
+          <div key={b.board} className="rounded-xl border border-slate-200 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-slate-800">
+                {b.name} <Badge tone="slate">Tier {b.tier}</Badge>
+              </p>
+              <div className="flex items-center gap-2">
+                {!b.enabled && <Badge tone="amber">{b.reason}</Badge>}
+                {b.configured ? (
+                  <Badge tone={b.lastTestOk === false ? "red" : "green"}>
+                    connected{b.lastTestedAt ? ` · tested ${new Date(b.lastTestedAt).toLocaleDateString()}` : ""}
+                  </Badge>
+                ) : (
+                  <Badge tone="slate">not connected</Badge>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {(CREDENTIAL_FIELDS[b.board] || []).map((f) => (
+                <FormGroup key={f.key}>
+                  <Label>{f.label}</Label>
+                  <Input
+                    type="password"
+                    autoComplete="off"
+                    placeholder={b.configured ? "•••••• (stored encrypted)" : ""}
+                    value={drafts[b.board]?.[f.key] || ""}
+                    onChange={(e) => setDrafts((d) => ({ ...d, [b.board]: { ...d[b.board], [f.key]: e.target.value } }))}
+                  />
+                </FormGroup>
+              ))}
+            </div>
+
+            <div className="mt-1 flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" loading={busyBoard === b.board} onClick={() => saveCredential(b.board)}>
+                Save credentials
+              </Button>
+              {b.configured && (
+                <>
+                  <Button size="sm" variant="outline" loading={busyBoard === b.board} onClick={() => testCredential(b.board)}>
+                    Test connection
+                  </Button>
+                  <Button size="sm" variant="outline" loading={busyBoard === b.board} onClick={() => disconnect(b.board)}>
+                    Disconnect
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
 }
 
 export default function SettingsPage() {
@@ -336,6 +520,8 @@ export default function SettingsPage() {
               </div>
             </FormGroup>
           </Card>
+
+          <IntegrationsSection />
 
           <div className="sticky bottom-4 flex justify-end">
             <Button onClick={save} loading={saving} className="shadow-lg">

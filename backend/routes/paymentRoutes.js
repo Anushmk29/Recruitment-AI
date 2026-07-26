@@ -1,4 +1,5 @@
 const express = require("express");
+const wrapRouter = require("../middleware/wrapRouter");
 const {
   createOrder,
   verifyPayment,
@@ -24,4 +25,4 @@ router.post("/:paymentId/cancel", requireAdmin, cancelPayment);
 router.get("/history", requireAdmin, paymentHistory);
 router.get("/invoices/:id", requireAdmin, getInvoice);
 
-module.exports = router;
+module.exports = wrapRouter(router);

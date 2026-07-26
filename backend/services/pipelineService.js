@@ -127,6 +127,13 @@ async function applyTransition(candidate, toStage, { note, actorName, offerMessa
   syncOffer(candidate, target, offerMessage);
   await candidate.save();
 
+  // Outcome capture (Phase 10.1): joins this candidate's engine score to what
+  // actually happened, feeding the nightly calibration. Fire-and-forget — a
+  // metering failure must never block a stage move.
+  require("./scoreOutcomeService")
+    .recordTransition(candidate, target, { by: actorName || "system" })
+    .catch(() => {});
+
   await dispatchStageNotifications(candidate, target, note);
   emitStageUpdate(candidate);
 

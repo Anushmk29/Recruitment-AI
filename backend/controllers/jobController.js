@@ -1,7 +1,13 @@
 const Job = require("../models/Job");
 const { generateJobSlug } = require("../utils/slug");
+const rubricService = require("../services/rubricService");
+const { sourceHashOf } = require("../utils/rubricEngine");
 
 async function createJob(req, res) {
+  // Plan quota (Phase 11.1): job postings block at the plan boundary with a
+  // machine-readable 429 — never a silent failure.
+  await require("../services/quotaService").enforce(req.user.company, "jobs", { actor: req.user });
+
   const { slug, ...body } = req.body;
   const job = await Job.create({ ...body, company: req.user.company, slug: generateJobSlug(body.title) });
   res.status(201).json(job);
@@ -38,8 +44,33 @@ async function getJob(req, res) {
 
 async function updateJob(req, res) {
   const { company, ...updates } = req.body;
-  const job = await Job.findOneAndUpdate({ _id: req.params.id, company: req.user.company }, updates, { new: true });
+  const job = await Job.findOne({ _id: req.params.id, company: req.user.company });
   if (!job) return res.status(404).json({ error: "Job not found" });
+
+  // If the edit changed the JD content, any existing rubric is now compiled from
+  // stale text — supersede() drafts a new version (the old approved one stays
+  // active, and historical scores keep pointing at it, until a human approves
+  // the successor). Fire-and-forget: rubric compilation must not block the save.
+  const hashBefore = sourceHashOf(job);
+  const wasPublished = job.status === "published";
+  Object.assign(job, updates);
+  await job.save();
+
+  // Lifecycle sync (Phase 15.8): un-publishing a job withdraws it from every
+  // board it went to. Fire-and-forget — board round-trips must not block the save.
+  if (wasPublished && job.status !== "published") {
+    require("../services/jobPublishService")
+      .withdrawAllForJob(job._id, req.user.company, `status → ${job.status}`)
+      .catch((err) => console.error(`[publish] withdraw-all failed for job ${job._id}:`, err.message));
+  }
+  if (sourceHashOf(job) !== hashBefore) {
+    rubricService
+      .supersede(job)
+      .then((draft) => {
+        if (draft) console.log(`[rubric] JD edit superseded rubric for job ${job._id} — draft v${draft.version} awaiting review`);
+      })
+      .catch((err) => console.error(`[rubric] supersede failed for job ${job._id}:`, err.message));
+  }
   res.json(job);
 }
 
@@ -56,7 +87,76 @@ async function publishJob(req, res) {
 async function deleteJob(req, res) {
   const job = await Job.findOneAndDelete({ _id: req.params.id, company: req.user.company });
   if (!job) return res.status(404).json({ error: "Job not found" });
+  // Lifecycle sync (Phase 15.8): a deleted job is withdrawn from every board.
+  require("../services/jobPublishService")
+    .withdrawAllForJob(job._id, req.user.company, "job deleted")
+    .catch((err) => console.error(`[publish] withdraw-all failed for job ${job._id}:`, err.message));
   res.status(204).send();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 15 — multi-board publishing
+// ---------------------------------------------------------------------------
+
+// GET /api/jobs/:id/publications — per-board status for the publish UI: the
+// driver list (with tier + availability) merged with this job's PublishedJob rows.
+async function listPublications(req, res) {
+  const job = await Job.findOne({ _id: req.params.id, company: req.user.company });
+  if (!job) return res.status(404).json({ error: "Job not found" });
+
+  const { listDrivers } = require("../services/connectors");
+  const PublishedJob = require("../models/PublishedJob");
+  const boardCredentialService = require("../services/boardCredentialService");
+
+  const rows = await PublishedJob.find({ company: req.user.company, job: job._id }).lean();
+  const byBoard = Object.fromEntries(rows.map((r) => [r.board, r]));
+
+  const boards = [];
+  for (const d of listDrivers()) {
+    const credential = d.needsCredential ? await boardCredentialService.status(req.user.company, d.key) : null;
+    const row = byBoard[d.key];
+    boards.push({
+      board: d.key,
+      name: d.name,
+      tier: d.tier,
+      enabled: d.enabled,
+      reason: d.reason,
+      needsCredential: d.needsCredential,
+      credentialConfigured: credential ? credential.configured : true,
+      validationErrors: d.enabled ? require("../services/connectors").getDriver(d.key).validate(job) : [],
+      status: row?.status || null,
+      externalUrl: row?.externalUrl || null,
+      error: row?.error || null,
+      publishedAt: row?.publishedAt || null,
+      lastSyncedAt: row?.lastSyncedAt || null,
+    });
+  }
+  res.json({ boards });
+}
+
+// POST /api/jobs/:id/publish-boards  body: { boards: ["careers", "naukri", …] }
+async function publishBoards(req, res) {
+  const job = await Job.findOne({ _id: req.params.id, company: req.user.company });
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  if (job.status !== "published") {
+    return res.status(400).json({ error: "Publish the job in the ATS first — boards only receive published jobs" });
+  }
+  const boards = Array.isArray(req.body?.boards) ? req.body.boards.slice(0, 20) : [];
+  if (!boards.length) return res.status(400).json({ error: "boards is required" });
+
+  const results = await require("../services/jobPublishService").publishToBoards(job, boards, req.user);
+  res.json({ results });
+}
+
+// POST /api/jobs/:id/withdraw-board  body: { board }
+async function withdrawBoard(req, res) {
+  const job = await Job.findOne({ _id: req.params.id, company: req.user.company });
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  const PublishedJob = require("../models/PublishedJob");
+  const row = await PublishedJob.findOne({ company: req.user.company, job: job._id, board: String(req.body?.board || "").toLowerCase() });
+  if (!row) return res.status(404).json({ error: "This job is not published on that board" });
+  await require("../services/jobPublishService").processPublication(row._id, "withdraw");
+  res.json({ ok: true });
 }
 
 module.exports = {
@@ -67,4 +167,7 @@ module.exports = {
   updateJob,
   publishJob,
   deleteJob,
+  listPublications,
+  publishBoards,
+  withdrawBoard,
 };

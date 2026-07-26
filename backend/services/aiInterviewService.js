@@ -15,6 +15,7 @@
 const Candidate = require("../models/Candidate");
 const CompanySettings = require("../models/CompanySettings");
 const llm = require("./llmService");
+const { resolveRole } = require("../config/models");
 const usageService = require("./usageService");
 const tenantContext = require("../utils/tenantContext");
 const { applyTransition } = require("./pipelineService");
@@ -29,12 +30,39 @@ const {
   planPrompt,
   QUESTION_SCHEMA,
   questionPrompt,
+  ANSWER_SCORE_SCHEMA,
+  answerScorePrompt,
   EVALUATION_SCHEMA,
   evaluationPrompt,
 } = require("../utils/interviewPrompts");
 
+const probeService = require("./probeService");
+
 const PROVIDER = "openrouter";
 const MAX_ANSWER_CHARS = 4000;
+
+// Phase 8.3 — the closing condition is CODE, not the model: an interview may
+// end early only when every claim-probe is covered AND the minimum length is
+// reached. maxQuestions stays the hard ceiling (enforced in submitAnswer).
+function closingAllowed(ai) {
+  const uncovered = (ai.probes || []).filter((p) => p.status === "pending");
+  return uncovered.length === 0 && ai.questionCount >= (ai.minQuestions || 1);
+}
+
+function pendingProbes(ai) {
+  return (ai.probes || []).filter((p) => p.status === "pending");
+}
+
+// Mark the probe a just-pushed question turn addresses (validated: only a
+// pending probe's id counts — the model can't invent coverage).
+function markProbeAsked(ai, probeId) {
+  if (!probeId) return;
+  const probe = (ai.probes || []).find((p) => p.claimId === probeId && p.status === "pending");
+  if (!probe) return;
+  probe.status = "asked";
+  probe.turnIndex = ai.turns.length - 1; // the question turn just pushed
+  probe.askedAt = new Date();
+}
 
 function clampScore(n) {
   const v = Number(n);
@@ -115,23 +143,35 @@ function fallbackAnswerScore(text) {
 
 function fallbackQuestion({ ai, job }) {
   const asked = new Set(ai.askedQuestions);
+  const lastAnswer = [...ai.turns].reverse().find((t) => t.role === "candidate");
+  const answerScore = lastAnswer ? fallbackAnswerScore(lastAnswer.text) : 0;
+
+  // Claim-probes are required coverage even on the deterministic path — their
+  // questions were generated (and neutrality-checked) up front, so the fallback
+  // can ask them verbatim.
+  const probe = pendingProbes(ai).find((p) => !asked.has(p.question));
+  if (probe) {
+    return { answerScore, difficulty: ai.currentDifficulty, topic: "resume claims", question: probe.question, probeId: probe.claimId, isClosing: false };
+  }
+
   const skillQs = (job.requiredSkills || []).map(
     (s) => `Can you explain how you've used ${s} in practice, and a limitation you ran into with it?`
   );
   const pool = [...skillQs, ...GENERIC_QUESTIONS];
   const question = pool.find((q) => !asked.has(q)) || GENERIC_QUESTIONS[ai.questionCount % GENERIC_QUESTIONS.length];
 
-  const lastAnswer = [...ai.turns].reverse().find((t) => t.role === "candidate");
-  const answerScore = lastAnswer ? fallbackAnswerScore(lastAnswer.text) : 0;
-
-  return { answerScore, difficulty: ai.currentDifficulty, topic: "general", question, isClosing: false };
+  return { answerScore, difficulty: ai.currentDifficulty, topic: "general", question, probeId: "", isClosing: false };
 }
 
 // The fallback must NEVER produce an adverse hiring decision — it routes to human review.
+// Phase 9.2: unscored answers are EXCLUDED from the mean instead of being
+// backfilled with a fabricated 55; with nothing scored the overall is null and
+// the report honestly says "not measured".
 function fallbackEvaluation(ai) {
-  const answers = ai.turns.filter((t) => t.role === "candidate");
-  const scored = answers.map((a) => (typeof a.answerScore === "number" ? a.answerScore : 55));
-  const overall = scored.length ? Math.round(scored.reduce((s, v) => s + v, 0) / scored.length) : 50;
+  const scored = ai.turns
+    .filter((t) => t.role === "candidate" && typeof t.answerScore === "number")
+    .map((t) => t.answerScore);
+  const overall = scored.length ? Math.round(scored.reduce((s, v) => s + v, 0) / scored.length) : null;
   return {
     overallScore: overall,
     // The heuristic only measures answer completeness, never per-competency depth —
@@ -146,7 +186,9 @@ function fallbackEvaluation(ai) {
     recommendation: "review", // never strong_hire/hire/maybe/no_hire from a heuristic
     summary:
       "Automated evaluation is unavailable (AI provider not configured, consent not given, or budget exhausted). " +
-      "These indicative scores come from answer-completeness heuristics and must NOT drive a hiring decision — a human should review the transcript.",
+      (scored.length
+        ? "These indicative scores come from answer-completeness heuristics and must NOT drive a hiring decision — a human should review the transcript."
+        : "No answers were scored, so nothing here is measured — a human must review the transcript directly."),
     generatedBy: "fallback",
     provider: null,
     model: null,
@@ -159,15 +201,19 @@ async function makePlan({ session, candidate, job, settings, context, useAi }) {
   if (!useAi) return { plan: fallbackPlan(job), engine: "fallback" };
   const t0 = Date.now();
   try {
-    const { data, usage, model } = await llm.generateJSON({
+    // Model comes from the registry (never a bare string in business logic) with
+    // the tenant's CompanySettings override applied — Phase 2.5.
+    const resolved = resolveRole("interview", settings);
+    const { data, usage, model, cached } = await llm.generateJSON({
       system: INTERVIEWER_SYSTEM,
       prompt: planPrompt(context),
       schema: PLAN_SCHEMA,
       maxTokens: 640,
-      model: settings?.ai?.model,
+      model: resolved.model,
       temperature: settings?.ai?.temperature,
+      promptVersion: PROMPT_VERSION,
     });
-    await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "plan", provider: PROVIDER, model, usage, latencyMs: Date.now() - t0, engine: "ai" });
+    await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "plan", provider: PROVIDER, model, usage, latencyMs: Date.now() - t0, engine: "ai", promptVersion: PROMPT_VERSION, cached });
     return { plan: data, engine: "ai" };
   } catch (err) {
     console.error("[aiInterview] plan generation failed, using fallback:", err.message);
@@ -179,7 +225,8 @@ async function nextQuestion({ session, candidate, job, settings, ai, context, us
   if (!useAi) return { ...fallbackQuestion({ ai, job }), engine: "fallback", model: null, latencyMs: 0 };
   const t0 = Date.now();
   try {
-    const { data, usage, model } = await llm.generateJSON({
+    const resolved = resolveRole("interview", settings);
+    const { data, usage, model, cached } = await llm.generateJSON({
       system: INTERVIEWER_SYSTEM,
       prompt: questionPrompt({
         context,
@@ -188,19 +235,61 @@ async function nextQuestion({ session, candidate, job, settings, ai, context, us
         currentDifficulty: ai.currentDifficulty,
         askedQuestions: ai.askedQuestions,
         questionCount: ai.questionCount,
+        minQuestions: ai.minQuestions,
         maxQuestions: ai.maxQuestions,
+        probes: pendingProbes(ai),
       }),
       schema: QUESTION_SCHEMA,
       maxTokens: 512,
-      model: settings?.ai?.model,
+      model: resolved.model,
       temperature: settings?.ai?.temperature,
+      promptVersion: PROMPT_VERSION,
     });
     const latencyMs = Date.now() - t0;
-    await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "question", provider: PROVIDER, model, usage, latencyMs, engine: "ai" });
+    await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "question", provider: PROVIDER, model, usage, latencyMs, engine: "ai", promptVersion: PROMPT_VERSION, cached });
     return { ...data, engine: "ai", model, latencyMs };
   } catch (err) {
     console.error("[aiInterview] question generation failed, using fallback:", err.message);
     return { ...fallbackQuestion({ ai, job }), engine: "fallback", model: null, latencyMs: Date.now() - t0 };
+  }
+}
+
+// Phase 9.1 — score any candidate answer that never got an answerScore. The
+// hard-stop closing path returns before the next-question call (the only path
+// that used to assign scores), so the FINAL answer of every full-length
+// interview was historically unscored. Runs at finalisation, bias-blinded.
+async function scoreUnscoredAnswers({ session, candidate, job, settings, ai, useAi }) {
+  const blindContext = buildContext(candidate, job, { blind: true });
+  for (let i = 0; i < ai.turns.length; i += 1) {
+    const turn = ai.turns[i];
+    if (turn.role !== "candidate" || typeof turn.answerScore === "number") continue;
+    const questionTurn = [...ai.turns.slice(0, i)].reverse().find((t) => t.role === "ai" && t.kind === "question");
+    if (!questionTurn) continue;
+
+    if (!useAi) {
+      turn.answerScore = fallbackAnswerScore(turn.text);
+      continue;
+    }
+    const t0 = Date.now();
+    try {
+      const resolved = resolveRole("interview", settings);
+      const { data, usage, model, cached } = await llm.generateJSON({
+        system: INTERVIEWER_SYSTEM,
+        prompt: answerScorePrompt({ context: blindContext, question: questionTurn.text, answer: turn.text }),
+        schema: ANSWER_SCORE_SCHEMA,
+        maxTokens: 128,
+        model: resolved.model,
+        temperature: settings?.ai?.temperature,
+        promptVersion: PROMPT_VERSION,
+      });
+      await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "evaluation", provider: PROVIDER, model, usage, latencyMs: Date.now() - t0, engine: "ai", promptVersion: PROMPT_VERSION, cached });
+      const score = clampScore(data.answerScore);
+      if (score !== undefined) turn.answerScore = score;
+    } catch (err) {
+      // Leave it unscored — an honest gap beats a fabricated number (9.2 shows
+      // "not measured" rather than inventing one).
+      console.error("[aiInterview] late answer scoring failed (left unscored):", err.message);
+    }
   }
 }
 
@@ -210,16 +299,18 @@ async function makeEvaluation({ session, candidate, job, settings, ai, useAi }) 
   try {
     // Bias-blinded context: the candidate's name is withheld from the scoring prompt.
     const blindContext = buildContext(candidate, job, { blind: true });
-    const { data, usage, model } = await llm.generateJSON({
+    const resolved = resolveRole("interview", settings);
+    const { data, usage, model, cached } = await llm.generateJSON({
       system: INTERVIEWER_SYSTEM,
       prompt: evaluationPrompt({ context: blindContext, turns: ai.turns }),
       schema: EVALUATION_SCHEMA,
       maxTokens: 1024,
-      model: settings?.ai?.model,
+      model: resolved.model,
       temperature: settings?.ai?.temperature,
+      promptVersion: PROMPT_VERSION,
     });
     const latencyMs = Date.now() - t0;
-    await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "evaluation", provider: PROVIDER, model, usage, latencyMs, engine: "ai" });
+    await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "evaluation", provider: PROVIDER, model, usage, latencyMs, engine: "ai", promptVersion: PROMPT_VERSION, cached });
     return {
       ...data,
       generatedBy: "ai",
@@ -267,6 +358,21 @@ async function beginInterview(session) {
   ai.plan = plan;
   ai.engine = useAi ? "ai" : "fallback";
   ai.currentDifficulty = plan.difficultyEstimate || "medium";
+
+  // Per-job length overrides (Phase 8.3), sanity-clamped so min ≤ max.
+  if (job.interviewMaxQuestions) ai.maxQuestions = job.interviewMaxQuestions;
+  if (job.interviewMinQuestions) ai.minQuestions = Math.min(job.interviewMinQuestions, ai.maxQuestions);
+
+  // Claim-probes (Phase 8.1/8.2): this candidate's unverified high-weight
+  // claims become required coverage. Failure ⇒ empty list, interview as today.
+  const probeResult = await probeService.generateProbesForSession(session, candidate);
+  ai.probes = probeResult.probes;
+  ai.probeEngine = probeResult.engine;
+  if (probeResult.probes.length > 0) {
+    const { PROBE_PROMPT_VERSION } = require("../utils/probePrompts");
+    ai.probePromptVersion = PROBE_PROMPT_VERSION;
+  }
+
   ai.status = "in_progress";
   ai.startedAt = new Date();
 
@@ -277,8 +383,9 @@ async function beginInterview(session) {
   });
 
   const first = await nextQuestion({ session, candidate, job, settings, ai, context, useAi });
-  ai.turns.push({ role: "ai", kind: "question", text: first.question, topic: first.topic, difficulty: first.difficulty, engine: first.engine, model: first.model, latencyMs: first.latencyMs });
+  ai.turns.push({ role: "ai", kind: "question", text: first.question, topic: first.topic, difficulty: first.difficulty, probeId: first.probeId || undefined, engine: first.engine, model: first.model, latencyMs: first.latencyMs });
   ai.askedQuestions.push(first.question);
+  markProbeAsked(ai, first.probeId);
   ai.questionCount = 1;
 
   await session.save();
@@ -332,8 +439,24 @@ async function submitAnswer(session, answerText, opts = {}) {
   if (lastAnswer && score !== undefined) lastAnswer.answerScore = score;
   if (next.difficulty) ai.currentDifficulty = next.difficulty;
 
-  ai.turns.push({ role: "ai", kind: "question", text: next.question, topic: next.topic, difficulty: next.difficulty, engine: next.engine, model: next.model, latencyMs: next.latencyMs });
+  // Phase 8.3 — early end, decided by CODE: the model may propose closing
+  // (isClosing), but it only takes effect once every probe is covered and the
+  // minimum length is reached. In this path the model's "question" is a brief
+  // closing statement, and the final answer was scored above (next.answerScore).
+  if (next.isClosing && closingAllowed(ai)) {
+    ai.turns.push({ role: "ai", kind: "closing", text: next.question, engine: next.engine, model: next.model, latencyMs: next.latencyMs });
+    ai.status = "completed";
+    ai.completedAt = new Date();
+    session.status = "completed";
+    session.completedAt = new Date();
+    await session.save();
+    scheduleFinalization(session._id);
+    return publicState(session);
+  }
+
+  ai.turns.push({ role: "ai", kind: "question", text: next.question, topic: next.topic, difficulty: next.difficulty, probeId: next.probeId || undefined, engine: next.engine, model: next.model, latencyMs: next.latencyMs });
   ai.askedQuestions.push(next.question);
+  markProbeAsked(ai, next.probeId);
   ai.questionCount += 1;
 
   await session.save();
@@ -360,6 +483,10 @@ async function runFinalization(sessionId) {
   const settings = await loadSettings(session.company);
   const useAi = await aiUsable(session, candidate, settings);
 
+  // Phase 9.1: the final answer (and any other scoring gap) is scored BEFORE
+  // the overall evaluation, so every mean is over complete data.
+  await scoreUnscoredAnswers({ session, candidate, job, settings, ai, useAi });
+
   const evaluation = await makeEvaluation({ session, candidate, job, settings, ai, useAi });
   // Voice interviews get delivery + confidence scores derived from the answers' prosody
   // (content is scored by the LLM; how it was spoken is measured, not guessed).
@@ -370,6 +497,12 @@ async function runFinalization(sessionId) {
   }
   ai.evaluation = { ...evaluation, generatedAt: new Date() };
   await session.save();
+
+  // Phase 8: close the loop — assess claim-probe verdicts against the
+  // transcript, write them back to the ClaimGraph, and rescore (a SECOND
+  // assessment, stage post_interview). Failure never blocks completion, and a
+  // contradicted verdict never triggers any pipeline transition here.
+  await probeService.finalizeProbes(session, candidate);
 
   // Advance the pipeline stage (guarded) — a transition error never blocks completion.
   try {
@@ -386,7 +519,7 @@ async function runFinalization(sessionId) {
       companyId: session.company,
       type: "ai_report_ready",
       title: "AI interview report ready",
-      message: `${candidate.basicDetails.name}'s AI interview for ${job.title} is complete. Overall score: ${ai.evaluation.overallScore}${ai.evaluation.recommendation === "review" ? " (needs human review)" : ""}.`,
+      message: `${candidate.basicDetails.name}'s AI interview for ${job.title} is complete. Overall score: ${ai.evaluation.overallScore ?? "not measured"}${ai.evaluation.recommendation === "review" ? " (needs human review)" : ""}.`,
       meta: { candidateId: candidate._id, sessionId: session._id, score: ai.evaluation.overallScore, recommendation: ai.evaluation.recommendation },
     });
   } catch (err) {
@@ -394,4 +527,13 @@ async function runFinalization(sessionId) {
   }
 }
 
-module.exports = { beginInterview, submitAnswer, publicState };
+module.exports = {
+  beginInterview,
+  submitAnswer,
+  publicState,
+  runFinalization,
+  closingAllowed,
+  // exported for tests (Phase 9 gates)
+  scoreUnscoredAnswers,
+  fallbackEvaluation,
+};

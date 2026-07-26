@@ -86,6 +86,10 @@ async function registerCompany({ companyDetails, adminDetails }) {
   });
 
   const passwordHash = await hashPassword(password);
+  // Recruiter-seat quota (Phase 11.1). At first registration no subscription
+  // exists yet so this is a no-op — it binds the moment a plan is active, and
+  // any future invite/add-recruiter flow MUST route through the same check.
+  await require("./quotaService").enforce(company._id, "recruiters");
   const admin = await User.create({
     name: fullName.trim(),
     email: normalizedEmail,

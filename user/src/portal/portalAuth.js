@@ -1,7 +1,10 @@
 const STORAGE_KEY = "interviewPortalAuth";
 
-export function saveAuth({ jwt, rawToken }) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ jwt, rawToken }));
+// Merges onto whatever is already stored, so a later partial call (e.g. the dashboard refreshing
+// just jobTitle/candidateName) can't clobber the jwt/rawToken an earlier call already saved.
+export function saveAuth(patch) {
+  const current = getAuth() || {};
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...current, ...patch }));
 }
 
 export function getAuth() {

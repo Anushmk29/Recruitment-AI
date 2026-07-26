@@ -7,7 +7,7 @@ const tenantContext = require("../utils/tenantContext");
 
 // Record one metered call. Best-effort — a metering failure must never break the
 // interview, so errors are swallowed and logged.
-async function recordUsage({ company, session, candidate, kind, provider, model, usage, latencyMs, engine }) {
+async function recordUsage({ company, session, candidate, kind, provider, model, usage, latencyMs, engine, promptVersion, cached }) {
   try {
     const promptTokens = usage?.promptTokens || 0;
     const completionTokens = usage?.completionTokens || 0;
@@ -18,6 +18,8 @@ async function recordUsage({ company, session, candidate, kind, provider, model,
       kind,
       provider,
       model,
+      promptVersion,
+      cached: Boolean(cached),
       promptTokens,
       completionTokens,
       totalTokens: promptTokens + completionTokens,

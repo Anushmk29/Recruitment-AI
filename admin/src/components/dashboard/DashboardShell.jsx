@@ -15,10 +15,12 @@ import {
   Menu,
   X,
   ChevronDown,
+  Scale,
+  History,
 } from "lucide-react";
 import { useAdminAuth } from "../../auth/useAdminAuth.js";
 import { clearAdminAuth, getAdminRefreshToken } from "../../auth/adminAuth.js";
-import api from "../../api/client.js";
+import api, { getViewAsCompany, setViewAsCompany } from "../../api/client.js";
 import { CompanyDataProvider, useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { NotificationProvider } from "../../context/NotificationContext.jsx";
 import NotificationBell from "./NotificationBell.jsx";
@@ -27,11 +29,13 @@ const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/jobs", label: "Jobs", icon: Briefcase },
   { to: "/candidates", label: "Candidates", icon: Users },
+  { to: "/review-queue", label: "Review Queue", icon: Scale },
   { to: "/pipeline", label: "Pipeline", icon: KanbanSquare },
   { to: "/ai-interviews", label: "AI Interviews", icon: Bot },
   { to: "/reports", label: "Reports", icon: BarChart3 },
   { to: "/subscription", label: "Subscription", icon: CreditCard },
   { to: "/notifications", label: "Notifications", icon: Bell },
+  { to: "/audit-trail", label: "Audit Trail", icon: History },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -135,9 +139,30 @@ function TopNav({ onMenuClick }) {
 
 function ShellInner({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const viewAs = getViewAsCompany();
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen flex-col bg-slate-50">
+      {/* Phase 16.5 — view-as banner: platform staff looking at a tenant.
+          Read-only is enforced SERVER-side; this banner is honesty, not the guard. */}
+      {viewAs && (
+        <div className="flex items-center justify-between gap-3 bg-amber-500 px-4 py-2 text-sm font-medium text-white">
+          <span>
+            Viewing as tenant <span className="font-bold">{viewAs.name}</span> — read-only. Every mutation is rejected by
+            the server.
+          </span>
+          <button
+            onClick={() => {
+              setViewAsCompany(null);
+              window.location.assign("/platform");
+            }}
+            className="shrink-0 rounded-lg bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30"
+          >
+            Exit view-as
+          </button>
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1">
       <aside className="hidden w-64 shrink-0 flex-col bg-slate-900 lg:flex">
         <SidebarContent />
       </aside>
@@ -161,6 +186,7 @@ function ShellInner({ children }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <TopNav onMenuClick={() => setMobileOpen(true)} />
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+      </div>
       </div>
     </div>
   );

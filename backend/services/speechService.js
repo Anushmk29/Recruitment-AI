@@ -24,7 +24,11 @@ function cfg() {
     sttModel: process.env.DEEPGRAM_STT_MODEL || "nova-3",
     ttsModel: process.env.DEEPGRAM_TTS_MODEL || "aura-2-thalia-en",
     language: process.env.DEEPGRAM_STT_LANGUAGE || "en",
-    utteranceEndMs: Number(process.env.DEEPGRAM_UTTERANCE_END_MS || 2000),
+    // 2000ms was tuned for a snappy chat, not an interview: a candidate pausing to find a word
+    // read as "done speaking" and their turn ended mid-thought. 3200ms gives real thinking room;
+    // the client adds a further visible grace period on top (see useVoiceInterview.js) before
+    // actually treating silence as the end of the turn.
+    utteranceEndMs: Number(process.env.DEEPGRAM_UTTERANCE_END_MS || 3200),
     ttlSeconds: Number(process.env.VOICE_TOKEN_TTL_SECONDS || 60),
   };
 }
@@ -157,4 +161,24 @@ async function grantStreamingToken() {
   };
 }
 
-module.exports = { isEnabled, provider, grantStreamingToken, synthesize };
+// ---- Cost estimation (Phase 9.4 — voice spend becomes attributable) ----
+// Deepgram list prices as overridable defaults: Aura TTS ≈ $0.015 / 1k chars
+// (1.5 cents), Nova streaming STT ≈ $0.0077 / min (0.77 cents). Estimates are
+// for attribution and budget caps, not invoicing — the provider's bill wins.
+
+function ttsCostCents(chars) {
+  const per1k = Number(process.env.DEEPGRAM_TTS_CENTS_PER_1K_CHARS || 1.5);
+  return Math.round((Math.max(0, chars) / 1000) * per1k * 100) / 100;
+}
+
+function sttCostCents(durationMs) {
+  const perMin = Number(process.env.DEEPGRAM_STT_CENTS_PER_MIN || 0.77);
+  return Math.round((Math.max(0, durationMs) / 60000) * perMin * 100) / 100;
+}
+
+function models() {
+  const c = cfg();
+  return { sttModel: c.sttModel, ttsModel: c.ttsModel };
+}
+
+module.exports = { isEnabled, provider, grantStreamingToken, synthesize, ttsCostCents, sttCostCents, models };

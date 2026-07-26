@@ -17,6 +17,12 @@ import { authHeader } from "./portalAuth.js";
 
 const FILLERS = ["um", "uh", "erm", "hmm", "like", "you know", "sort of", "kind of", "basically", "actually"];
 
+// Visible grace window between "you've gone quiet" and actually ending the turn. Deepgram's
+// utterance_end_ms already waited once (see speechService.js); this is a second, client-owned
+// wait so a candidate who pauses to think has a real chance to keep talking before the answer
+// is treated as final. Cancelled the instant new speech arrives.
+const ENDING_GRACE_MS = 4000;
+
 function pickMimeType() {
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
   if (typeof MediaRecorder === "undefined") return "";
@@ -55,12 +61,14 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
   const [phase, setPhase] = useState("idle"); // idle | speaking | listening | processing
   const [interim, setInterim] = useState("");
   const [error, setError] = useState("");
+  const [endingSoon, setEndingSoon] = useState(false); // in the grace window, about to auto-submit
 
   // Latest end-of-turn callback (the caller submits the answer + advances). Kept in a ref so the
   // live WebSocket message handler always calls the current one without reopening the socket.
   const autoEndRef = useRef(onAutoEndOfTurn);
   useEffect(() => { autoEndRef.current = onAutoEndOfTurn; }, [onAutoEndOfTurn]);
   const endedRef = useRef(false); // guards a single auto end-of-turn per answer
+  const graceTimerRef = useRef(null); // pending "ending soon" -> real auto-submit timer
 
   const wsRef = useRef(null);
   const recorderRef = useRef(null);
@@ -80,6 +88,9 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
   const cleanupAnswer = useCallback(() => {
     if (keepAliveRef.current) clearInterval(keepAliveRef.current);
     keepAliveRef.current = null;
+    if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
+    graceTimerRef.current = null;
+    setEndingSoon(false);
     if (samplerRef.current) clearInterval(samplerRef.current);
     samplerRef.current = null;
     try {
@@ -151,8 +162,14 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     if (!supported) throw new Error("unsupported");
     setError("");
     setInterim("");
+    setEndingSoon(false);
     endedRef.current = false;
-    stopSpeaking(); // barge-in: cut any question playback the moment the candidate starts
+    // Defensive cleanup, NOT barge-in: InterviewRoom awaits speak() before calling
+    // startListening(), so the mic is never open during question playback — the
+    // candidate cannot interrupt the voice mid-sentence. True barge-in would need
+    // the mic open during TTS with echo cancellation; until that exists, this line
+    // only clears any stray audio before the mic opens.
+    stopSpeaking();
 
     const { data: cred } = await api.get("/interview-portal/voice/token", { headers: authHeader() });
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -163,7 +180,7 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       model: p.model || "nova-3",
       language: p.language || "en",
       interim_results: "true",
-      utterance_end_ms: String(p.utteranceEndMs || 2000),
+      utterance_end_ms: String(p.utteranceEndMs || 3200),
       punctuate: "true",
       smart_format: "true",
     });
@@ -203,11 +220,19 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       let msg;
       try { msg = JSON.parse(evt.data); } catch { return; }
       if (msg.type === "UtteranceEnd") {
-        // Hands-free turn-taking: the candidate has been silent for utterance_end_ms after
-        // speaking, so the turn is over — hand off to the caller to submit and advance.
+        // Hands-free turn-taking: Deepgram has seen utterance_end_ms of silence after speech.
+        // Don't submit yet — open a further visible grace window so a candidate who paused to
+        // think can keep talking and cancel it. Only the grace timer actually ends the turn.
         if ((acc.finalText || "").trim() && !endedRef.current) {
-          endedRef.current = true;
-          autoEndRef.current?.();
+          setEndingSoon(true);
+          if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
+          graceTimerRef.current = setTimeout(() => {
+            graceTimerRef.current = null;
+            if (!endedRef.current) {
+              endedRef.current = true;
+              autoEndRef.current?.();
+            }
+          }, ENDING_GRACE_MS);
         }
         return;
       }
@@ -215,6 +240,13 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       const alt = msg.channel?.alternatives?.[0];
       const t = alt?.transcript || "";
       if (!t) return;
+      // Real speech arrived — if a grace timer was counting down to auto-submit, the candidate
+      // just answered it by talking again. Cancel it and resume normal listening.
+      if (graceTimerRef.current) {
+        clearTimeout(graceTimerRef.current);
+        graceTimerRef.current = null;
+        setEndingSoon(false);
+      }
       if (msg.is_final) {
         acc.finalText = `${acc.finalText} ${t}`.trim();
         acc.lastInterim = "";
@@ -294,5 +326,16 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     };
   }, [stopSpeaking, cleanupAnswer]);
 
-  return { supported, phase, interim, error, speak, stopSpeaking, startListening, finishListening, cancelListening };
+  return {
+    supported,
+    phase,
+    interim,
+    error,
+    endingSoon,
+    speak,
+    stopSpeaking,
+    startListening,
+    finishListening,
+    cancelListening,
+  };
 }

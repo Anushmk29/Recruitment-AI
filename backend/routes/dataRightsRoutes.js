@@ -1,4 +1,5 @@
 const express = require("express");
+const wrapRouter = require("../middleware/wrapRouter");
 const { exportCandidateData, eraseCandidateData, getDpoContact } = require("../controllers/dataRightsController");
 const { requireAuth, requireRole, requireActiveCompany } = require("../middleware/auth");
 
@@ -12,4 +13,4 @@ router.delete("/candidates/:id", requireAdmin, eraseCandidateData);
 // Public grievance / Data-Protection Officer contact for a company.
 router.get("/dpo/:companyId", getDpoContact);
 
-module.exports = router;
+module.exports = wrapRouter(router);

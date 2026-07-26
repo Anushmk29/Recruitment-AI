@@ -1,0 +1,115 @@
+# Local/pilot infrastructure for Recruitment-AI.
+#
+#   docker compose up -d                 # infra only: Mongo + Redis + MinIO (+ bucket init)
+#   docker compose --profile app up -d   # infra + the backend API built from backend/Dockerfile
+#
+# Default workflow: run infra in Docker, run the backend on the host (`cd backend && npm run dev`)
+# with backend/.env pointing at localhost. The `api` service is for running fully containerised
+# (it overrides the host-oriented URLs in backend/.env with container-network ones).
+#
+# PORT NOTE: the backend owns :9000, and MinIO's S3 API ALSO defaults to :9000 — so MinIO is
+# mapped to host :9100 (API) and :9101 (web console). In backend/.env use:
+#   S3_ENDPOINT=http://127.0.0.1:9100
+#   S3_FORCE_PATH_STYLE=true
+#   S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY = the MinIO root credentials below
+
+name: recruitment-ai
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: recruitai-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: recruitai-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: recruitai-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9100:9000" # S3 API (host 9100 — the backend owns 9000)
+      - "9101:9001" # web console → http://localhost:9101
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # One-shot: create the bucket the backend expects (S3_BUCKET). Uses the same default
+  # as the docs; override by exporting S3_BUCKET before `docker compose up`.
+  minio-init:
+    image: minio/mc
+    container_name: recruitai-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin} &&
+      mc mb --ignore-existing local/${S3_BUCKET:-recruitment} &&
+      echo 'bucket ready: ${S3_BUCKET:-recruitment}'
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+
+  # Fully containerised backend — opt in with:  docker compose --profile app up -d
+  # Reads backend/.env for secrets, then overrides the host-oriented connection URLs
+  # with container-network ones (mongo/redis/minio are DNS names on the compose network).
+  api:
+    profiles: ["app"]
+    build: ./backend
+    container_name: recruitai-api
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/recruitment
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_FORCE_PATH_STYLE: "true"
+    ports:
+      - "9000:9000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+volumes:
+  mongo-data:
+  redis-data:
+  minio-data:

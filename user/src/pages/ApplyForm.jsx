@@ -109,6 +109,11 @@ export default function ApplyForm() {
     data.append("certificates", JSON.stringify(certificates));
     data.append("consentDataProcessing", consentData);
     data.append("consentAiProcessing", consentAi);
+    // Phase 15.1 — source attribution carried from the apply link (?src=…).
+    // Analytics-only; the server sanitises and it never affects scoring.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("src")) data.append("src", params.get("src"));
+    if (params.get("campaign")) data.append("campaign", params.get("campaign"));
 
     try {
       await api.post(`/jobs/${id}/apply`, data, {

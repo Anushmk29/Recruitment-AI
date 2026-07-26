@@ -1,4 +1,5 @@
 const express = require("express");
+const wrapRouter = require("../middleware/wrapRouter");
 const rateLimit = require("express-rate-limit");
 const { register, resendOtp, verifyOtp } = require("../controllers/companyAuthController");
 
@@ -16,4 +17,4 @@ router.post("/register", otpLimiter, register);
 router.post("/resend-otp", otpLimiter, resendOtp);
 router.post("/verify-otp", otpLimiter, verifyOtp);
 
-module.exports = router;
+module.exports = wrapRouter(router);

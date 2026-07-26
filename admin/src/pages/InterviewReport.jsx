@@ -104,6 +104,71 @@ function CompetencyTable({ rows }) {
   );
 }
 
+// Phase 8: the Claim → Probe → Verdict loop, closed. Each probed résumé claim
+// with its verdict and BOTH quotes (résumé vs transcript) side by side, plus the
+// pre→post score delta the verdicts produced. A contradicted claim is evidence
+// for a human — never an automatic rejection.
+const PROBE_VERDICT_META = {
+  verified: { label: "Verified in interview", tone: "green", border: "border-emerald-200 bg-emerald-50/60" },
+  contradicted: { label: "Contradicted in interview", tone: "red", border: "border-red-200 bg-red-50/60" },
+  inconclusive: { label: "Inconclusive", tone: "amber", border: "border-amber-200 bg-amber-50/50" },
+};
+
+function ClaimVerificationCard({ cv }) {
+  if (!cv || !cv.probes?.length) return null;
+  const d = cv.scoreDelta;
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+          <ShieldCheck className="h-4 w-4 text-brand-600" /> Claim verification
+        </h3>
+        {d && (
+          <Badge tone={d.delta > 0 ? "green" : d.delta < 0 ? "red" : "slate"}>
+            Score {d.pre.overallScore} → {d.post.overallScore} ({d.delta > 0 ? "+" : ""}{d.delta})
+          </Badge>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-slate-400">
+        These questions tested résumé claims the screening couldn&apos;t verify. Verdicts changed the evidence score through the
+        verification multiplier{d ? "" : " (rescore pending)"}.
+      </p>
+      <div className="mt-4 space-y-3">
+        {cv.probes.map((p) => {
+          const meta = p.verdict ? PROBE_VERDICT_META[p.verdict] : null;
+          return (
+            <div key={p.claimId} className={`rounded-xl border p-3 ${meta ? meta.border : "border-slate-200 bg-slate-50/60"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Badge tone={meta ? meta.tone : "slate"}>
+                  {meta ? meta.label : p.status === "asked" ? "Asked — verdict pending" : "Not covered in this interview"}
+                </Badge>
+              </div>
+              {p.resumeQuote && (
+                <p className="mt-2 text-xs text-slate-500">
+                  <span className="font-semibold uppercase tracking-wide text-slate-400">Résumé:</span> &ldquo;{p.resumeQuote}&rdquo;
+                </p>
+              )}
+              <p className="mt-1 text-sm text-slate-700">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Asked:</span> {p.question}
+              </p>
+              {p.answerQuote && (
+                <p className="mt-1 text-xs text-slate-600">
+                  <span className="font-semibold uppercase tracking-wide text-slate-400">Answer:</span> &ldquo;{p.answerQuote}&rdquo;
+                </p>
+              )}
+              {p.verdictReasoning && <p className="mt-1.5 text-xs italic text-slate-400">{p.verdictReasoning}</p>}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
+        A contradicted claim is evidence for your judgement — both quotes are shown so you can read the exchange yourself. It never
+        auto-rejects.
+      </p>
+    </Card>
+  );
+}
+
 // §5: explicit action verb + one-line justification — the report's final word.
 function RecommendedActionCard({ action }) {
   if (!action) return null;
@@ -132,7 +197,52 @@ function IdentityRow({ identityMatch }) {
   );
 }
 
-function IntegrityCard({ proctoring }) {
+// Phase 14.5 — inline player for an event-anchored evidence clip. The bytes
+// stream through an authenticated endpoint (a bare <video src> can't send the
+// bearer token), and every fetch is audit-logged server-side.
+function EvidenceClip({ clip }) {
+  const [src, setSrc] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => () => src && URL.revokeObjectURL(src), [src]);
+
+  async function loadClip() {
+    setLoading(true);
+    setFailed(false);
+    try {
+      const res = await api.get(`/interview-sessions/evidence/${clip._id}`, { responseType: "blob" });
+      setSrc(URL.createObjectURL(res.data));
+    } catch {
+      setFailed(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const label = `${new Date(clip.capturedAt).toLocaleTimeString()} · ${clip.source === "phone" ? "phone cam" : "laptop cam"}`;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-500">
+        <span className="font-medium text-slate-700">{clip.eventType.replace(/_/g, " ")}</span>
+        <span>{label}</span>
+      </div>
+      {src ? (
+        <video src={src} controls className="w-full rounded-lg bg-black" />
+      ) : (
+        <button
+          onClick={loadClip}
+          disabled={loading}
+          className="w-full rounded-lg border border-dashed border-slate-300 bg-white py-3 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+        >
+          {loading ? "Loading clip…" : failed ? "Could not load — try again" : "▶ Load clip (view is audit-logged)"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function IntegrityCard({ proctoring, evidenceClips }) {
   const band = RISK_BAND[proctoring.displayRiskBand] || RISK_BAND.low;
   return (
     <Card>
@@ -178,6 +288,21 @@ function IntegrityCard({ proctoring }) {
               {row.benignExplanation && <span className="text-xs text-slate-400">{row.benignExplanation}</span>}
             </div>
           ))}
+        </div>
+      )}
+
+      {evidenceClips?.length > 0 && (
+        <div className="mt-4 border-t border-slate-100 pt-4">
+          <p className="mb-2 text-sm font-semibold text-slate-900">Evidence clips ({evidenceClips.length})</p>
+          <p className="mb-3 text-xs text-slate-400">
+            Short clips captured only when a high-severity flag fired — consent-gated, never continuous recording. For
+            human review only; they never enter any scoring path.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {evidenceClips.map((clip) => (
+              <EvidenceClip key={clip._id} clip={clip} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -479,10 +604,12 @@ export default function InterviewReport() {
             )}
           </Card>
 
+          <ClaimVerificationCard cv={report.claimVerification} />
+
           <CompetencyTable rows={interview.competencyTable} />
 
           {/* Integrity / proctoring */}
-          {report.proctoring && <IntegrityCard proctoring={report.proctoring} />}
+          {report.proctoring && <IntegrityCard proctoring={report.proctoring} evidenceClips={report.evidenceClips} />}
 
           {/* Decision actions */}
           {allowedNextStages.length > 0 && (

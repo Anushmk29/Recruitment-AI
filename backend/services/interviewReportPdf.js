@@ -210,11 +210,14 @@ function buildReportPdf(report) {
     doc.text("Evaluation not available yet.", { size: 11, color: MUTED });
   }
 
+  // --- Claim Verification (Phase 8) — "is this résumé true?", at a glance ---
+  claimVerificationSection(doc, report.claimVerification);
+
   // --- Competency breakdown (§9) ---
   competencyTable(doc, iv.competencyTable);
 
   // --- Integrity / proctoring (secondary — after the competency verdict) ---
-  integritySection(doc, report.proctoring);
+  integritySection(doc, report.proctoring, report.evidenceClips);
 
   // --- Transcript ---
   heading(doc, "Transcript");
@@ -269,6 +272,50 @@ function competencyTable(doc, rows) {
   }
 }
 
+// Phase 8.6 — Claim Verification: each probed résumé claim with its verdict,
+// the résumé quote and the transcript quote side by side, plus the pre→post
+// score delta the verdicts produced. Hidden entirely when the loop didn't run.
+const PROBE_VERDICT = {
+  verified: { label: "VERIFIED in interview", color: [0.11, 0.6, 0.4] },
+  contradicted: { label: "CONTRADICTED in interview", color: [0.86, 0.15, 0.15] },
+  inconclusive: { label: "INCONCLUSIVE", color: [0.85, 0.55, 0.06] },
+};
+
+function claimVerificationSection(doc, cv) {
+  if (!cv || !Array.isArray(cv.probes) || cv.probes.length === 0) return;
+  heading(doc, "Claim Verification");
+
+  if (cv.scoreDelta) {
+    const d = cv.scoreDelta.delta;
+    const sign = d > 0 ? "+" : "";
+    doc.text(
+      `Screening score ${cv.scoreDelta.pre.overallScore} → ${cv.scoreDelta.post.overallScore} after the interview (${sign}${d} points from claim verdicts).`,
+      { size: 11, bold: true, color: INK, gap: 8 }
+    );
+  }
+
+  for (const p of cv.probes) {
+    doc.ensure(48);
+    const v = p.verdict ? PROBE_VERDICT[p.verdict] : null;
+    doc.text(v ? v.label : p.status === "asked" ? "Asked — verdict pending" : "Not covered in this interview", {
+      size: 10,
+      bold: true,
+      color: v ? v.color : MUTED,
+      gap: 2,
+    });
+    if (p.resumeQuote) doc.text(`Resume: "${p.resumeQuote}"`, { size: 9, color: MUTED, indent: 4, gap: 2 });
+    doc.text(`Asked: ${p.question}`, { size: 9, color: INK, indent: 4, gap: 2 });
+    if (p.answerQuote) doc.text(`Answer: "${p.answerQuote}"`, { size: 9, color: INK, indent: 4, gap: 2 });
+    if (p.verdictReasoning) doc.text(p.verdictReasoning, { size: 8, color: MUTED, indent: 4, gap: 6 });
+    else doc.moveDown(4);
+  }
+
+  doc.text(
+    "A contradicted claim is evidence for a human reviewer, never an automatic rejection — both quotes are shown so you can judge the exchange yourself.",
+    { size: 8, color: MUTED }
+  );
+}
+
 // §5: explicit action verb + one-line justification, the last thing before the footer.
 function recommendedActionLine(doc, action) {
   if (!action) return;
@@ -282,7 +329,7 @@ function recommendedActionLine(doc, action) {
 // automated decision. Hidden entirely when no proctoring data was recorded. Uses the
 // identity-gated display risk (§8) rather than the raw score, and shows a plausible
 // benign explanation per flag so recruiters don't over-anchor on "High".
-function integritySection(doc, p) {
+function integritySection(doc, p, evidenceClips) {
   if (!p) return;
   heading(doc, "Integrity & Proctoring");
 
@@ -306,6 +353,16 @@ function integritySection(doc, p) {
         doc.text(row.benignExplanation, { size: 8, color: MUTED, indent: 12, lineGap: 2, gap: 2 });
       }
     }
+  }
+
+  // Phase 14.5 — the PDF notes that reviewable evidence exists; the clips
+  // themselves play only in the dashboard, where every view is audit-logged.
+  if (Array.isArray(evidenceClips) && evidenceClips.length > 0) {
+    doc.moveDown(4);
+    doc.text(
+      `Evidence clips: ${evidenceClips.length} short clip(s) were captured for high-severity flags (consent-gated, event-anchored — never continuous recording). Review them in the dashboard; each view is audit-logged.`,
+      { size: 9, bold: true, color: INK }
+    );
   }
 
   doc.moveDown(4);

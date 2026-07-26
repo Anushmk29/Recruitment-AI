@@ -8,10 +8,48 @@ import Button from "../components/ui/Button.jsx";
 export default function JobDetail() {
   const { id } = useParams();
   const [job, setJob] = useState(null);
+  // Phase 13 fix: a failed fetch used to leave the skeleton up forever.
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    api.get(`/jobs/${id}`).then((res) => setJob(res.data));
-  }, [id]);
+    let cancelled = false;
+    setError("");
+    setJob(null);
+    api
+      .get(`/jobs/${id}`)
+      .then((res) => {
+        if (!cancelled) setJob(res.data);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(
+          err.response?.status === 404
+            ? "This job doesn't exist or is no longer open."
+            : "Could not load this job. Please check your connection and try again."
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, attempt]);
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <Link to="/" className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-brand-700">
+          <ArrowLeft className="h-4 w-4" /> Back to listings
+        </Link>
+        <Card className="py-10 text-center">
+          <h1 className="text-lg font-semibold text-slate-900">Job unavailable</h1>
+          <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">{error}</p>
+          <Button variant="outline" className="mt-5" onClick={() => setAttempt((a) => a + 1)}>
+            Try Again
+          </Button>
+        </Card>
+      </div>
+    );
+  }
 
   if (!job) {
     return (
@@ -51,7 +89,7 @@ export default function JobDetail() {
           </div>
         )}
 
-        <Button as={Link} to={`/jobs/${job.slug || id}/apply`} size="lg" className="mt-6">
+        <Button as={Link} to={`/jobs/${job.slug || id}/apply${window.location.search}`} size="lg" className="mt-6">
           Apply Now
         </Button>
       </Card>

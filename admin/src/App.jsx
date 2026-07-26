@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Outlet, useLocation } from "react-router-dom";
 import JobList from "./pages/JobList.jsx";
 import JobForm from "./pages/JobForm.jsx";
 import CandidateList from "./pages/CandidateList.jsx";
@@ -23,24 +23,40 @@ import Reports from "./pages/dashboard/Reports.jsx";
 import SubscriptionPage from "./pages/dashboard/SubscriptionPage.jsx";
 import Notifications from "./pages/dashboard/Notifications.jsx";
 import SettingsPage from "./pages/dashboard/SettingsPage.jsx";
+import RubricEditor from "./pages/dashboard/RubricEditor.jsx";
+import ScoreExplanation from "./pages/dashboard/ScoreExplanation.jsx";
+import ReviewQueue from "./pages/dashboard/ReviewQueue.jsx";
+import AuditTrail from "./pages/dashboard/AuditTrail.jsx";
 import DashboardShell from "./components/dashboard/DashboardShell.jsx";
+import NotFound from "./pages/NotFound.jsx";
+import PlatformConsole from "./pages/platform/PlatformConsole.jsx";
 import RequireAdmin from "./auth/RequireAdmin.jsx";
+import RequirePlatform from "./auth/RequirePlatform.jsx";
 import { useAdminAuth } from "./auth/useAdminAuth.js";
 
-function Root() {
+// Phase 13 fix: the dashboard shell is now ONE layout route. Previously "/"
+// rendered its own <DashboardShell> while "/*" rendered a second one, so
+// navigating "/" ⇄ "/jobs" unmounted the whole shell — re-running the company
+// data fan-out and reconnecting the socket on every hop. With a single layout
+// route the shell (and its providers) mounts once; only the <Outlet/> swaps.
+function ShellLayout() {
   const { isAuthenticated } = useAdminAuth();
-  if (!isAuthenticated) return <Landing />;
+  const location = useLocation();
+  // Unauthenticated visitors landing on the bare domain see the marketing page,
+  // not a login redirect. Deeper paths still go through RequireAdmin → /login.
+  if (!isAuthenticated && location.pathname === "/") return <Landing />;
   return (
-    <DashboardShell>
-      <DashboardHome />
-    </DashboardShell>
+    <RequireAdmin>
+      <DashboardShell>
+        <Outlet />
+      </DashboardShell>
+    </RequireAdmin>
   );
 }
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Root />} />
       <Route path="/welcome" element={<Landing />} />
       <Route path="/demo" element={<Demo />} />
       <Route path="/register-company" element={<RegisterCompany />} />
@@ -52,30 +68,37 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password/:token" element={<ResetPassword />} />
+      {/* Phase 16 — platform console (superadmin only; a distinct top-level
+          route so it never nests inside the tenant dashboard shell). */}
       <Route
-        path="/*"
+        path="/platform"
         element={
-          <RequireAdmin>
-            <DashboardShell>
-              <Routes>
-                <Route path="/jobs" element={<JobList />} />
-                <Route path="/jobs/new" element={<JobForm />} />
-                <Route path="/jobs/:id/edit" element={<JobForm />} />
-                <Route path="/jobs/:id/candidates" element={<CandidateList />} />
-                <Route path="/candidates" element={<CandidatesAll />} />
-                <Route path="/pipeline" element={<HiringPipeline />} />
-                <Route path="/candidates/:id" element={<CandidateDetail />} />
-                <Route path="/candidates/:id/interview-report" element={<InterviewReport />} />
-                <Route path="/ai-interviews" element={<AIInterviews />} />
-                <Route path="/reports" element={<Reports />} />
-                <Route path="/subscription" element={<SubscriptionPage />} />
-                <Route path="/notifications" element={<Notifications />} />
-                <Route path="/settings" element={<SettingsPage />} />
-              </Routes>
-            </DashboardShell>
-          </RequireAdmin>
+          <RequirePlatform>
+            <PlatformConsole />
+          </RequirePlatform>
         }
       />
+      <Route path="/" element={<ShellLayout />}>
+        <Route index element={<DashboardHome />} />
+        <Route path="jobs" element={<JobList />} />
+        <Route path="jobs/new" element={<JobForm />} />
+        <Route path="jobs/:id/edit" element={<JobForm />} />
+        <Route path="jobs/:id/rubric" element={<RubricEditor />} />
+        <Route path="jobs/:id/candidates" element={<CandidateList />} />
+        <Route path="candidates" element={<CandidatesAll />} />
+        <Route path="pipeline" element={<HiringPipeline />} />
+        <Route path="candidates/:id" element={<CandidateDetail />} />
+        <Route path="candidates/:id/score" element={<ScoreExplanation />} />
+        <Route path="candidates/:id/interview-report" element={<InterviewReport />} />
+        <Route path="review-queue" element={<ReviewQueue />} />
+        <Route path="ai-interviews" element={<AIInterviews />} />
+        <Route path="reports" element={<Reports />} />
+        <Route path="subscription" element={<SubscriptionPage />} />
+        <Route path="notifications" element={<Notifications />} />
+        <Route path="settings" element={<SettingsPage />} />
+        <Route path="audit-trail" element={<AuditTrail />} />
+        <Route path="*" element={<NotFound />} />
+      </Route>
     </Routes>
   );
 }

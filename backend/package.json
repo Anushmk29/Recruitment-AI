@@ -10,6 +10,10 @@
     "worker": "node worker.js",
     "seed:plans": "node scripts/seedSubscriptionPlans.js",
     "seed:demo": "node scripts/seedDemoAccounts.js",
+    "check:env": "node scripts/checkEnv.js",
+    "test": "node --test \"test/unit/*.test.js\"",
+    "test:watch": "node --test --watch \"test/unit/*.test.js\"",
+    "test:eval": "node test/eval/runEval.js",
     "sync:indexes": "node scripts/syncIndexes.js",
     "migrate:stages": "node scripts/migrateCandidateStages.js",
     "loadtest": "node scripts/loadTest.js"
@@ -33,6 +37,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^9.0.3",
     "pdf-parse": "^1.1.4",
+    "rate-limit-redis": "^4.3.1",
     "razorpay": "^2.9.6",
     "socket.io": "^4.8.1"
   },

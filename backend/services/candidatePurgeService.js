@@ -12,6 +12,7 @@ const InterviewSession = require("../models/InterviewSession");
 const InterviewQueue = require("../models/InterviewQueue");
 const UsageEvent = require("../models/UsageEvent");
 const storageService = require("./storageService");
+const evidenceClipService = require("./evidenceClipService");
 
 async function deleteObjectSafe(ref, label) {
   if (!ref) return;
@@ -34,6 +35,9 @@ async function purgeCandidateArtifacts(candidate) {
   for (const session of sessions) {
     await deleteObjectSafe(session.identityVerification?.photoPath, "identity-photo");
   }
+  // Phase 14.4 — evidence clips (rows + stored video objects) die with the
+  // candidate, for both DPDP erasure and the nightly retention purge.
+  const evidenceClips = await evidenceClipService.purgeForCandidate(companyId, candidate._id);
   const sessionResult = await InterviewSession.deleteMany(scope);
   const queueResult = await InterviewQueue.deleteMany(scope);
   const usageResult = await UsageEvent.deleteMany(scope);
@@ -45,6 +49,7 @@ async function purgeCandidateArtifacts(candidate) {
     sessions: sessionResult?.deletedCount || 0,
     queueEntries: queueResult?.deletedCount || 0,
     usageEvents: usageResult?.deletedCount || 0,
+    evidenceClips,
     resumeDeleted: Boolean(candidate.resumePath),
   };
 }

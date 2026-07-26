@@ -2,6 +2,8 @@ const Candidate = require("../models/Candidate");
 const Job = require("../models/Job");
 const User = require("../models/User");
 const InterviewSession = require("../models/InterviewSession");
+const AtsAssessment = require("../models/AtsAssessment");
+const ClaimGraph = require("../models/ClaimGraph");
 const storageService = require("../services/storageService");
 const { runAtsForCandidate } = require("../services/atsService");
 const { notifyAdmin, notifyCandidate } = require("../services/notificationService");
@@ -31,6 +33,22 @@ function truthy(v) {
   return v === true || v === "true" || v === "on" || v === "1" || v === 1;
 }
 
+// Phase 15.1 — sanitise the apply-link source tag. Free-form client input never
+// lands raw in analytics: channel is slug-charset only, both fields capped.
+function buildSource(body) {
+  const channel = String(body?.src || body?.source || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 40);
+  if (!channel) return undefined;
+  const campaign = String(body?.campaign || "")
+    .trim()
+    .replace(/[^\w\s.-]/g, "")
+    .slice(0, 80);
+  return { channel, campaign: campaign || undefined, capturedAt: new Date() };
+}
+
 async function applyToJob(req, res) {
   const { id: jobIdOrSlug } = req.params;
   const { name, email, phone, location, linkedinUrl, portfolioUrl, experience, education, skills, projects, certificates } =
@@ -48,6 +66,22 @@ async function applyToJob(req, res) {
   if (!name || !email) {
     return res.status(400).json({ error: "Name and email are required" });
   }
+
+  // Expired tenant ⇒ jobs stop accepting applications (Phase 11.2). The
+  // candidate sees a closed listing, not a billing error.
+  const Subscription = require("../models/Subscription");
+  const { assess } = require("../services/subscriptionLifecycleService");
+  const subState = assess(await Subscription.findOne({ company: job.company }).select("status currentPeriodEnd"));
+  if (subState === "expired") {
+    return res.status(404).json({ error: "Job not found or not accepting applications" });
+  }
+
+  // Plan quotas (Phase 11.1): parsing count + storage, both blocked BEFORE the
+  // upload so a capped tenant never accrues unpaid work. 429 carries a
+  // machine-readable reason and writes an AuditLog row.
+  const quotaService = require("../services/quotaService");
+  await quotaService.enforce(job.company, "resumeParsing");
+  await quotaService.enforce(job.company, "storageMb", { incoming: req.file.size / (1024 * 1024) });
 
   // Persist the resume through the storage abstraction with a tenant-partitioned key,
   // so it's reachable from every instance (S3/MinIO) and never leaks across tenants.
@@ -67,7 +101,11 @@ async function applyToJob(req, res) {
     projects: parseJsonArray(projects),
     resumePath: resumeKey,
     resumeOriginalName: req.file.originalname,
+    resumeSizeBytes: req.file.size,
     stageHistory: [{ stage: "applied", by: "system" }],
+    // Phase 15.1 — source attribution from the apply link's ?src= / ?campaign=.
+    // Sanitised, analytics-only; never a scoring input.
+    source: buildSource(req.body),
     consent: {
       aiProcessing: consentAi,
       dataProcessing: consentData,
@@ -101,9 +139,41 @@ async function applyToJob(req, res) {
   res.status(201).json(candidate);
 }
 
+// Shared pagination parsing (Phase 12.5). Legacy callers (no page/limit param)
+// keep getting a bare array, capped, so existing screens don't break; paginated
+// callers get { items, total, page, pages, limit }.
+function parsePagination(req, { defaultLimit = 50, maxLimit = 200, legacyCap = 500 } = {}) {
+  const wantsPagination = req.query.page !== undefined || req.query.limit !== undefined;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(maxLimit, Math.max(1, Number(req.query.limit) || defaultLimit));
+  return { wantsPagination, page, limit, legacyCap };
+}
+
 async function listCandidatesForJob(req, res) {
-  const candidates = await Candidate.find({ job: req.params.id, company: req.user.company }).sort({ createdAt: -1 });
-  res.json(candidates);
+  const filter = { job: req.params.id, company: req.user.company };
+  const { wantsPagination, page, limit, legacyCap } = parsePagination(req);
+  if (!wantsPagination) {
+    return res.json(await Candidate.find(filter).sort({ createdAt: -1 }).limit(legacyCap));
+  }
+  const [items, total] = await Promise.all([
+    Candidate.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
+    Candidate.countDocuments(filter),
+  ]);
+  res.json({ items, total, page, pages: Math.ceil(total / limit), limit });
+}
+
+// GET /api/candidates — company-wide, paginated, job populated (Phase 12.5).
+// One request replaces the admin app's one-request-per-job fan-out.
+async function listCandidates(req, res) {
+  const filter = { company: req.user.company };
+  if (req.query.jobId) filter.job = req.query.jobId;
+  if (req.query.stage) filter.status = req.query.stage;
+  const { page, limit } = parsePagination(req, { defaultLimit: 200, maxLimit: 500 });
+  const [items, total] = await Promise.all([
+    Candidate.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).populate("job", "title department status"),
+    Candidate.countDocuments(filter),
+  ]);
+  res.json({ items, total, page, pages: Math.ceil(total / limit), limit });
 }
 
 async function getCandidate(req, res) {
@@ -196,11 +266,90 @@ async function getAtsResult(req, res) {
   res.json(candidate.ats);
 }
 
+// Explainability payload (Phase 6.6) — "why this score", first-class: every
+// criterion, its status, its weight, its contribution in points, and the
+// quoted evidence behind it. 404 until the evidence engine has scored the
+// candidate at least once (shadow or live).
+async function getAssessment(req, res) {
+  const candidate = await Candidate.findOne({ _id: req.params.id, company: req.user.company }).select(
+    "basicDetails job hostility ats status"
+  );
+  if (!candidate) return res.status(404).json({ error: "Candidate not found" });
+
+  // Optional ?stage=pre_interview|post_interview picks a specific leg of the
+  // Phase 8 loop; default stays "latest of any stage".
+  const stageFilter = ["pre_interview", "post_interview"].includes(req.query.stage) ? { stage: req.query.stage } : {};
+  const assessment = await AtsAssessment.findOne({ candidate: candidate._id, company: req.user.company, ...stageFilter }).sort({
+    createdAt: -1,
+  });
+  if (!assessment) return res.status(404).json({ error: "No evidence assessment exists for this candidate yet" });
+
+  // Pre/post pair + delta (Phase 8.5) — the "score changed because the
+  // interview proved something" feature.
+  const [preDoc, postDoc] = await Promise.all([
+    AtsAssessment.findOne({ candidate: candidate._id, company: req.user.company, stage: "pre_interview" })
+      .sort({ createdAt: -1 })
+      .select("overallScore band decision scoredAt"),
+    AtsAssessment.findOne({ candidate: candidate._id, company: req.user.company, stage: "post_interview" })
+      .sort({ createdAt: -1 })
+      .select("overallScore band decision scoredAt"),
+  ]);
+  const stages = {
+    pre: preDoc ? { overallScore: preDoc.overallScore, band: preDoc.band, decision: preDoc.decision, scoredAt: preDoc.scoredAt } : null,
+    post: postDoc ? { overallScore: postDoc.overallScore, band: postDoc.band, decision: postDoc.decision, scoredAt: postDoc.scoredAt } : null,
+    delta: preDoc && postDoc ? postDoc.overallScore - preDoc.overallScore : null,
+  };
+
+  const graph = await ClaimGraph.findOne({ _id: assessment.claimGraph, company: req.user.company });
+  const claimsById = new Map((graph?.claims || []).map((c) => [c.id, c]));
+
+  const criterionFindings = assessment.criterionFindings.map((f) => ({
+    ...f.toObject(),
+    evidence: f.supportingClaimIds
+      .map((id) => {
+        const c = claimsById.get(id);
+        if (!c) return null;
+        return {
+          claimId: id,
+          statement: `${c.subject} ${c.predicate} ${c.object}`.trim(),
+          quote: c.spans?.[0]?.quote || "",
+          specificity: c.specificity,
+          verificationStatus: c.verificationStatus,
+        };
+      })
+      .filter(Boolean),
+  }));
+
+  // Calibration display (Phase 10.3) — "candidates scored like this advanced
+  // X% of the time here". Null (hidden) below the honest sample minimums.
+  // Display-only: it never feeds the score.
+  const calibration = await require("../services/calibrationService")
+    .getCalibrationForScore(req.user.company, assessment.overallScore)
+    .catch(() => null);
+
+  res.json({
+    ...assessment.toObject(),
+    criterionFindings,
+    stages,
+    calibration,
+    internalContradictions: graph?.internalContradictions || [],
+    timelineGaps: graph?.timelineGaps || [],
+    extraction: graph?.extraction || null,
+    hostility: candidate.hostility || null,
+    legacyAts: candidate.ats || null,
+    candidateName: candidate.basicDetails?.name,
+  });
+}
+
 async function rerunAts(req, res) {
   const candidate = await Candidate.findOne({ _id: req.params.id, company: req.user.company });
   if (!candidate) return res.status(404).json({ error: "Candidate not found" });
   const job = await Job.findById(candidate.job);
   if (!job) return res.status(404).json({ error: "Job not found for this candidate" });
+
+  // A rerun re-parses and re-scores — a tenant at their screening cap can't
+  // route around it through reruns (Phase 11.1).
+  await require("../services/quotaService").enforce(req.user.company, "resumeParsing", { actor: req.user });
 
   await runAtsForCandidate(candidate, job);
   res.json(candidate);
@@ -277,6 +426,55 @@ async function buildInterviewReport(candidateId, companyId) {
       recommendedAction: recommendedAction(verdict, durationFlag),
     },
     proctoring: buildProctoringSummary(session.proctoring),
+    // Phase 14.5 — evidence clips captured for high-severity flags. Metadata
+    // only; the bytes stream through the audited evidence endpoint.
+    evidenceClips: await require("../models/ProctoringEvidence")
+      .find({ company: companyId, session: session._id })
+      .sort({ capturedAt: 1 })
+      .select("-clipKey -__v")
+      .lean(),
+    claimVerification: await buildClaimVerification(session, candidate._id, companyId),
+  };
+}
+
+// Phase 8.6 — the claim-verification loop, closed: each probed resume claim
+// with its verdict, the resume quote and the transcript quote side by side,
+// plus the pre→post score delta the verdicts produced. Null when the loop
+// didn't run for this candidate (no probes and no post-interview assessment)
+// so existing reports render unchanged.
+async function buildClaimVerification(session, candidateId, companyId) {
+  const probes = session?.aiInterview?.probes || [];
+  const [pre, post] = await Promise.all([
+    AtsAssessment.findOne({ candidate: candidateId, company: companyId, stage: "pre_interview" })
+      .sort({ createdAt: -1 })
+      .select("overallScore band decision scoredAt"),
+    AtsAssessment.findOne({ candidate: candidateId, company: companyId, stage: "post_interview" })
+      .sort({ createdAt: -1 })
+      .select("overallScore band decision scoredAt"),
+  ]);
+  if (probes.length === 0 && !post) return null;
+
+  return {
+    probes: probes.map((p) => ({
+      claimId: p.claimId,
+      criterionId: p.criterionId,
+      question: p.question,
+      status: p.status,
+      // "pending"/"asked" probes have no verdict yet — render as unresolved,
+      // never as a placeholder measurement.
+      verdict: p.status === "assessed" ? p.verdict : null,
+      verdictReasoning: p.status === "assessed" ? p.verdictReasoning : null,
+      resumeQuote: p.resumeQuote || "",
+      answerQuote: p.answerQuote || "",
+    })),
+    scoreDelta:
+      pre && post
+        ? {
+            pre: { overallScore: pre.overallScore, band: pre.band, scoredAt: pre.scoredAt },
+            post: { overallScore: post.overallScore, band: post.band, scoredAt: post.scoredAt },
+            delta: post.overallScore - pre.overallScore,
+          }
+        : null,
   };
 }
 
@@ -364,6 +562,7 @@ async function getInterviewReportPdf(req, res) {
 
 module.exports = {
   applyToJob,
+  listCandidates,
   listCandidatesForJob,
   getCandidate,
   moveStage,
@@ -371,6 +570,7 @@ module.exports = {
   exportCandidate,
   downloadResume,
   getAtsResult,
+  getAssessment,
   rerunAts,
   getInterviewReport,
   getInterviewReportPdf,

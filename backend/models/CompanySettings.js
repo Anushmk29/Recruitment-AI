@@ -30,9 +30,38 @@ const companySettingsSchema = new mongoose.Schema(
     // budget is exhausted instead of continuing to spend.
     ai: {
       model: { type: String, trim: true },
+      // Per-role model overrides (config/models.js registry roles). More specific
+      // than `model` above, which historically means the interview role only.
+      models: {
+        interview: { type: String, trim: true },
+        extraction: { type: String, trim: true },
+        reasoning: { type: String, trim: true },
+        cheap: { type: String, trim: true },
+      },
       monthlyBudgetCents: { type: Number, default: 0, min: 0 },
       hardCap: { type: Boolean, default: true },
       temperature: { type: Number, default: 0, min: 0, max: 2 },
+      // Per-tenant evidence-engine rollout (Phase 6): legacy | shadow | live.
+      // Unset ⇒ the ATS_ENGINE env default applies.
+      atsEngine: { type: String, enum: ["legacy", "shadow", "live"] },
+    },
+
+    // Phase 14 — integrity-evidence rollout, per tenant. Unset ⇒ the
+    // EVIDENCE_CLIPS_ENABLED / SECONDARY_CAM_ENABLED env defaults apply
+    // (both default OFF). Off = exactly the pre-Phase-14 counts-only behaviour.
+    proctoring: {
+      evidenceClips: { type: Boolean },
+      secondaryCam: { type: Boolean },
+    },
+
+    // Phase 15 — distribution rollout, per tenant. Unset ⇒ the
+    // CAREERS_PAGES_ENABLED / JOB_PUBLISHING_ENABLED env defaults apply.
+    // Off ⇒ the public careers/feed routes 404 and the publish UI hides.
+    careers: {
+      enabled: { type: Boolean },
+    },
+    publishing: {
+      enabled: { type: Boolean },
     },
 
     // Compliance / governance controls (DPDP + fair-hiring).

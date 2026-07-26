@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Users, Pencil, Trash2, UploadCloud, Briefcase, Link2 } from "lucide-react";
+import { Plus, Users, Pencil, Trash2, UploadCloud, Briefcase, Link2, Globe2, X } from "lucide-react";
 import api from "../api/client.js";
 import { useToast } from "../components/ui/Toast.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
@@ -8,8 +8,143 @@ import Button from "../components/ui/Button.jsx";
 
 const CANDIDATE_PORTAL_URL = import.meta.env.VITE_CANDIDATE_PORTAL_URL || "http://localhost:5174";
 
-function buildApplyUrl(job) {
-  return `${CANDIDATE_PORTAL_URL}/jobs/${job.slug || job._id}`;
+// Phase 15.1 — every shared apply link carries its source, so the funnel can
+// report per-source quality (pass rate, claim-verification rate) later.
+const LINK_SOURCES = [
+  { key: "careers", label: "Careers page" },
+  { key: "linkedin", label: "LinkedIn" },
+  { key: "naukri", label: "Naukri" },
+  { key: "referral", label: "Referral" },
+  { key: "other", label: "Other" },
+];
+
+function buildApplyUrl(job, src) {
+  const base = `${CANDIDATE_PORTAL_URL}/jobs/${job.slug || job._id}`;
+  return src ? `${base}?src=${encodeURIComponent(src)}` : base;
+}
+
+const PUB_STATUS_TONE = { published: "green", pending: "amber", failed: "red", expired: "slate", withdrawn: "slate" };
+
+// Phase 15.7 — per-board publish panel. One action publishes to N boards;
+// per-board status/failure is visible per board, never silent.
+function PublishBoardsModal({ job, onClose }) {
+  const toast = useToast();
+  const [boards, setBoards] = useState(null);
+  const [selected, setSelected] = useState({});
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.get(`/jobs/${job._id}/publications`);
+      setBoards(res.data.boards);
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Could not load board status");
+    }
+  }, [job._id, toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function publishSelected() {
+    const chosen = Object.keys(selected).filter((k) => selected[k]);
+    if (!chosen.length) return;
+    setBusy(true);
+    try {
+      await api.post(`/jobs/${job._id}/publish-boards`, { boards: chosen });
+      toast.success("Publishing dispatched — statuses update per board");
+      setSelected({});
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Could not publish");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function withdraw(board) {
+    setBusy(true);
+    try {
+      await api.post(`/jobs/${job._id}/withdraw-board`, { board });
+      toast.success(`Withdrawn from ${board}`);
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Could not withdraw");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={onClose}>
+      <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-base font-semibold text-slate-900">Publish "{job.title}" to boards</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600" aria-label="Close">
+            <X className="h-4.5 w-4.5" />
+          </button>
+        </div>
+
+        {!boards ? (
+          <Skeleton className="h-32 w-full" />
+        ) : (
+          <div className="space-y-2.5">
+            {boards.map((b) => {
+              const blocked =
+                !b.enabled || (b.needsCredential && !b.credentialConfigured) || b.validationErrors.length > 0;
+              return (
+                <div key={b.board} className="rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-2.5 text-sm font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        disabled={blocked}
+                        checked={!!selected[b.board]}
+                        onChange={(e) => setSelected((s) => ({ ...s, [b.board]: e.target.checked }))}
+                        className="h-4 w-4 rounded border-slate-300 text-brand-600"
+                      />
+                      {b.name}
+                      <Badge tone="slate">Tier {b.tier}</Badge>
+                    </label>
+                    {b.status && <Badge tone={PUB_STATUS_TONE[b.status] || "slate"}>{b.status}</Badge>}
+                  </div>
+                  {!b.enabled && <p className="mt-1.5 pl-6 text-xs text-amber-600">{b.reason}</p>}
+                  {b.enabled && b.needsCredential && !b.credentialConfigured && (
+                    <p className="mt-1.5 pl-6 text-xs text-slate-400">
+                      Connect this board's credentials in Settings → Integrations first.
+                    </p>
+                  )}
+                  {b.validationErrors.map((e) => (
+                    <p key={e} className="mt-1.5 pl-6 text-xs text-red-600">{e}</p>
+                  ))}
+                  {b.error && <p className="mt-1.5 pl-6 text-xs text-red-600">Last attempt: {b.error}</p>}
+                  {b.externalUrl && b.status === "published" && (
+                    <a href={b.externalUrl} target="_blank" rel="noreferrer" className="mt-1.5 block pl-6 text-xs font-medium text-brand-700 hover:underline">
+                      View live listing ↗
+                    </a>
+                  )}
+                  {b.status === "published" && (
+                    <button onClick={() => withdraw(b.board)} disabled={busy} className="mt-1.5 pl-6 text-xs font-medium text-slate-400 hover:text-red-600">
+                      Withdraw from this board
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Close
+          </Button>
+          <Button size="sm" loading={busy} onClick={publishSelected} disabled={!boards || Object.values(selected).every((v) => !v)}>
+            Publish Selected
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function JobList() {
@@ -42,10 +177,14 @@ export default function JobList() {
     loadJobs();
   }
 
-  async function handleCopyApplyLink(job) {
+  const [linkPickerFor, setLinkPickerFor] = useState(null); // job._id with the source picker open
+  const [publishModalJob, setPublishModalJob] = useState(null); // job with the boards modal open
+
+  async function handleCopyApplyLink(job, src) {
+    setLinkPickerFor(null);
     try {
-      await navigator.clipboard.writeText(buildApplyUrl(job));
-      toast.success("Apply link copied");
+      await navigator.clipboard.writeText(buildApplyUrl(job, src));
+      toast.success(src ? `${src} apply link copied` : "Apply link copied");
     } catch {
       toast.error("Could not copy link");
     }
@@ -120,12 +259,45 @@ export default function JobList() {
                         </Link>
                         {job.status === "published" && (
                           <button
-                            onClick={() => handleCopyApplyLink(job)}
+                            onClick={() => setPublishModalJob(job)}
                             className="text-slate-400 hover:text-brand-700"
-                            title="Copy Apply Link"
+                            title="Publish to Job Boards"
                           >
-                            <Link2 className="h-4 w-4" />
+                            <Globe2 className="h-4 w-4" />
                           </button>
+                        )}
+                        {job.status === "published" && (
+                          <span className="relative">
+                            <button
+                              onClick={() => setLinkPickerFor(linkPickerFor === job._id ? null : job._id)}
+                              className="text-slate-400 hover:text-brand-700"
+                              title="Copy Apply Link"
+                            >
+                              <Link2 className="h-4 w-4" />
+                            </button>
+                            {linkPickerFor === job._id && (
+                              <span
+                                className="absolute right-0 top-6 z-20 w-44 rounded-xl border border-slate-200 bg-white py-1.5 shadow-soft"
+                                onMouseLeave={() => setLinkPickerFor(null)}
+                              >
+                                {LINK_SOURCES.map((s) => (
+                                  <button
+                                    key={s.key}
+                                    onClick={() => handleCopyApplyLink(job, s.key)}
+                                    className="block w-full px-3.5 py-1.5 text-left text-xs font-medium text-slate-600 hover:bg-slate-50"
+                                  >
+                                    {s.label} link
+                                  </button>
+                                ))}
+                                <button
+                                  onClick={() => handleCopyApplyLink(job)}
+                                  className="block w-full border-t border-slate-100 px-3.5 py-1.5 text-left text-xs text-slate-400 hover:bg-slate-50"
+                                >
+                                  Untagged link
+                                </button>
+                              </span>
+                            )}
+                          </span>
                         )}
                         {job.status !== "published" && (
                           <button onClick={() => handlePublish(job._id)} className="text-slate-400 hover:text-emerald-600" title="Publish">
@@ -144,6 +316,8 @@ export default function JobList() {
           </div>
         )}
       </Card>
+
+      {publishModalJob && <PublishBoardsModal job={publishModalJob} onClose={() => setPublishModalJob(null)} />}
     </div>
   );
 }

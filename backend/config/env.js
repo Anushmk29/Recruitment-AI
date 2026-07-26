@@ -23,6 +23,21 @@ function validateEnv() {
     if (!process.env.REDIS_URL) {
       errors.push("REDIS_URL is required in production (Socket.io adapter, queues, cron locks, rate limiting)");
     }
+    // Without SMTP_HOST, utils/mailer.js silently uses nodemailer's jsonTransport: mail is
+    // composed, EmailLog rows are marked "sent", the UI reports success — and nothing is ever
+    // delivered. Account verification, password reset, and the company-registration OTP all
+    // break with no error anywhere. This is an error, not a warning: a production deploy that
+    // cannot send email is not a working deploy.
+    if (!process.env.SMTP_HOST) {
+      errors.push(
+        "SMTP_HOST is required in production — without it NO EMAIL IS SENT (verification, password reset, OTP, invoices all silently fail while reporting success)"
+      );
+    }
+    if (!process.env.MAIL_FROM) {
+      warnings.push(
+        'MAIL_FROM not set — falling back to no-reply@recruitment.local, an unroutable domain most receiving servers will reject or mark as spam'
+      );
+    }
     if (!process.env.S3_BUCKET) {
       warnings.push(
         "S3 storage not configured — files fall back to LOCAL DISK, which is unsafe with more than one instance (set S3_BUCKET/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY)"
@@ -33,6 +48,15 @@ function validateEnv() {
     }
     if (!process.env.OPENROUTER_API_KEY) {
       warnings.push("OPENROUTER_API_KEY not set — AI interviews run in deterministic fallback mode");
+    }
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+      warnings.push("RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET not set — checkout returns 503 and the UI shows 'Payments Coming Soon'");
+    }
+    if (!process.env.RAZORPAY_WEBHOOK_SECRET) {
+      warnings.push("RAZORPAY_WEBHOOK_SECRET not set — EVERY payment webhook fails signature verification and returns 400");
+    }
+    if (!process.env.METRICS_TOKEN) {
+      warnings.push("METRICS_TOKEN not set — GET /metrics is publicly readable");
     }
   }
 

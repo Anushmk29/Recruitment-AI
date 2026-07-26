@@ -12,6 +12,10 @@ const subscriptionPlanSchema = new mongoose.Schema(
       maxAiInterviews: { type: Number, required: true },
       maxResumeParsing: { type: Number, required: true },
       storageLimitMb: { type: Number, required: true },
+      // Monthly LLM budget default in cents (Phase 11.4). Seeded into the
+      // tenant's CompanySettings.ai.monthlyBudgetCents at provisioning when the
+      // tenant hasn't set an explicit budget. 0 = uncapped.
+      aiBudgetCents: { type: Number, default: 0 },
     },
 
     pricing: {

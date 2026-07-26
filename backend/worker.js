@@ -22,6 +22,9 @@ const { startEmailWorker } = require("./workers/emailWorker");
 const { startInterviewReminderJob } = require("./jobs/interviewReminderJob");
 const { startSubscriptionExpiryJob } = require("./jobs/subscriptionExpiryJob");
 const { startRetentionJob } = require("./jobs/retentionJob");
+const { startCalibrationJob } = require("./jobs/calibrationJob");
+const { startPublishWorker } = require("./workers/publishWorker");
+const { startPublishReconcileJob } = require("./jobs/publishReconcileJob");
 
 let emailWorker = null;
 
@@ -31,9 +34,12 @@ connectDB()
     if (!emailWorker) {
       console.warn("[worker] no Redis connection — the email queue will not be consumed");
     }
+    startPublishWorker();
     startInterviewReminderJob();
     startSubscriptionExpiryJob();
     startRetentionJob();
+    startCalibrationJob();
+    startPublishReconcileJob();
     console.log("[worker] background worker started (email queue + cron jobs)");
   })
   .catch((err) => {

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Clock3, Link2, Copy, Check } from "lucide-react";
 import api from "../api/client.js";
-import { getAuth, clearAuth, authHeader, getInterviewLink } from "../portal/portalAuth.js";
+import { getAuth, saveAuth, clearAuth, authHeader, getInterviewLink } from "../portal/portalAuth.js";
 import { Card, Badge, Skeleton } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 
@@ -50,6 +50,9 @@ export default function InterviewDashboard() {
     try {
       const res = await api.get("/interview-portal/me", { headers: authHeader() });
       setSession(res.data);
+      // Keep the shell's cached job/candidate context fresh for the pre-check and interview
+      // screens, which have no shell-level fetch of their own for this.
+      saveAuth({ jobTitle: res.data.jobTitle, candidateName: res.data.candidateName });
     } catch (err) {
       clearAuth();
       setError(err.response?.data?.error || "Your session has expired. Please use your interview link again.");

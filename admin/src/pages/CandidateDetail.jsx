@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Link2, Globe, FileText, Mail, Phone, MapPin, Download, Clock, CheckCircle2, XCircle, Sparkles, Trash2, Send, CalendarClock } from "lucide-react";
+import { ArrowLeft, Link2, Globe, FileText, Mail, Phone, MapPin, Download, Clock, CheckCircle2, XCircle, Sparkles, Trash2, Send, CalendarClock, Scale } from "lucide-react";
 import api from "../api/client.js";
 import { getSocket } from "../lib/socket.js";
 import { Card, Badge, Skeleton } from "../components/ui/Card.jsx";
@@ -254,6 +254,14 @@ export default function CandidateDetail() {
               </Badge>
             )}
             <Badge tone={stageTone(candidate.status)}>{stageLabel(candidate.status)}</Badge>
+            {(candidate.ats?.engine === "evidence" || candidate.ats?.decision === "review") && (
+              <Link
+                to={`/candidates/${candidate._id}/score`}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
+                <Scale className="h-4 w-4" /> Why this score
+              </Link>
+            )}
             <Link
               to={`/candidates/${candidate._id}/interview-report`}
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
@@ -513,6 +521,57 @@ export default function CandidateDetail() {
               </div>
             </div>
           )}
+        </Section>
+      )}
+
+      {candidate.hostility?.signals?.length > 0 && (
+        <Section title="Document Integrity Signals">
+          <p className="mb-4 text-sm text-slate-500">
+            Automated checks found the following in this résumé. These are observations for your judgement —{" "}
+            <span className="font-medium text-slate-700">they never change a score and never auto-reject</span>.
+          </p>
+          <div className="space-y-3">
+            {candidate.hostility.signals.map((sig, i) => {
+              const tone =
+                sig.severity === "critical"
+                  ? "border-red-200 bg-red-50"
+                  : sig.severity === "warning"
+                  ? "border-amber-200 bg-amber-50"
+                  : "border-slate-200 bg-slate-50";
+              const badgeTone = sig.severity === "critical" ? "red" : sig.severity === "warning" ? "amber" : "slate";
+              return (
+                <div key={i} className={`rounded-xl border p-4 ${tone}`}>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={badgeTone}>{sig.severity === "advisory" ? "context" : sig.severity}</Badge>
+                    <span className="text-xs font-mono text-slate-500">{sig.code}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-700">{sig.message}</p>
+                  {sig.spans?.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {sig.spans.map((span, j) => (
+                        <blockquote
+                          key={j}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-600"
+                        >
+                          “{span.quote}”
+                          {span.page != null && <span className="ml-2 text-slate-400">(page {span.page})</span>}
+                        </blockquote>
+                      ))}
+                    </div>
+                  )}
+                  {sig.meta?.samples?.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {sig.meta.samples.map((s, j) => (
+                        <blockquote key={j} className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-600">
+                          “{s}”
+                        </blockquote>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </Section>
       )}
 

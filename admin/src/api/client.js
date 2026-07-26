@@ -10,10 +10,29 @@ const baseURL = import.meta.env.VITE_API_URL || "http://localhost:9000/api";
 
 const api = axios.create({ baseURL });
 
+// Phase 16.5 — read-only "view as tenant". When platform staff activate it,
+// every request carries the header; the SERVER rejects any non-GET carrying it,
+// so the read-only guarantee never depends on this client.
+export function getViewAsCompany() {
+  try {
+    return JSON.parse(sessionStorage.getItem("platformViewAs") || "null");
+  } catch {
+    return null;
+  }
+}
+export function setViewAsCompany(company) {
+  if (company) sessionStorage.setItem("platformViewAs", JSON.stringify(company));
+  else sessionStorage.removeItem("platformViewAs");
+}
+
 api.interceptors.request.use((config) => {
   const auth = getAdminAuth();
   if (auth?.token) {
     config.headers.Authorization = `Bearer ${auth.token}`;
+  }
+  const viewAs = getViewAsCompany();
+  if (viewAs?.id) {
+    config.headers["X-View-As-Company"] = viewAs.id;
   }
   return config;
 });

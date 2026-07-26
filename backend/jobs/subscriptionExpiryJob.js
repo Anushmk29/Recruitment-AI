@@ -57,7 +57,16 @@ async function sendDueReminders() {
 function startSubscriptionExpiryJob() {
   cron.schedule("0 8 * * *", () => {
     tenantContext
-      .runAsSystem(() => sendDueReminders())
+      .runAsSystem(async () => {
+        // Phase 11.2: state transitions FIRST (active → past_due → expired),
+        // then reminders for those still approaching expiry.
+        const { runTransitions } = require("../services/subscriptionLifecycleService");
+        const moved = await runTransitions();
+        if (moved.pastDue || moved.expired) {
+          console.log(`[subscriptionExpiryJob] transitions: ${moved.pastDue} past_due, ${moved.expired} expired`);
+        }
+        await sendDueReminders();
+      })
       .catch((err) => console.error("[subscriptionExpiryJob] run failed:", err.message));
   });
   console.log("[subscriptionExpiryJob] scheduled daily at 08:00");

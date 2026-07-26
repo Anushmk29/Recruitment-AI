@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const logger = require("./logger");
 const {
   rejectionEmailTemplate,
   interviewInvitationEmailTemplate,
@@ -44,11 +45,21 @@ async function sendMail({ to, subject, text, html }) {
   });
 
   if (!process.env.SMTP_HOST) {
-    // Dev fallback: no SMTP configured, so nothing was actually sent. Log the
-    // full body (not just the subject) so the email content is still
-    // inspectable locally, the same way tools like Laravel's "log" mail
-    // driver or Rails' letter_opener work.
-    console.log(`[mailer] (no SMTP configured, not actually sent) to=${to} subject="${subject}"\n${text}`);
+    // Dev fallback: no SMTP configured, so NOTHING was actually sent — but the caller (and
+    // EmailLog) will record it as sent. Printing the full body is deliberate and is how you
+    // retrieve a verification link or OTP locally, the same way Laravel's "log" mail driver
+    // or Rails' letter_opener work.
+    //
+    // The bodies of the verification / password-reset / OTP mails contain live credentials,
+    // so this must never run in production. `validateEnv` now hard-fails a production boot
+    // with no SMTP_HOST; this second guard means that even if that check is bypassed, the
+    // secret is not written to a production log aggregator.
+    const line = `[mailer] no SMTP configured — NOT SENT. to=${to} subject="${subject}"`;
+    if (process.env.NODE_ENV === "production") {
+      logger.error(`${line} (body withheld in production)`);
+    } else {
+      logger.warn(`${line}\n${text}`);
+    }
   }
 
   return info;

@@ -4,6 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion } from "framer-motion";
 import { CalendarCheck, CheckCircle2 } from "lucide-react";
+import api from "../api/client.js";
 import MarketingNavbar from "../components/marketing/MarketingNavbar.jsx";
 import { Card } from "../components/ui/Card.jsx";
 import { Input, Textarea, Select, Label, FieldError, FormGroup } from "../components/ui/Field.jsx";
@@ -20,21 +21,28 @@ const schema = z.object({
 });
 
 export default function Demo() {
+  // Phase 13 fix: this form used to open a mailto: link and persist nothing —
+  // a visitor without a configured mail client lost the lead silently. It now
+  // POSTs to the backend, which stores the lead and notifies sales.
   const [sent, setSent] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm({ resolver: zodResolver(schema) });
 
-  function onSubmit(data) {
-    const body = encodeURIComponent(
-      `Company: ${data.companyName}\nEmail: ${data.email}\nPhone: ${data.phone}\nCompany Size: ${data.companySize}\n\nMessage:\n${data.message || "-"}`
-    );
-    window.location.href = `mailto:${SALES_EMAIL}?subject=${encodeURIComponent(
-      `Demo request from ${data.companyName}`
-    )}&body=${body}`;
-    setSent(true);
+  async function onSubmit(data) {
+    setSubmitError("");
+    try {
+      await api.post("/demo-requests", data);
+      setSent(true);
+    } catch (err) {
+      setSubmitError(
+        err.response?.data?.error ||
+          `Could not send your request right now. Please try again, or email us directly at ${SALES_EMAIL}.`
+      );
+    }
   }
 
   return (
@@ -59,8 +67,8 @@ export default function Demo() {
               </div>
               <h3 className="text-lg font-semibold text-slate-900">Thanks — we'll be in touch</h3>
               <p className="mt-1.5 max-w-sm text-sm text-slate-500">
-                Your email client should have opened with your request pre-filled to our sales team. If it didn't,
-                write to us directly at <a className="font-medium text-brand-700" href={`mailto:${SALES_EMAIL}`}>{SALES_EMAIL}</a>.
+                Your request has been received and our sales team has been notified. Prefer email? You can also
+                reach us at <a className="font-medium text-brand-700" href={`mailto:${SALES_EMAIL}`}>{SALES_EMAIL}</a>.
               </p>
             </div>
           ) : (
@@ -100,6 +108,9 @@ export default function Demo() {
                 <Label>Message (optional)</Label>
                 <Textarea rows={4} {...register("message")} placeholder="What are you hoping to solve?" />
               </FormGroup>
+              {submitError && (
+                <p className="mb-3 rounded-xl bg-red-50 px-4 py-2.5 text-sm text-red-700">{submitError}</p>
+              )}
               <Button type="submit" size="lg" loading={isSubmitting} className="w-full">
                 Request Demo
               </Button>

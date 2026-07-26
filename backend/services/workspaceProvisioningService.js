@@ -39,11 +39,20 @@ async function provisionWorkspace({ company, plan, billingCycle }) {
     workspace = await Workspace.create({ company: company._id, workspaceId: generateWorkspaceId() });
   }
 
-  await CompanySettings.findOneAndUpdate(
+  const settings = await CompanySettings.findOneAndUpdate(
     { company: company._id },
     { company: company._id },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
+
+  // AI cost as a plan dimension (Phase 11.4): seed the tenant's monthly LLM
+  // budget from the plan default so the unit economics hold out of the box.
+  // Only when unset (0 = uncapped) — a tenant's own explicit setting wins.
+  const planBudget = plan?.limits?.aiBudgetCents;
+  if (planBudget && !(settings.ai?.monthlyBudgetCents > 0)) {
+    settings.ai = { ...(settings.ai?.toObject?.() || settings.ai || {}), monthlyBudgetCents: planBudget };
+    await settings.save();
+  }
 
   company.status = "active";
   await company.save();

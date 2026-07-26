@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft, Save, ClipboardCheck } from "lucide-react";
 import api from "../api/client.js";
 import { useToast } from "../components/ui/Toast.jsx";
 import { Card } from "../components/ui/Card.jsx";
@@ -50,7 +50,14 @@ export default function JobForm() {
       <Link to="/jobs" className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-brand-700">
         <ArrowLeft className="h-4 w-4" /> Back to jobs
       </Link>
-      <h1 className="text-2xl font-bold text-slate-900">{id ? "Edit Job" : "New Job"}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-slate-900">{id ? "Edit Job" : "New Job"}</h1>
+        {id && (
+          <Button as={Link} to={`/jobs/${id}/rubric`} variant="secondary">
+            <ClipboardCheck className="h-4 w-4" /> Scoring Rubric
+          </Button>
+        )}
+      </div>
 
       <Card className="max-w-2xl">
         <form onSubmit={handleSubmit}>

@@ -1,0 +1,6 @@
+{
+  "files": ["admin/index.html", "user/index.html"],
+  "insertBefore": "</body>",
+  "commentSyntax": "html",
+  "cspChecked": true
+}

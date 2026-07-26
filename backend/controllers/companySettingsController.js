@@ -142,4 +142,104 @@ async function updateSettings(req, res) {
   res.json(await CompanySettings.findById(settings._id).select(EDITABLE));
 }
 
-module.exports = { getSettings, updateSettings };
+// ---------------------------------------------------------------------------
+// Phase 15 — distribution: careers URLs + tenant board credentials
+// ---------------------------------------------------------------------------
+
+// GET /api/company-settings/careers-info — the tenant's public URLs (careers
+// page, aggregator feed, sitemap), minting the slug lazily on first ask.
+async function getCareersInfo(req, res) {
+  const Company = require("../models/Company");
+  const careersService = require("../services/careersService");
+  const company = await Company.findById(req.user.company);
+  if (!company) return res.status(404).json({ error: "Company not found" });
+  const slug = await careersService.ensureCompanySlug(company);
+  const base = (process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 9000}`).replace(/\/$/, "");
+  res.json({
+    slug,
+    careersUrl: `${base}/careers/${slug}`,
+    feedUrl: `${base}/feeds/${slug}/jobs.xml`,
+    sitemapUrl: `${base}/feeds/${slug}/sitemap.xml`,
+  });
+}
+
+// GET /api/company-settings/board-credentials — configured/not per board.
+// NEVER returns secret material (boardCredentialService.status only).
+async function listBoardCredentials(req, res) {
+  const { listDrivers } = require("../services/connectors");
+  const boardCredentialService = require("../services/boardCredentialService");
+  const out = [];
+  for (const d of listDrivers()) {
+    if (!d.needsCredential) continue;
+    out.push({ ...d, ...(await boardCredentialService.status(req.user.company, d.key)) });
+  }
+  res.json({ boards: out });
+}
+
+// PUT /api/company-settings/board-credentials/:board  body: { secrets: {...} }
+// Write-only: the response confirms configuration, never echoes the secrets.
+async function saveBoardCredential(req, res) {
+  const { getDriver } = require("../services/connectors");
+  const boardCredentialService = require("../services/boardCredentialService");
+  const driver = getDriver(req.params.board);
+  if (!driver || !driver.needsCredential) return res.status(404).json({ error: "Unknown board" });
+
+  const secrets = req.body?.secrets;
+  if (!secrets || typeof secrets !== "object" || Array.isArray(secrets) || Object.keys(secrets).length === 0) {
+    return res.status(400).json({ error: "secrets object is required" });
+  }
+  for (const [k, v] of Object.entries(secrets)) {
+    if (typeof v !== "string" || v.length > 500 || k.length > 60) {
+      return res.status(400).json({ error: "secrets must be short text values" });
+    }
+  }
+
+  await boardCredentialService.saveCredential(req.user.company, driver.key, secrets);
+  req.audit = {
+    action: "board_credential.save",
+    resourceType: "BoardCredential",
+    resourceId: driver.key,
+    meta: { board: driver.key, fields: Object.keys(secrets) }, // field NAMES only, never values
+  };
+  res.json(await boardCredentialService.status(req.user.company, driver.key));
+}
+
+// DELETE /api/company-settings/board-credentials/:board — disconnect wipes the
+// stored secrets entirely.
+async function deleteBoardCredential(req, res) {
+  const boardCredentialService = require("../services/boardCredentialService");
+  const deleted = await boardCredentialService.deleteCredential(req.user.company, req.params.board);
+  req.audit = { action: "board_credential.delete", resourceType: "BoardCredential", resourceId: req.params.board };
+  res.json({ deleted: deleted > 0 });
+}
+
+// POST /api/company-settings/board-credentials/:board/test — round-trips the
+// stored credentials against the board's account endpoint.
+async function testBoardCredential(req, res) {
+  const { getDriver } = require("../services/connectors");
+  const boardCredentialService = require("../services/boardCredentialService");
+  const driver = getDriver(req.params.board);
+  if (!driver || typeof driver.testConnection !== "function") {
+    return res.status(404).json({ error: "This board does not support connection tests" });
+  }
+  const secrets = await boardCredentialService.loadSecrets(req.user.company, driver.key);
+  if (!secrets) return res.status(400).json({ error: "No credentials configured for this board" });
+  try {
+    await driver.testConnection(secrets);
+    await boardCredentialService.recordTest(req.user.company, driver.key, true);
+    res.json({ ok: true });
+  } catch (err) {
+    await boardCredentialService.recordTest(req.user.company, driver.key, false);
+    res.status(502).json({ ok: false, error: boardCredentialService.maskError(err.message, secrets) });
+  }
+}
+
+module.exports = {
+  getSettings,
+  updateSettings,
+  getCareersInfo,
+  listBoardCredentials,
+  saveBoardCredential,
+  deleteBoardCredential,
+  testBoardCredential,
+};

@@ -1,3 +1,5 @@
 node_modules/
 .env
 uploads/
+# Generated eval artifacts (baseline.json IS committed — it is the regression reference)
+test/eval/reports/

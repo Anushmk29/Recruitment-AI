@@ -1,4 +1,6 @@
 const express = require("express");
+const multer = require("multer");
+const wrapRouter = require("../middleware/wrapRouter");
 const {
   login,
   me,
@@ -10,15 +12,26 @@ const {
   submitAnswer,
   proctoringConsent,
   proctoringEvents,
+  voiceConsent,
   voiceToken,
   voiceSpeak,
+  uploadEvidenceClip,
+  phoneEvidenceClip,
+  phonePair,
+  phoneLogin,
+  phoneHeartbeat,
+  phoneEvents,
 } = require("../controllers/interviewPortalController");
-const { requireCandidateAuth } = require("../middleware/candidateAuth");
+const { requireCandidateAuth, requirePhoneAuth } = require("../middleware/candidateAuth");
 const identityPhotoUpload = require("../middleware/identityPhotoUpload");
 const { createLimiter, portalKey } = require("../middleware/rateLimit");
 const asyncHandler = require("../middleware/asyncHandler");
 
 const router = express.Router();
+
+// Evidence clips (Phase 14.2): multipart, in-memory, hard 6MB cap — the service
+// re-checks size, magic bytes, consent, and the per-session count server-side.
+const evidenceClipUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 6 * 1024 * 1024 } });
 
 // Each answer = one LLM call; the speed-test ships a 2 MB payload. Bound both per
 // candidate so a valid token can't be used to amplify cost.
@@ -43,7 +56,20 @@ router.get("/interview", requireCandidateAuth, asyncHandler(getInterviewState));
 router.post("/interview/answer", requireCandidateAuth, answerLimiter, asyncHandler(submitAnswer));
 router.post("/proctoring/consent", requireCandidateAuth, proctoringLimiter, asyncHandler(proctoringConsent));
 router.post("/proctoring/events", requireCandidateAuth, proctoringLimiter, asyncHandler(proctoringEvents));
+
+// Phase 14 — event-anchored evidence clips + phone companion camera. Clip
+// uploads are tightly rate-limited on top of the server-side per-session cap;
+// heartbeats are cheap but still bounded.
+const evidenceLimiter = createLimiter({ windowMs: 60 * 1000, max: 6, prefix: "rl:evidence:", keyGenerator: portalKey });
+const heartbeatLimiter = createLimiter({ windowMs: 60 * 1000, max: 20, prefix: "rl:phone-hb:", keyGenerator: portalKey });
+router.post("/proctoring/evidence", requireCandidateAuth, evidenceLimiter, evidenceClipUpload.single("clip"), asyncHandler(uploadEvidenceClip));
+router.get("/phone/pair", requireCandidateAuth, proctoringLimiter, asyncHandler(phonePair));
+router.post("/phone/login", loginLimiter, asyncHandler(phoneLogin));
+router.post("/phone/heartbeat", requirePhoneAuth, heartbeatLimiter, asyncHandler(phoneHeartbeat));
+router.post("/phone/events", requirePhoneAuth, proctoringLimiter, asyncHandler(phoneEvents));
+router.post("/phone/evidence", requirePhoneAuth, evidenceLimiter, evidenceClipUpload.single("clip"), asyncHandler(phoneEvidenceClip));
+router.post("/voice/consent", requireCandidateAuth, voiceTokenLimiter, asyncHandler(voiceConsent));
 router.get("/voice/token", requireCandidateAuth, voiceTokenLimiter, asyncHandler(voiceToken));
 router.post("/voice/speak", requireCandidateAuth, voiceSpeakLimiter, asyncHandler(voiceSpeak));
 
-module.exports = router;
+module.exports = wrapRouter(router);

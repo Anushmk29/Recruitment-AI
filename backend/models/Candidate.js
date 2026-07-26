@@ -78,8 +78,63 @@ const atsResultSchema = new mongoose.Schema(
     missingSkills: { type: [String], default: [] },
     overallScore: { type: Number, default: 0 },
     threshold: { type: Number },
-    decision: { type: String, enum: ["pending", "pass", "fail"], default: "pending" },
+    // "review" = the evidence engine's honest middle band (Phase 6) — a human
+    // decides; it must never be treated as a fail by any consumer.
+    decision: { type: String, enum: ["pending", "pass", "fail", "review"], default: "pending" },
     scoredAt: { type: Date },
+    // Which engine produced the headline number: legacy keyword engine,
+    // the evidence engine, or legacy-as-labelled-fallback after an evidence
+    // failure. Uncertainty must be visible (engineering rule 5).
+    engine: { type: String, enum: ["legacy", "evidence", "fallback-legacy"], default: "legacy" },
+  },
+  { _id: false }
+);
+
+// Hostility report from resumeDefenseService (Phase 4). Flags, never decides:
+// nothing in here may drive an automated adverse action. Spans index into the
+// canonical `resumeText` string (immutable once extracted).
+const hostilitySpanSchema = new mongoose.Schema(
+  {
+    start: { type: Number, required: true },
+    end: { type: Number, required: true },
+    quote: { type: String, required: true },
+    page: { type: Number, default: null },
+  },
+  { _id: false }
+);
+
+const hostilitySignalSchema = new mongoose.Schema(
+  {
+    code: { type: String, required: true },
+    severity: { type: String, enum: ["critical", "warning", "advisory"], required: true },
+    message: { type: String, required: true },
+    spans: { type: [hostilitySpanSchema], default: [] },
+    meta: { type: mongoose.Schema.Types.Mixed },
+  },
+  { _id: false }
+);
+
+const hostilitySchema = new mongoose.Schema(
+  {
+    version: { type: String },
+    analyzedAt: { type: Date },
+    engine: { type: String, enum: ["deterministic", "deterministic+llm", "disabled"] },
+    signals: { type: [hostilitySignalSchema], default: [] },
+    excludedFromModel: {
+      type: [
+        new mongoose.Schema(
+          {
+            start: { type: Number, required: true },
+            end: { type: Number, required: true },
+            quote: { type: String, required: true },
+            codes: { type: [String], default: [] },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
+    clean: { type: Boolean, default: true },
   },
   { _id: false }
 );
@@ -106,7 +161,13 @@ const candidateSchema = new mongoose.Schema(
 
     resumePath: { type: String, required: true },
     resumeOriginalName: { type: String },
+    resumeSizeBytes: { type: Number }, // set at upload — feeds the storage quota (Phase 11)
     resumeText: { type: String, default: "" },
+    // sha256 of the canonical resumeText — the identity key for ClaimGraph
+    // reuse and the reproducibility hash (Phases 5-6).
+    resumeHash: { type: String, default: "" },
+
+    hostility: { type: hostilitySchema },
 
     ats: { type: atsResultSchema, default: () => ({}) },
 
@@ -123,6 +184,15 @@ const candidateSchema = new mongoose.Schema(
     stageHistory: { type: [stageHistorySchema], default: () => [] },
 
     offer: { type: offerSchema, default: () => ({}) },
+
+    // Phase 15.1 — where this application came from (?src= on the apply link).
+    // Analytics data ONLY: nothing in any scoring path may read this — a
+    // referral must never score differently because it is a referral.
+    source: {
+      channel: { type: String, trim: true, lowercase: true, maxlength: 40 },
+      campaign: { type: String, trim: true, maxlength: 80 },
+      capturedAt: { type: Date },
+    },
 
     // DPDP consent captured at application time. `aiProcessing` gates whether the
     // candidate's resume/answers may be sent to the external LLM — without it the

@@ -23,6 +23,7 @@ const EVENT_TYPES = {
   gaze_away: { severity: "low", weight: 2, cap: 24, label: "Looked away from the screen" },
   identity_mismatch: { severity: "high", weight: 30, cap: 60, label: "Face did not match the identity photo" },
   camera_lost: { severity: "medium", weight: 12, cap: 24, label: "Camera feed stopped during the interview" },
+  phone_cam_lost: { severity: "medium", weight: 12, cap: 24, label: "Secondary phone camera disconnected" },
 };
 
 // A plausible benign explanation per flag type, so a recruiter reading the report
@@ -40,6 +41,7 @@ const BENIGN_EXPLANATIONS = {
   gaze_away: "May be glancing at notes or a second monitor, not disengagement.",
   identity_mismatch: "Lighting or camera angle can affect the match — treat as a prompt to verify, not a conclusion.",
   camera_lost: "Often a transient webcam/driver hiccup rather than an intentional camera-off.",
+  phone_cam_lost: "Phones lock their screen or drop Wi-Fi easily — usually connectivity, not intent.",
 };
 
 function isKnownType(type) {

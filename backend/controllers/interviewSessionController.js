@@ -1,6 +1,9 @@
 const InterviewSession = require("../models/InterviewSession");
 const Candidate = require("../models/Candidate");
 const Job = require("../models/Job");
+const ProctoringEvidence = require("../models/ProctoringEvidence");
+const storageService = require("../services/storageService");
+const { writeAuditLog } = require("../middleware/auditLog");
 const { hashToken, resendOrRescheduleInterview } = require("../services/interviewInvitationService");
 
 async function verifyToken(req, res) {
@@ -86,4 +89,41 @@ async function rescheduleInterview(req, res) {
   res.json({ ok: true, interviewUrl, interviewAt: session.interviewAt, expiresAt: session.expiresAt, status: session.status });
 }
 
-module.exports = { verifyToken, getForCandidate, resendInterview, rescheduleInterview };
+// ---------------------------------------------------------------------------
+// Phase 14.5 — evidence-clip review (human eyes only)
+// ---------------------------------------------------------------------------
+
+// GET /interview-sessions/candidate/:id/evidence — clip metadata for the
+// candidate's session, next to the flags they evidence. Never the bytes.
+async function listEvidence(req, res) {
+  const rows = await ProctoringEvidence.find({ company: req.user.company, candidate: req.params.id })
+    .sort({ capturedAt: 1 })
+    .select("-clipKey -__v")
+    .lean();
+  res.json({ items: rows });
+}
+
+// GET /interview-sessions/evidence/:evidenceId — stream one clip to the
+// reviewer. Access to biometric-adjacent footage must itself be auditable:
+// EVERY view writes an AuditLog row before a single byte is sent.
+async function streamEvidenceClip(req, res) {
+  const row = await ProctoringEvidence.findOne({ _id: req.params.evidenceId, company: req.user.company });
+  if (!row) return res.status(404).json({ error: "Evidence clip not found" });
+
+  writeAuditLog({
+    req,
+    company: req.user.company,
+    action: "evidence.view",
+    resourceType: "ProctoringEvidence",
+    resourceId: String(row._id),
+    meta: { eventType: row.eventType, source: row.source, session: String(row.session) },
+  });
+
+  const buffer = await storageService.getObjectBuffer(row.clipKey);
+  res.setHeader("Content-Type", row.mimeType || "video/webm");
+  res.setHeader("Content-Length", buffer.length);
+  res.setHeader("Cache-Control", "no-store");
+  res.send(buffer);
+}
+
+module.exports = { verifyToken, getForCandidate, resendInterview, rescheduleInterview, listEvidence, streamEvidenceClip };

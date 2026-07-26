@@ -4,6 +4,11 @@ const companySchema = new mongoose.Schema(
   {
     companyCode: { type: String, required: true, unique: true, index: true },
     name: { type: String, required: true, trim: true, unique: true },
+    // Phase 15.2 — public careers-page slug (/careers/:slug). Generated lazily
+    // on first use; renames must push the old slug into previousSlugs so every
+    // already-published link keeps resolving (301 to the canonical URL).
+    slug: { type: String, unique: true, sparse: true, index: true },
+    previousSlugs: { type: [String], default: [] },
     logoPath: { type: String },
     industry: { type: String, trim: true },
     companySize: {

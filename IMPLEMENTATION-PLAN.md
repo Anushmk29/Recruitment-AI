@@ -1,5 +1,19 @@
 # AI Recruitment Platform — Implementation Plan & Gap Analysis
 
+> ## ⚠️ SUPERSEDED — DO NOT PLAN FROM THIS DOCUMENT
+>
+> _Marked stale 2026-07-25 after a full code audit._ This file is kept for historical context only.
+> It is **materially wrong about what exists**: §1 and §4 list the AI Interview Engine, AI Evaluation,
+> PDF report, and AI Proctoring as ❌ missing. **All four are built and working in code**, along with the
+> Deepgram voice layer, refresh tokens, audit logs, S3/MinIO storage, and the DPDP compliance suite —
+> none of which this document reflects.
+>
+> - **What actually exists:** [STATUS.md](STATUS.md) (accurate as of 2026-07-22)
+> - **What we are building and why:** [CLAUDE.md](CLAUDE.md) — product thesis + engineering rules
+> - **The active, sequenced plan:** [BUILD-PLAN.md](BUILD-PLAN.md)
+>
+> The one section still worth reading is §0 (spec-vs-reality stack table), which remains accurate.
+
 _Derived from `recruit docs.docx` (Master Requirements) compared against the current codebase, 2026-07-20._
 
 ---
