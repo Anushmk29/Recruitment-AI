@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const InterviewSession = require("../models/InterviewSession");
 const User = require("../models/User");
 const { notifyCandidate } = require("./notificationService");
+const { candidateLinkBase } = require("../utils/corsOrigins");
 
 const SCHEDULE_DELAY_DAYS = Number(process.env.INTERVIEW_SCHEDULE_DELAY_DAYS) || 3;
 const SCHEDULE_HOUR_UTC = Number(process.env.INTERVIEW_SCHEDULE_HOUR_UTC) || 11;
@@ -25,11 +26,11 @@ function computeExpiresAt(interviewAt) {
 }
 
 function buildInterviewUrl(token) {
-  // Strip any trailing slash(es) so a CLIENT_ORIGIN_USER written as "https://host/"
-  // doesn't produce "https://host//interview/..." — the double slash breaks the SPA's
-  // client-side route match and renders a blank page.
-  const base = (process.env.CLIENT_ORIGIN_USER || "http://localhost:5174").replace(/\/+$/, "");
-  return `${base}/interview/${token}`;
+  // candidateLinkBase: PUBLIC_CANDIDATE_URL wins over the CORS origin list, so
+  // an emailed link can never be built from a dev tunnel hostname that happens
+  // to be listed first for CORS purposes (trailing slashes stripped — a double
+  // slash breaks the SPA route match and renders a blank page).
+  return `${candidateLinkBase()}/interview/${token}`;
 }
 
 // Idempotent: if a session already exists for this candidate (e.g. ATS was
@@ -61,8 +62,8 @@ async function createInterviewSessionIfNeeded(candidate, job) {
     candidateId: candidate._id,
     userId: applicantUser?._id,
     type: "interview_invite",
-    title: `Interview scheduled for ${job.title}`,
-    message: `Your interview is scheduled for ${interviewAt.toLocaleString("en-US")}. Check your email for the interview link and instructions.`,
+    title: `Interview invitation for ${job.title}`,
+    message: `You're invited to an interview — take it any time before ${expiresAt.toLocaleString("en-US", { timeZone: process.env.MAIL_TIMEZONE || "Asia/Kolkata", timeZoneName: "short" })}. Check your email for the interview link and instructions.`,
     meta: { interviewSessionId: session._id, jobId: job._id },
     email: {
       to: candidate.basicDetails.email,
@@ -74,11 +75,6 @@ async function createInterviewSessionIfNeeded(candidate, job) {
   return session;
 }
 
-// A session can no longer be resent/rescheduled once the candidate has actually
-// started or finished the interview — rotating the token then would be pointless
-// (or would strand an in-progress attempt).
-const REGENERATE_BLOCKED_STATUSES = ["in_progress", "completed"];
-
 // Resend an interview link, or reschedule it to a new time. Because we only ever
 // store the token *hash* (never the raw token), the original link can't be
 // reconstructed — so both operations mint a *fresh* token. That is also the safer
@@ -87,8 +83,21 @@ const REGENERATE_BLOCKED_STATUSES = ["in_progress", "completed"];
 // Unlike createInterviewSessionIfNeeded (which is idempotent on auto-apply), this is
 // an explicit recruiter action and always rotates the token and re-emails.
 async function resendOrRescheduleInterview(session, candidate, job, { interviewAt } = {}) {
-  if (REGENERATE_BLOCKED_STATUSES.includes(session.status) || REGENERATE_BLOCKED_STATUSES.includes(session.aiInterview?.status)) {
-    throw new Error("This interview has already started or been completed and can no longer be resent or rescheduled");
+  // A completed interview is final — never re-issue a link for it.
+  if (session.status === "completed" || session.aiInterview?.status === "completed") {
+    throw new Error("This interview has already been completed and can no longer be resent or rescheduled");
+  }
+  // A *live* in-progress attempt must not have its token rotated out from under
+  // the candidate. But an in-progress interview whose link has EXPIRED is a
+  // locked-out candidate, not a live attempt — re-issuing the link is the only
+  // recovery (startInterview resumes the existing transcript, so nothing the
+  // candidate answered is lost).
+  const linkExpired = session.status === "expired" || (session.expiresAt && session.expiresAt.getTime() < Date.now());
+  const inProgress = session.status === "in_progress" || session.aiInterview?.status === "in_progress";
+  if (inProgress && !linkExpired) {
+    throw new Error(
+      "This interview is in progress on a valid link — resending now would cut the candidate off. Re-issue it after the link expires."
+    );
   }
 
   const nextInterviewAt = interviewAt ? new Date(interviewAt) : session.interviewAt;

@@ -1,4 +1,6 @@
 require("dotenv").config();
+require("./config/dnsOverride").applyDnsOverride();
+
 const { validateEnv } = require("./config/env");
 try {
   validateEnv();
@@ -13,6 +15,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const compression = require("compression");
+const { parseOrigins } = require("./utils/corsOrigins");
 const connectDB = require("./config/db");
 const { getRedisConnection } = require("./config/redis");
 const jobRoutes = require("./routes/jobRoutes");
@@ -97,7 +100,7 @@ app.use(requestContext);
 
 app.use(
   cors({
-    origin: [process.env.CLIENT_ORIGIN_ADMIN, process.env.CLIENT_ORIGIN_USER].filter(Boolean),
+    origin: parseOrigins(process.env.CLIENT_ORIGIN_ADMIN, process.env.CLIENT_ORIGIN_USER),
   })
 );
 

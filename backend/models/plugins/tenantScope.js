@@ -14,6 +14,7 @@
 // Apply ONLY to models that are always accessed within a single tenant. Do NOT apply to
 // User / Notification (mixed admin+candidate, company may be null) or global catalogs.
 
+const mongoose = require("mongoose");
 const tenantContext = require("../../utils/tenantContext");
 
 const STRICT = process.env.TENANT_GUARD_STRICT === "true";
@@ -57,7 +58,10 @@ module.exports = function tenantScopePlugin(schema) {
   schema.pre("aggregate", function () {
     const tenantId = tenantContext.getTenantId();
     if (tenantId) {
-      this.pipeline().unshift({ $match: { company: tenantId } });
+      // Aggregation pipelines are never cast against the schema (unlike find/
+      // findOne filters), so a raw string here silently matches zero documents
+      // against a BSON ObjectId `company` field instead of throwing.
+      this.pipeline().unshift({ $match: { company: new mongoose.Types.ObjectId(tenantId) } });
     } else if (!tenantContext.isSystem() && STRICT) {
       throw new Error("[tenantScope] aggregate ran without a tenant context (strict mode)");
     }

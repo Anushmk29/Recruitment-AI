@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import api from "../api/client.js";
+import { getSocket } from "../lib/socket.js";
 
 const CompanyDataContext = createContext(null);
 
@@ -48,6 +49,19 @@ export function CompanyDataProvider({ children }) {
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  // Live-sync: any candidate stage change (from the profile page, the Hiring
+  // Pipeline board, or a review-queue resolution) broadcasts "candidate:stage".
+  // Refetching here keeps `queue` (AI Interviews) and `allCandidates` (Hiring
+  // Pipeline) current for every consumer without each page wiring its own
+  // listener.
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const onStage = () => load();
+    socket.on("candidate:stage", onStage);
+    return () => socket.off("candidate:stage", onStage);
   }, [load]);
 
   const allCandidates = useMemo(() => {

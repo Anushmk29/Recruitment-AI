@@ -1,6 +1,7 @@
 // One-off: flip the seeded Demo Company onto the live evidence engine (Claim -> Probe -> Verdict)
 // so the guided dry-run actually exercises the differentiated scorer, not the legacy keyword ATS.
 require("dotenv").config();
+require("../config/dnsOverride").applyDnsOverride();
 const mongoose = require("mongoose");
 const Company = require("../models/Company");
 const CompanySettings = require("../models/CompanySettings");

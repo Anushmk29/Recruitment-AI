@@ -10,12 +10,36 @@ async function createJob(req, res) {
 
   const { slug, ...body } = req.body;
   const job = await Job.create({ ...body, company: req.user.company, slug: generateJobSlug(body.title) });
+
+  // Compile a draft rubric the moment the JD exists — nothing else in the product
+  // prompts a recruiter to visit the Scoring Rubric screen, so without this a job
+  // can go live and collect candidates while permanently stuck at rubricStatus
+  // "none" (candidates silently scored by the legacy keyword engine forever).
+  // Fire-and-forget, same pattern as updateJob's supersede call: a draft still
+  // requires a human to review and approve — this only ensures one exists to review.
+  rubricService
+    .compile(job)
+    .then((draft) => console.log(`[rubric] auto-compiled draft v${draft.version} for new job ${job._id}`))
+    .catch((err) => console.error(`[rubric] auto-compile failed for new job ${job._id}:`, err.code || err.message));
+
   res.status(201).json(job);
 }
 
 async function listJobs(req, res) {
-  const jobs = await Job.find({ company: req.user.company }).sort({ createdAt: -1 });
-  res.json(jobs);
+  const jobs = await Job.find({ company: req.user.company }).sort({ createdAt: -1 }).lean();
+  // Every job the recruiter sees carries its rubric-approval state, so an
+  // unapproved rubric (⇒ candidates silently fall back to the legacy keyword
+  // engine, see evidenceAtsService.js) is visible on the jobs list itself
+  // instead of only discoverable candidate-by-candidate.
+  const statusByJob = await rubricService.latestStatusesForJobs(
+    jobs.map((j) => j._id),
+    req.user.company
+  );
+  const withRubricStatus = jobs.map((j) => ({
+    ...j,
+    rubricStatus: statusByJob.get(String(j._id)) || "none",
+  }));
+  res.json(withRubricStatus);
 }
 
 async function listPublishedJobs(req, res) {
@@ -39,7 +63,13 @@ async function getJob(req, res) {
     return res.status(404).json({ error: "Job not found" });
   }
   await job.populate("company", "name");
-  res.json(job);
+  const payload = job.toObject();
+  // Rubric-approval state is only meaningful (and only ours to disclose) to the
+  // owning admin — public candidate-portal callers never see it.
+  if (isOwningAdmin) {
+    payload.rubricStatus = await rubricService.latestStatusForJob(job._id, req.user.company);
+  }
+  res.json(payload);
 }
 
 async function updateJob(req, res) {

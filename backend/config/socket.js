@@ -3,6 +3,7 @@ const { createAdapter } = require("@socket.io/redis-adapter");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const { getRedisPubSub } = require("./redis");
+const { parseOrigins } = require("../utils/corsOrigins");
 
 let io = null;
 
@@ -17,7 +18,7 @@ function candidateRoom(userId) {
 function initSocket(httpServer) {
   io = new Server(httpServer, {
     cors: {
-      origin: [process.env.CLIENT_ORIGIN_ADMIN, process.env.CLIENT_ORIGIN_USER].filter(Boolean),
+      origin: parseOrigins(process.env.CLIENT_ORIGIN_ADMIN, process.env.CLIENT_ORIGIN_USER),
       credentials: true,
     },
   });

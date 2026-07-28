@@ -99,6 +99,23 @@ async function runAtsForCandidate(candidate, job) {
   candidate.resumeText = resumeText;
   candidate.resumeHash = resumeText ? sha256(resumeText) : "";
 
+  // A resume that produced no readable text means every text-based component
+  // scores blind. That must never be silent: the admin is told the score below
+  // is form-fields-only, instead of a legitimate candidate quietly bottoming
+  // out with no signal to anyone.
+  if (!resumeText) {
+    await notifyAdmin({
+      companyId: job.company,
+      type: "system_alert",
+      title: "Resume could not be read",
+      message:
+        `No text could be extracted from ${candidate.basicDetails.name}'s resume ` +
+        `(${candidate.resumeOriginalName || "file"}). Their screening score is based on the application form only — ` +
+        `consider asking them to re-upload a PDF or DOCX before acting on it.`,
+      meta: { candidateId: candidate._id, jobId: job._id, ingestStatus: ingest.status },
+    }).catch((err) => console.error("Could not send resume-extraction alert:", err.message));
+  }
+
   // Phase 4: every résumé is treated as hostile input. The report FLAGS, it
   // never decides — nothing below branches on it, it is surfaced to the admin.
   candidate.hostility = resumeDefenseService.analyze(ingest);
@@ -200,7 +217,18 @@ async function runAtsForCandidate(candidate, job) {
       });
     } else {
       // Human-in-the-loop: no status change, no candidate email — the admin decides.
+      // A fail is exactly as invisible as a review-band score if it only fires a
+      // notification (easy to miss in a bell icon); it gets the same Review Queue
+      // treatment so every non-pass outcome the system won't auto-act on lands in
+      // one visible place, not scattered between a queue and a notification list.
       reviewNeeded = true;
+      await openReviewItem(
+        candidate,
+        job,
+        assessment,
+        [assessment?.reviewReason || "score_below_threshold", ...(assessment?.qa?.reasons || [])],
+        `Score ${effective.overallScore} was below threshold for ${job.title} — auto-reject is off, a human decides.`
+      );
     }
   }
 

@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { Building2, User, Mail, Phone, Bot, ShieldCheck, BellRing, Palette, Save, AlertTriangle, Globe2, Copy } from "lucide-react";
+import { Building2, User, Mail, Phone, Bot, ShieldCheck, BellRing, Palette, Save, AlertTriangle, Globe2, Copy, Microscope } from "lucide-react";
 import api from "../../api/client.js";
 import { useAdminAuth } from "../../auth/useAdminAuth.js";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { Card, Badge, Skeleton } from "../../components/ui/Card.jsx";
-import { Input, Label, FormGroup } from "../../components/ui/Field.jsx";
+import { Input, Select, Label, FormGroup } from "../../components/ui/Field.jsx";
 import Button from "../../components/ui/Button.jsx";
 import { useToast } from "../../components/ui/Toast.jsx";
 
@@ -39,6 +39,7 @@ function ToggleRow({ label, description, checked, onChange, tone }) {
 }
 
 const EMPTY = {
+  atsEngine: "",
   aiModel: "",
   aiTemperature: "0",
   aiBudgetUsd: "0",
@@ -59,6 +60,7 @@ const EMPTY = {
 // Map the API settings document → flat form state (budget shown in USD, not cents).
 function fromSettings(s) {
   return {
+    atsEngine: s.ai?.atsEngine || "",
     aiModel: s.ai?.model || "",
     aiTemperature: String(s.ai?.temperature ?? 0),
     aiBudgetUsd: String((s.ai?.monthlyBudgetCents ?? 0) / 100),
@@ -81,6 +83,7 @@ function fromSettings(s) {
 function toPayload(f) {
   return {
     ai: {
+      atsEngine: f.atsEngine,
       model: f.aiModel.trim(),
       temperature: Number(f.aiTemperature),
       monthlyBudgetCents: Math.round(Number(f.aiBudgetUsd) * 100),
@@ -400,6 +403,38 @@ export default function SettingsPage() {
         <Card><Skeleton className="h-64 w-full" /></Card>
       ) : (
         <>
+          {/* Screening engine — the switch that decides whether the evidence
+              engine (rubric × claim-graph × deterministic scorer) actually
+              scores candidates, or only the legacy keyword matcher runs. */}
+          <Card>
+            <h2 className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-900">
+              <Microscope className="h-4.5 w-4.5 text-brand-600" /> Screening Engine
+            </h2>
+            <p className="mb-4 text-sm text-slate-500">
+              How applicants are scored. The evidence engine scores each candidate against your approved rubric with
+              cited proof for every point — jobs without an approved rubric always use the keyword engine.
+            </p>
+            <FormGroup className="mb-0 max-w-md">
+              <Label>Engine mode</Label>
+              <Select value={form.atsEngine} onChange={onInput("atsEngine")}>
+                <option value="">Platform default</option>
+                <option value="legacy">Legacy — keyword matching only</option>
+                <option value="shadow">Shadow — evidence engine runs silently for comparison</option>
+                <option value="live">Live — evidence engine scores candidates</option>
+              </Select>
+              <p className="mt-2 text-xs text-slate-400">
+                {form.atsEngine === "shadow" &&
+                  "Shadow mode: candidates are still scored and decided by the keyword engine, while the evidence engine runs in parallel and records what it would have scored. Use this to compare the two before going live — nothing changes for candidates."}
+                {form.atsEngine === "live" &&
+                  "Live mode: the evidence engine's score is the candidate's score wherever a job has an approved rubric. Jobs without one fall back to the keyword engine, labelled as such."}
+                {form.atsEngine === "legacy" &&
+                  "Legacy mode: only the deterministic keyword engine runs. Rubrics, claim verification and evidence scoring are not used."}
+                {form.atsEngine === "" &&
+                  "The platform-wide default applies. Pick a mode to control it per company."}
+              </p>
+            </FormGroup>
+          </Card>
+
           {/* AI interview */}
           <Card>
             <h2 className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-900">

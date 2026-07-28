@@ -2,6 +2,7 @@
 // blurred attention_pattern trigger (and the existing identity/multi-face triggers) are actually
 // reachable in a live dry run, without touching the fleet-wide EVIDENCE_CLIPS_ENABLED default.
 require("dotenv").config();
+require("../config/dnsOverride").applyDnsOverride();
 const mongoose = require("mongoose");
 const Company = require("../models/Company");
 const CompanySettings = require("../models/CompanySettings");

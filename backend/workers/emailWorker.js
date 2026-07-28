@@ -20,12 +20,22 @@ function startEmailWorker() {
   worker.on("failed", async (job, err) => {
     if (!job) return;
     const isFinalAttempt = job.attemptsMade >= (job.opts.attempts || 1);
-    await EmailLog.findByIdAndUpdate(job.data.logId, {
-      status: isFinalAttempt ? "failed" : "retrying",
-      error: err.message,
-      $inc: { attempts: 1 },
-    });
+    const log = await EmailLog.findByIdAndUpdate(
+      job.data.logId,
+      {
+        status: isFinalAttempt ? "failed" : "retrying",
+        error: err.message,
+        $inc: { attempts: 1 },
+      },
+      { new: true }
+    );
     console.error(`[emailWorker] job ${job.id} failed (attempt ${job.attemptsMade}):`, err.message);
+    // Out of retries ⇒ the recipient is not getting this email. Same alert path
+    // as the inline sender — a dead send is an incident, not a log line.
+    if (isFinalAttempt && log) {
+      const { alertEmailFailure } = require("../services/emailDispatchService");
+      await alertEmailFailure(log).catch(() => {});
+    }
   });
 
   console.log("[emailWorker] BullMQ email worker started");

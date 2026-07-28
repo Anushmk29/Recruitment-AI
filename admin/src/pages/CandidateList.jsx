@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Users } from "lucide-react";
+import { ArrowLeft, Users, AlertTriangle } from "lucide-react";
 import api from "../api/client.js";
 import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
 import { Select } from "../components/ui/Field.jsx";
@@ -44,6 +44,23 @@ export default function CandidateList() {
       </Link>
       <h1 className="text-2xl font-bold text-slate-900">Candidates{job ? ` — ${job.title}` : ""}</h1>
 
+      {job && job.rubricStatus && job.rubricStatus !== "approved" && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+          <div>
+            <p className="font-medium">This job has no approved scoring rubric.</p>
+            <p className="mt-0.5">
+              Every candidate below is being scored by the legacy keyword matcher, not the evidence-based rubric
+              engine.{" "}
+              <Link to={`/jobs/${job._id}/rubric`} className="font-medium underline hover:text-amber-900">
+                Review and approve the rubric
+              </Link>{" "}
+              to switch this job to evidence-based scoring.
+            </p>
+          </div>
+        </div>
+      )}
+
       <Card className="p-0">
         {loading ? (
           <div className="space-y-3 p-6">
@@ -77,9 +94,19 @@ export default function CandidateList() {
                     <td className="px-6 py-3 text-slate-500">{c.basicDetails?.email}</td>
                     <td className="px-6 py-3">
                       {c.ats?.overallScore != null ? (
-                        <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
-                          {c.ats.overallScore}%
-                        </Badge>
+                        <div className="flex items-center gap-1.5">
+                          <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
+                            {c.ats.overallScore}%
+                          </Badge>
+                          {c.ats.engine !== "evidence" && (
+                            <span
+                              title="Legacy keyword match — this job's scoring rubric isn't approved yet"
+                              className="text-amber-500"
+                            >
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         "—"
                       )}

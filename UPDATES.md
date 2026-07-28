@@ -10,6 +10,99 @@ Legend: 🆕 new file · ✏️ modified · 🗑️ removed
 
 ---
 
+## 2026-07-27 — Fix: phone-cam QR + interview links dead on a phone (LAN/multi-origin CORS)
+
+**What:** The phone-cam pairing QR and every interview magic link were built from `CLIENT_ORIGIN_USER`, hardcoded to `http://localhost:5174` — meaningless once scanned/opened on an actual phone, where "localhost" means the phone itself. Added `utils/corsOrigins.js`: `CLIENT_ORIGIN_ADMIN`/`CLIENT_ORIGIN_USER` may now each hold a comma-separated list of origins — the **first** entry feeds every link-builder (interview invite email, phone-cam QR, password-reset link, public careers link), **all** entries feed the CORS and Socket.io allow-lists. Set `CLIENT_ORIGIN_USER` to the dev machine's LAN IP first, `localhost` second, so links/QRs are phone-reachable while the app still works from the machine's own browser.
+**Why:** reported — "not able to connect using my phone as local host is not working" while scanning the "Phone as Second Camera" pairing QR from `PreInterviewCheck.jsx`.
+
+**Backend**
+
+| File | Change |
+|---|---|
+| 🆕 `backend/utils/corsOrigins.js` | `parseOrigins()` (flatten+trim comma list, feeds CORS/socket) and `firstOrigin()` (first entry + fallback, feeds link-builders). |
+| ✏️ `backend/server.js`, `backend/config/socket.js` | CORS / Socket.io `origin` now built via `parseOrigins(...)` instead of a raw 2-element array. |
+| ✏️ `backend/controllers/interviewPortalController.js` | `phonePair()` QR URL via `firstOrigin(CLIENT_ORIGIN_USER, ...)`. |
+| ✏️ `backend/controllers/authController.js` | `originForRole()` (verification/reset links) via `firstOrigin(...)`. |
+| ✏️ `backend/services/interviewInvitationService.js` | `buildInterviewUrl()` (interview magic link) via `firstOrigin(...)`. |
+| ✏️ `backend/services/careersService.js` | `applyBaseUrl()` (public job-apply links) via `firstOrigin(...)`. |
+| ✏️ `backend/.env` (git-ignored) | `CLIENT_ORIGIN_USER=http://192.168.29.90:5174,http://localhost:5174` — update the IP if this machine's Wi-Fi address changes. |
+
+**Verified:** `node -e` sanity check of `parseOrigins`/`firstOrigin`; backend reboots cleanly with the new require graph (EADDRINUSE against the already-running instance confirms no load-time error); confirmed the active Wi-Fi profile (Public) already has an inbound-allow rule for Node.js. **Not yet confirmed:** an actual phone scanning the regenerated QR (pending user test).
+
+---
+
+## 2026-07-27 — Fix: manual stage-advance to "Interview Scheduled" never sent the interview invite
+
+**What:** `pipelineService.applyTransition` — the function behind the candidate-profile "Move to stage" button and the Hiring Pipeline board — never created an `InterviewQueue` entry or `InterviewSession`. Only the automatic ATS-pass path (`atsService.advanceAfterAtsPass`) did. Added `ensureInterviewInvite()`, firing the same queue-upsert + magic-link-email side effects whenever a manual move lands on `interview_scheduled`. Also fixed `candidateController.moveStage`'s job `.populate()`, which only projected `title` — missing `company`/`interviewInstructions` that session creation needs — and added a dedicated `STAGE_NOTIFICATIONS.interview_scheduled` entry (admin-only) so the generic "status updated" notification doesn't double up against the new invite email.
+**Why:** reported — "i did the manual advancement to ats passed and then interview scheduled but it did not come."
+
+**Backend**
+
+| File | Change |
+|---|---|
+| ✏️ `backend/services/pipelineService.js` | New `ensureInterviewInvite()`, called from `applyTransition`; new `STAGE_NOTIFICATIONS.interview_scheduled` (admin-only). |
+| ✏️ `backend/controllers/candidateController.js` | `moveStage`'s job populate expanded to `"title company interviewInstructions"`. |
+
+**Verified:** manually remediated the one candidate already stuck in this state (a one-off script, deleted after use) — confirmed `InterviewSession` created and the invite email dispatched. The code fix itself is not yet exercised via a fresh UI-driven stage move (pending backend restart + manual retest).
+
+---
+
+## 2026-07-27 — Fix: Jobs list always showed "No rubric yet"
+
+**What:** `RoleRubric.aggregate()` (`rubricService.latestStatusesForJobs`, the only rubric-status read the Jobs list uses) always returned zero rows. Root cause: the shared `tenantScope` Mongoose plugin injects `{ $match: { company: tenantId } }` into every aggregate pipeline on a tenant-scoped model — but `tenantId` is a plain string, and Mongoose never casts aggregation `$match` values against the schema (unlike `find`/`findOne` filters), so it could never equal the stored `ObjectId`. Fixed by casting to `mongoose.Types.ObjectId` inside the plugin's `aggregate` hook.
+**Why:** reported — most jobs had an approved rubric, but every job showed "No rubric yet".
+
+**Backend**
+
+| File | Change |
+|---|---|
+| ✏️ `backend/models/plugins/tenantScope.js` | `aggregate` hook casts the injected tenant filter to `mongoose.Types.ObjectId`. |
+
+**Side benefit:** the same bug was silently zeroing `backend/services/quotaService.js`'s `storageMb` usage aggregate whenever it ran inside a tenant request context — fixed for free by the same change.
+**Verified:** traced the exact pipeline and confirmed Mongoose's documented no-cast-on-aggregate behavior against the schema's `ObjectId` field. Not yet re-checked live against a page refresh (pending backend restart).
+
+---
+
+## 2026-07-27 — Fix: Review Queue / AI Interviews queue didn't auto-sync with candidate stage changes
+
+**What:** `pipelineService.applyTransition` never touched `ReviewItem` or `InterviewQueue`, so a stage move made from outside their own narrow endpoints (candidate profile page, Hiring Pipeline board) left stale "needs action" entries behind indefinitely. Added `closeSatelliteQueues()`: auto-resolves any open `ReviewItem` and marks the `InterviewQueue` entry `removed` once a candidate leaves `interview_scheduled`. Also, `reviewQueueController`'s "advance" branch mutated the candidate directly without ever broadcasting `candidate:stage` (only "decline" did, via `applyTransition`) — added an explicit `emitStageUpdate` call so an open Hiring Pipeline/profile tab live-updates on an advance too. On the frontend, `ReviewQueue.jsx` and `CompanyDataContext.jsx` (backing `AIInterviews.jsx` + `HiringPipeline.jsx`) had no socket listener at all, only fetching on mount or after their own button click — added a `candidate:stage` listener to each, and removed `HiringPipeline.jsx`'s now-redundant duplicate listener since the shared context handles it centrally.
+**Why:** reported — "the review queue should be automatically updated if recruiters update[] the review queue or update[] the candidate to next stage from their profile."
+
+**Backend**
+
+| File | Change |
+|---|---|
+| ✏️ `backend/services/pipelineService.js` | New `closeSatelliteQueues()`, called from `applyTransition`; `emitStageUpdate` now exported. |
+| ✏️ `backend/controllers/reviewQueueController.js` | "Advance" branch now calls `emitStageUpdate` after `advanceAfterAtsPass`. |
+
+**Frontend**
+
+| File | Change |
+|---|---|
+| ✏️ `admin/src/context/CompanyDataContext.jsx` | New `candidate:stage` socket listener → `load()`, shared by every consumer. |
+| ✏️ `admin/src/pages/dashboard/ReviewQueue.jsx` | New `candidate:stage` socket listener → `load()` (doesn't use the shared context). |
+| ✏️ `admin/src/pages/dashboard/HiringPipeline.jsx` | Removed its own duplicate `candidate:stage` listener (now centralized in the context). |
+
+**Verified:** traced all call sites of `applyTransition` and every consumer of the `candidate:stage` socket event. Not yet exercised live with two open browser tabs (pending manual test).
+
+---
+
+## 2026-07-27 — Fix: transactional emails silently never delivered (Brevo sender mismatch)
+
+**What:** `MAIL_FROM` was set to the raw Brevo SMTP login (`b149a0001@smtp-brevo.com`) — a valid credential but not a verified sender identity. Brevo accepted every send at the SMTP layer (`EmailLog` recorded `status: "sent"`, no error) and then silently rejected it downstream ("the sender you used ... is not valid"). No transactional email — interview invites, verification, OTP, rejection, welcome — was actually delivered anywhere. Fixed by pointing `MAIL_FROM` at the Brevo-verified sender; documented the gotcha in `.env.example` so it isn't reintroduced.
+**Why:** reported — "unable to see [emails] in my mail box ... when giving candidate interview link or giving them verification;" confirmed via the user's Brevo dashboard error log + Senders page.
+
+**Backend**
+
+| File | Change |
+|---|---|
+| ✏️ `backend/.env` (git-ignored) | `MAIL_FROM` → the Brevo-verified sender address. |
+| ✏️ `backend/.env.example` | Added a comment documenting the "SMTP login used as `MAIL_FROM`" Brevo gotcha. |
+
+**Verified:** root cause confirmed via `EmailLog` (all sends showed `status: "sent"`, no application-level error) plus the user's Brevo dashboard screenshots. Not yet re-confirmed by a fresh end-to-end test send (pending).
+
+---
+
 ## 2026-07-22 — Product: Live interview proctoring (browser signals + in-browser vision)
 
 **What:** Turned the one-time pre-check into **continuous integrity monitoring during the interview**. Two tiers:

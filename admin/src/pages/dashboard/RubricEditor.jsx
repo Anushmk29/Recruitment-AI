@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, ShieldCheck, Sparkles, AlertTriangle, Info, Lock, Plus, Trash2, RefreshCw, Save } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Sparkles, AlertTriangle, Info, Lock, Plus, Trash2, RefreshCw, Save, CheckCircle2, ChevronDown, ChevronRight, GripVertical } from "lucide-react";
 import api from "../../api/client.js";
 import { useToast } from "../../components/ui/Toast.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
@@ -16,6 +16,39 @@ const KIND_META = {
   must_have: { label: "Must-have", tone: "brand" },
   nice_to_have: { label: "Nice-to-have", tone: "slate" },
   disqualifier: { label: "Disqualifier", tone: "red" },
+};
+
+// Group order + the plain-language explanation shown once above each section,
+// so a first-time user never has to guess what "must-have" changes about scoring.
+// Each group is rendered as its own boxed "lane" (stacked vertically, not side by
+// side) so the three kinds read as clearly separate blocks, not one long list.
+const KIND_GROUPS = [
+  {
+    kind: "must_have",
+    title: "Must-have criteria",
+    blurb: "Expected of every candidate and counted toward the score below.",
+    accent: "brand",
+  },
+  {
+    kind: "nice_to_have",
+    title: "Nice-to-have criteria",
+    blurb: "Not required, but count toward the score when a candidate has them.",
+    accent: "slate",
+  },
+  {
+    kind: "disqualifier",
+    title: "Disqualifiers",
+    blurb: "Instant knock-outs — carry no weight. If a candidate fails one, they fail overall no matter how they score elsewhere.",
+    accent: "red",
+  },
+];
+
+// Border/header/ring classes per lane accent. Written out per-key (not built with
+// template strings) so Tailwind's static class scanner can see every class name.
+const LANE_STYLES = {
+  brand: { border: "border-brand-200", header: "bg-brand-50/70", ring: "ring-brand-300" },
+  slate: { border: "border-slate-300", header: "bg-slate-50", ring: "ring-slate-300" },
+  red: { border: "border-red-200", header: "bg-red-50/70", ring: "ring-red-300" },
 };
 
 const SEVERITY_META = {
@@ -38,6 +71,57 @@ export default function RubricEditor() {
   const [thresholds, setThresholds] = useState({ advance: 60, review: 45 });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // Rows and sections start collapsed — a rubric with a dozen criteria should read as a
+  // scannable list, not a wall of open forms. Reset whenever the selected version changes.
+  const [openRows, setOpenRows] = useState(() => new Set());
+  const [collapsedSections, setCollapsedSections] = useState(() => new Set());
+  // Drag-to-reclassify: dragging a row's handle into a different section changes
+  // its kind, so you don't have to open the row and use the dropdown just to
+  // move a criterion from must-have to nice-to-have (or into a disqualifier).
+  const [draggedIndex, setDraggedIndex] = useState(null);
+  const [dragOverSection, setDragOverSection] = useState(null);
+
+  // Reclassify + reorder: pull the item out, retarget its kind, and reinsert it
+  // just before whatever occupied `toIndexBeforeRemoval` prior to removal.
+  function moveCriterion(fromIndex, toIndexBeforeRemoval, newKind) {
+    setCriteria((list) => {
+      const next = [...list];
+      const [item] = next.splice(fromIndex, 1);
+      let insertAt = toIndexBeforeRemoval;
+      if (fromIndex < toIndexBeforeRemoval) insertAt -= 1;
+      next.splice(insertAt, 0, { ...item, kind: newKind });
+      return next;
+    });
+  }
+
+  // Dropped on a section itself (not on a specific row) — reclassify and send
+  // it to the end of that section.
+  function moveCriterionToEnd(fromIndex, newKind) {
+    setCriteria((list) => {
+      const next = [...list];
+      const [item] = next.splice(fromIndex, 1);
+      next.push({ ...item, kind: newKind });
+      return next;
+    });
+  }
+
+  function toggleRow(i) {
+    setOpenRows((set) => {
+      const next = new Set(set);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
+
+  function toggleSection(kind) {
+    setCollapsedSections((set) => {
+      const next = new Set(set);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  }
 
   const selected = useMemo(() => versions.find((v) => v._id === selectedId) || null, [versions, selectedId]);
   const isDraft = selected?.status === "draft";
@@ -96,6 +180,8 @@ export default function RubricEditor() {
     if (!selected) return;
     setCriteria(selected.criteria.map((c) => ({ ...c, weight: pct(c.weight) })));
     setThresholds({ advance: selected.thresholds?.advance ?? 60, review: selected.thresholds?.review ?? 45 });
+    setOpenRows(new Set());
+    setCollapsedSections(new Set());
   }, [selected]);
 
   async function compileRubric() {
@@ -148,10 +234,10 @@ export default function RubricEditor() {
     setCriteria((list) => list.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   }
 
-  function addCriterion() {
+  function addCriterion(kind = "nice_to_have") {
     setCriteria((list) => [
       ...list,
-      { id: `c${list.length + 1}`, label: "", kind: "nice_to_have", weight: 10, rationale: "", evidenceTypes: ["experience"], acceptableEvidence: [], probeHint: "", seniorityFloor: "" },
+      { id: `c${list.length + 1}`, label: "", kind, weight: 10, rationale: "", evidenceTypes: ["experience"], acceptableEvidence: [], probeHint: "", seniorityFloor: "" },
     ]);
   }
 
@@ -160,6 +246,203 @@ export default function RubricEditor() {
   }
 
   const relativeTotal = criteria.filter((c) => c.kind !== "disqualifier").reduce((s, c) => s + (Number(c.weight) || 0), 0);
+
+  // Aggregate share per kind so a new user can SEE the weight split (a bar) instead
+  // of having to add up percentages in their head.
+  const kindShareTotals = { must_have: 0, nice_to_have: 0 };
+  criteria.forEach((c) => {
+    if (c.kind !== "must_have" && c.kind !== "nice_to_have") return;
+    kindShareTotals[c.kind] += relativeTotal === 0 ? 0 : ((Number(c.weight) || 0) / relativeTotal) * 100;
+  });
+  const disqualifierCount = criteria.filter((c) => c.kind === "disqualifier").length;
+
+  // Three-step progress: where is this rubric in its lifecycle right now.
+  const stepState = {
+    compile: versions.length ? "done" : "active",
+    review: !versions.length ? "todo" : isDraft ? "active" : "done",
+    approve: selected?.status === "approved" ? "done" : isDraft && versions.length ? "active" : "todo",
+  };
+  const STEPS = [
+    { key: "compile", label: "Compile from JD" },
+    { key: "review", label: "Review & adjust" },
+    { key: "approve", label: "Approve & freeze" },
+  ];
+
+  // Each criterion is one line by default — label, kind, weight — expand it to
+  // edit rationale, probe hint, and evidence types. Reviewing a 12-criterion
+  // rubric should mean scanning a list, not scrolling past 12 open forms.
+  function renderCriterion(c, i, sectionKind) {
+    const kindMeta = KIND_META[c.kind] || KIND_META.nice_to_have;
+    const share = c.kind === "disqualifier" || relativeTotal === 0 ? 0 : Math.round(((Number(c.weight) || 0) / relativeTotal) * 100);
+    const isOpen = openRows.has(i);
+    const isDragging = draggedIndex === i;
+    return (
+      <div
+        key={i}
+        className={`rounded-xl border border-slate-200 ${isDragging ? "opacity-40" : ""}`}
+        onDragOver={(e) => {
+          if (draggedIndex === null) return;
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onDrop={(e) => {
+          if (draggedIndex === null) return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (draggedIndex !== i) moveCriterion(draggedIndex, i, sectionKind);
+          setDraggedIndex(null);
+          setDragOverSection(null);
+        }}
+      >
+        <div className="flex items-center gap-2 px-4 py-3">
+          {isDraft && (
+            <span
+              draggable
+              onDragStart={(e) => {
+                setDraggedIndex(i);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragEnd={() => {
+                setDraggedIndex(null);
+                setDragOverSection(null);
+              }}
+              className="cursor-grab text-slate-300 hover:text-slate-500 active:cursor-grabbing"
+              aria-label="Drag to move to a different section"
+            >
+              <GripVertical className="h-4 w-4" />
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => toggleRow(i)}
+            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+            aria-expanded={isOpen}
+          >
+            {isOpen ? (
+              <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+            ) : (
+              <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
+              {c.label || <span className="italic text-slate-400">Untitled criterion</span>}
+            </span>
+            <Badge tone={kindMeta.tone}>{kindMeta.label}</Badge>
+          </button>
+
+          {c.kind === "disqualifier" ? (
+            <span className="shrink-0 text-xs font-medium text-red-500">no weight</span>
+          ) : isDraft ? (
+            <span className="flex shrink-0 items-center gap-1 text-sm font-semibold text-slate-700">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={c.weight}
+                onChange={(e) => setCriterion(i, { weight: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })}
+                aria-label="Weight value"
+                className="w-14 rounded-lg border border-slate-300 px-2 py-1 text-right text-sm text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
+              />
+              %
+            </span>
+          ) : (
+            <span className="shrink-0 text-sm font-semibold text-slate-700">{Math.round(c.weight)}%</span>
+          )}
+
+          {isDraft && (
+            <Button variant="ghost" size="sm" onClick={() => removeCriterion(i)} aria-label="Remove criterion" className="shrink-0">
+              <Trash2 className="h-4 w-4 text-red-500" />
+            </Button>
+          )}
+        </div>
+
+        {isOpen && (
+          <div className="space-y-3 border-t border-slate-100 px-4 pb-4 pt-3">
+            {isDraft && (
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-0 flex-1">
+                  <Label>Label</Label>
+                  <Input value={c.label} placeholder="Criterion label" onChange={(e) => setCriterion(i, { label: e.target.value })} />
+                </div>
+                <div>
+                  <Label>Kind</Label>
+                  <Select value={c.kind} onChange={(e) => setCriterion(i, { kind: e.target.value })} className="w-40">
+                    <option value="must_have">Must-have</option>
+                    <option value="nice_to_have">Nice-to-have</option>
+                    <option value="disqualifier">Disqualifier</option>
+                  </Select>
+                </div>
+              </div>
+            )}
+
+            {c.kind !== "disqualifier" && isDraft && (
+              <div>
+                <Label>Weight</Label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={c.weight}
+                    onChange={(e) => setCriterion(i, { weight: Number(e.target.value) })}
+                    className="h-2 flex-1 accent-brand-600"
+                  />
+                  <span className="w-32 shrink-0 text-right text-xs text-slate-500">≈ {share}% of total score</span>
+                </div>
+              </div>
+            )}
+            {c.kind === "disqualifier" && (
+              <p className="text-xs font-medium text-red-600">Knock-out gate — carries no weight; failing it fails the candidate.</p>
+            )}
+
+            <div>
+              {isDraft ? (
+                <>
+                  <Label>Why this criterion exists</Label>
+                  <Textarea
+                    rows={2}
+                    value={c.rationale}
+                    placeholder="Why this criterion exists (required)"
+                    onChange={(e) => setCriterion(i, { rationale: e.target.value })}
+                  />
+                </>
+              ) : (
+                <p className="text-sm text-slate-600">{c.rationale}</p>
+              )}
+            </div>
+
+            {(c.probeHint || isDraft) && (
+              <div>
+                {isDraft ? (
+                  <>
+                    <Label>Interview probe</Label>
+                    <Input
+                      value={c.probeHint}
+                      placeholder="Interview probe hint (how to test this claim)"
+                      onChange={(e) => setCriterion(i, { probeHint: e.target.value })}
+                    />
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    <span className="font-semibold">Interview probe:</span> {c.probeHint}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {c.evidenceTypes?.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {c.evidenceTypes.map((t) => (
+                  <span key={t} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -197,6 +480,30 @@ export default function RubricEditor() {
             </>
           )}
         </div>
+      </div>
+
+      {/* Where this rubric is in its lifecycle, at a glance. */}
+      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center">
+        {STEPS.map((step, idx) => {
+          const state = stepState[step.key];
+          return (
+            <div key={step.key} className="flex flex-1 items-center gap-2.5">
+              <div
+                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                  state === "done"
+                    ? "bg-emerald-100 text-emerald-600"
+                    : state === "active"
+                      ? "bg-brand-100 text-brand-700"
+                      : "bg-slate-100 text-slate-400"
+                }`}
+              >
+                {state === "done" ? <CheckCircle2 className="h-4 w-4" /> : idx + 1}
+              </div>
+              <span className={`text-xs font-semibold ${state === "todo" ? "text-slate-400" : "text-slate-700"}`}>{step.label}</span>
+              {idx < STEPS.length - 1 && <div className="mx-1 hidden h-px flex-1 bg-slate-200 sm:block" />}
+            </div>
+          );
+        })}
       </div>
 
       {!versions.length ? (
@@ -316,106 +623,107 @@ export default function RubricEditor() {
 
               {/* Criteria */}
               <Card>
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div className="mb-4">
                   <h2 className="text-base font-bold text-slate-900">Criteria ({criteria.length})</h2>
-                  {isDraft && (
-                    <Button variant="ghost" size="sm" onClick={addCriterion}>
-                      <Plus className="h-4 w-4" /> Add criterion
-                    </Button>
-                  )}
                 </div>
 
+                {/* At-a-glance weight split — no mental math required. */}
+                {kindShareTotals.must_have + kindShareTotals.nice_to_have > 0 && (
+                  <div className="mb-5">
+                    <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div className="bg-brand-500" style={{ width: `${kindShareTotals.must_have}%` }} />
+                      <div className="bg-slate-400" style={{ width: `${kindShareTotals.nice_to_have}%` }} />
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-brand-500" /> Must-have — {Math.round(kindShareTotals.must_have)}% of score
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-slate-400" /> Nice-to-have — {Math.round(kindShareTotals.nice_to_have)}% of score
+                      </span>
+                      {disqualifierCount > 0 && (
+                        <span>
+                          + {disqualifierCount} disqualifier{disqualifierCount > 1 ? "s" : ""} (no weight — automatic fail)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {isDraft && (
+                  <div className="mb-5 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <p>
+                      Drag a slider (or type a number) to make a criterion matter more or less. These are <strong>relative</strong> — they
+                      don&apos;t need to add up to 100. The bar above always shows each group&apos;s true share of the total score.
+                    </p>
+                  </div>
+                )}
+
                 <div className="space-y-4">
-                  {criteria.map((c, i) => {
-                    const kindMeta = KIND_META[c.kind] || KIND_META.nice_to_have;
-                    const share = c.kind === "disqualifier" || relativeTotal === 0 ? 0 : Math.round(((Number(c.weight) || 0) / relativeTotal) * 100);
+                  {KIND_GROUPS.map((group) => {
+                    const rows = criteria.map((c, i) => ({ c, i })).filter(({ c }) => c.kind === group.kind);
+                    if (!rows.length && !isDraft) return null;
+                    const isCollapsed = collapsedSections.has(group.kind);
+                    const isDropTarget = isDraft && draggedIndex !== null;
+                    const isDragOver = dragOverSection === group.kind;
+                    const style = LANE_STYLES[group.accent];
                     return (
-                      <div key={i} className="rounded-xl border border-slate-200 p-4">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            {isDraft ? (
-                              <Input value={c.label} placeholder="Criterion label" onChange={(e) => setCriterion(i, { label: e.target.value })} />
+                      <div
+                        key={group.kind}
+                        className={`overflow-hidden rounded-2xl border-2 transition ${style.border} ${
+                          isDragOver ? `ring-2 ring-offset-1 ${style.ring}` : ""
+                        }`}
+                        onDragOver={(e) => {
+                          if (!isDropTarget) return;
+                          e.preventDefault();
+                          setDragOverSection(group.kind);
+                        }}
+                        onDragLeave={() => setDragOverSection((cur) => (cur === group.kind ? null : cur))}
+                        onDrop={(e) => {
+                          if (!isDropTarget) return;
+                          e.preventDefault();
+                          moveCriterionToEnd(draggedIndex, group.kind);
+                          setDraggedIndex(null);
+                          setDragOverSection(null);
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleSection(group.kind)}
+                          className={`flex w-full items-start justify-between gap-2 px-4 py-3 text-left ${style.header}`}
+                          aria-expanded={!isCollapsed}
+                        >
+                          <div className="flex items-start gap-2">
+                            {isCollapsed ? (
+                              <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
                             ) : (
-                              <p className="font-semibold text-slate-900">{c.label}</p>
+                              <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
                             )}
+                            <div>
+                              <h3 className="text-sm font-bold text-slate-800">
+                                {group.title} <span className="font-normal text-slate-500">({rows.length})</span>
+                              </h3>
+                              <p className="text-xs text-slate-500">{group.blurb}</p>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            {isDraft ? (
-                              <Select value={c.kind} onChange={(e) => setCriterion(i, { kind: e.target.value })} className="w-40">
-                                <option value="must_have">Must-have</option>
-                                <option value="nice_to_have">Nice-to-have</option>
-                                <option value="disqualifier">Disqualifier</option>
-                              </Select>
-                            ) : (
-                              <Badge tone={kindMeta.tone}>{kindMeta.label}</Badge>
-                            )}
+                        </button>
+                        {!isCollapsed && (
+                          <div className="bg-white p-3">
                             {isDraft && (
-                              <Button variant="ghost" size="sm" onClick={() => removeCriterion(i)} aria-label="Remove criterion">
-                                <Trash2 className="h-4 w-4 text-red-500" />
-                              </Button>
+                              <div className="mb-3 flex justify-end">
+                                <Button variant="ghost" size="sm" onClick={() => addCriterion(group.kind)}>
+                                  <Plus className="h-3.5 w-3.5" /> Add {KIND_META[group.kind].label.toLowerCase()}
+                                </Button>
+                              </div>
                             )}
-                          </div>
-                        </div>
-
-                        {c.kind !== "disqualifier" && (
-                          <div className="mt-3 flex items-center gap-3">
-                            {isDraft ? (
-                              <>
-                                <input
-                                  type="range"
-                                  min="0"
-                                  max="100"
-                                  value={c.weight}
-                                  onChange={(e) => setCriterion(i, { weight: Number(e.target.value) })}
-                                  className="h-2 flex-1 accent-brand-600"
-                                />
-                                <span className="w-24 text-right text-sm font-semibold text-slate-700">≈ {share}% weight</span>
-                              </>
+                            {rows.length ? (
+                              <div className="space-y-2">{rows.map(({ c, i }) => renderCriterion(c, i, group.kind))}</div>
                             ) : (
-                              <span className="text-sm font-semibold text-slate-700">{pct(c.weight)}% of the score</span>
-                            )}
-                          </div>
-                        )}
-                        {c.kind === "disqualifier" && (
-                          <p className="mt-2 text-xs font-medium text-red-600">Knock-out gate — carries no weight; failing it fails the candidate.</p>
-                        )}
-
-                        <div className="mt-3">
-                          {isDraft ? (
-                            <Textarea
-                              rows={2}
-                              value={c.rationale}
-                              placeholder="Why this criterion exists (required)"
-                              onChange={(e) => setCriterion(i, { rationale: e.target.value })}
-                            />
-                          ) : (
-                            <p className="text-sm text-slate-600">{c.rationale}</p>
-                          )}
-                        </div>
-
-                        {(c.probeHint || isDraft) && (
-                          <div className="mt-2">
-                            {isDraft ? (
-                              <Input
-                                value={c.probeHint}
-                                placeholder="Interview probe hint (how to test this claim)"
-                                onChange={(e) => setCriterion(i, { probeHint: e.target.value })}
-                              />
-                            ) : (
-                              <p className="text-xs text-slate-500">
-                                <span className="font-semibold">Interview probe:</span> {c.probeHint}
+                              <p className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-400">
+                                {isDropTarget ? "Drop here to move it into this section." : "None yet."}
                               </p>
                             )}
-                          </div>
-                        )}
-
-                        {c.evidenceTypes?.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {c.evidenceTypes.map((t) => (
-                              <span key={t} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
-                                {t}
-                              </span>
-                            ))}
                           </div>
                         )}
                       </div>

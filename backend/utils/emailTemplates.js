@@ -4,17 +4,28 @@ function escapeHtml(str) {
   ));
 }
 
-function formatDate(date) {
-  return date.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-}
+// Every timestamp shown to a candidate carries an explicit timezone label —
+// a bare server-locale time reads as the candidate's local time and is wrong
+// for almost everyone. MAIL_TIMEZONE picks the zone (IST default; the platform
+// is India-first), and the short zone name is always rendered with it.
+const MAIL_TIMEZONE = process.env.MAIL_TIMEZONE || "Asia/Kolkata";
 
-function formatTime(date) {
-  return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+function formatDateTime(date) {
+  return date.toLocaleString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: MAIL_TIMEZONE,
+    timeZoneName: "short",
+  });
 }
 
 const DEFAULT_INSTRUCTIONS =
-  "Join from a quiet, well-lit location with a stable internet connection. " +
-  "Make sure your camera and microphone are working, and keep a government-issued photo ID handy for identity verification.";
+  "Use a laptop or desktop with a working camera and microphone — the interview cannot run on most phones. " +
+  "Join from a quiet, well-lit location with a stable internet connection.";
 
 function rejectionEmailTemplate(candidate, job) {
   const name = candidate.basicDetails.name;
@@ -37,32 +48,32 @@ function rejectionEmailTemplate(candidate, job) {
 
 function interviewInvitationEmailTemplate(candidate, job, session) {
   const name = candidate.basicDetails.name;
-  const date = formatDate(session.interviewAt);
-  const time = formatTime(session.interviewAt);
+  const deadline = formatDateTime(session.expiresAt);
   const instructions = session.instructions || DEFAULT_INSTRUCTIONS;
 
+  // Honest scheduling: the link works from the moment it arrives until it
+  // expires — there is no fixed slot, so the email says exactly that instead
+  // of naming a fictional date the system never enforces.
   const subject = `You're invited to interview for ${job.title}`;
   const text =
     `Hi ${name},\n\n` +
     `Congratulations! You've cleared the initial screening for the ${job.title} position, ` +
-    `and we'd like to invite you to an interview.\n\n` +
-    `Interview Date: ${date}\n` +
-    `Interview Time: ${time}\n` +
+    `and we'd like to invite you to an AI-conducted interview.\n\n` +
+    `Take it whenever suits you — your link works any time until:\n` +
+    `${deadline}\n\n` +
     `Interview Link: ${session.interviewUrl}\n\n` +
     `Instructions:\n${instructions}\n\n` +
-    `This link is valid until ${session.expiresAt.toLocaleString("en-US")}.\n\n` +
+    `Keep this email — you'll need this link to start (or resume) your interview.\n\n` +
     `Regards,\nRecruitment Team`;
   const html =
     `<p>Hi ${escapeHtml(name)},</p>` +
     `<p>Congratulations! You've cleared the initial screening for the <strong>${escapeHtml(job.title)}</strong> ` +
-    `position, and we'd like to invite you to an interview.</p>` +
-    `<table cellpadding="4" cellspacing="0">` +
-    `<tr><td><strong>Interview Date</strong></td><td>${escapeHtml(date)}</td></tr>` +
-    `<tr><td><strong>Interview Time</strong></td><td>${escapeHtml(time)}</td></tr>` +
-    `<tr><td><strong>Interview Link</strong></td><td><a href="${escapeHtml(session.interviewUrl)}">${escapeHtml(session.interviewUrl)}</a></td></tr>` +
-    `</table>` +
+    `position, and we'd like to invite you to an AI-conducted interview.</p>` +
+    `<p>Take it whenever suits you — your link works any time until <strong>${escapeHtml(deadline)}</strong>.</p>` +
+    `<p><a href="${escapeHtml(session.interviewUrl)}" style="display:inline-block;padding:10px 18px;background:#2a5f4f;color:#fff;text-decoration:none;border-radius:6px;">Start Interview</a></p>` +
+    `<p>Or open this link: <a href="${escapeHtml(session.interviewUrl)}">${escapeHtml(session.interviewUrl)}</a></p>` +
     `<p><strong>Instructions:</strong><br/>${escapeHtml(instructions)}</p>` +
-    `<p>This link is valid until ${escapeHtml(session.expiresAt.toLocaleString("en-US"))}.</p>` +
+    `<p>Keep this email — you'll need this link to start (or resume) your interview.</p>` +
     `<p>Regards,<br/>Recruitment Team</p>`;
 
   return { subject, text, html };
@@ -160,39 +171,44 @@ function applicationSubmittedEmailTemplate(candidate, job) {
   const subject = `Application received for ${job.title}`;
   const text =
     `Hi ${name},\n\n` +
-    `We've received your application for the ${job.title} position. Our team (and our ATS engine) will review it shortly ` +
+    `We've received your application for the ${job.title} position. It's being reviewed now, ` +
     `and you'll be notified of the outcome by email and on your dashboard.\n\n` +
     `Regards,\nRecruitment Team`;
   const html =
     `<p>Hi ${escapeHtml(name)},</p>` +
-    `<p>We've received your application for the <strong>${escapeHtml(job.title)}</strong> position. Our team (and our ATS ` +
-    `engine) will review it shortly and you'll be notified of the outcome by email and on your dashboard.</p>` +
+    `<p>We've received your application for the <strong>${escapeHtml(job.title)}</strong> position. It's being reviewed ` +
+    `now, and you'll be notified of the outcome by email and on your dashboard.</p>` +
     `<p>Regards,<br/>Recruitment Team</p>`;
 
   return { subject, text, html };
 }
 
+// NOTE: the reminder cannot contain the interview link itself — only the link's
+// hash is stored (deliberately: a stored raw token is a stolen-database
+// interview hijack). So the reminder is made actionable the honest way: it
+// names the exact email to search for and the real deadline, with timezone.
 function interviewReminderEmailTemplate(candidate, job, session) {
   const name = candidate.basicDetails.name;
-  const date = formatDate(session.interviewAt);
-  const time = formatTime(session.interviewAt);
+  const deadline = formatDateTime(session.expiresAt);
 
-  const subject = `Reminder: your interview for ${job.title} is coming up`;
+  const subject = `Reminder: your interview for ${job.title} — link expires soon`;
   const text =
     `Hi ${name},\n\n` +
-    `This is a reminder that your interview for the ${job.title} position is coming up.\n\n` +
-    `Interview Date: ${date}\n` +
-    `Interview Time: ${time}\n\n` +
-    `Please use the interview link from your original invitation email, and complete your pre-interview device checks a few minutes early.\n\n` +
+    `A reminder that your interview for the ${job.title} position is still waiting for you.\n\n` +
+    `Your interview link works until: ${deadline}\n\n` +
+    `To start, open the email titled "You're invited to interview for ${job.title}" and use the link inside ` +
+    `(for security we can't resend the same link automatically — if you can't find it, reply to that email and ` +
+    `the hiring team can issue a fresh one).\n\n` +
+    `Use a laptop or desktop with a camera and microphone, and allow a few minutes for the pre-interview device checks.\n\n` +
     `Regards,\nRecruitment Team`;
   const html =
     `<p>Hi ${escapeHtml(name)},</p>` +
-    `<p>This is a reminder that your interview for the <strong>${escapeHtml(job.title)}</strong> position is coming up.</p>` +
-    `<table cellpadding="4" cellspacing="0">` +
-    `<tr><td><strong>Interview Date</strong></td><td>${escapeHtml(date)}</td></tr>` +
-    `<tr><td><strong>Interview Time</strong></td><td>${escapeHtml(time)}</td></tr>` +
-    `</table>` +
-    `<p>Please use the interview link from your original invitation email, and complete your pre-interview device checks a few minutes early.</p>` +
+    `<p>A reminder that your interview for the <strong>${escapeHtml(job.title)}</strong> position is still waiting for you.</p>` +
+    `<p>Your interview link works until <strong>${escapeHtml(deadline)}</strong>.</p>` +
+    `<p>To start, open the email titled <strong>&ldquo;You're invited to interview for ${escapeHtml(job.title)}&rdquo;</strong> ` +
+    `and use the link inside. For security we can't resend the same link automatically — if you can't find it, reply to ` +
+    `that email and the hiring team can issue a fresh one.</p>` +
+    `<p>Use a laptop or desktop with a camera and microphone, and allow a few minutes for the pre-interview device checks.</p>` +
     `<p>Regards,<br/>Recruitment Team</p>`;
 
   return { subject, text, html };

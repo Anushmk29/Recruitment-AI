@@ -4,6 +4,7 @@
 //      timeline existed, so their dashboards/timelines aren't blank.
 // Idempotent: safe to run more than once. Run with:  node scripts/migrateCandidateStages.js
 require("dotenv").config();
+require("../config/dnsOverride").applyDnsOverride();
 const mongoose = require("mongoose");
 const Candidate = require("../models/Candidate");
 

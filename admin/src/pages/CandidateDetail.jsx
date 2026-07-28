@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Link2, Globe, FileText, Mail, Phone, MapPin, Download, Clock, CheckCircle2, XCircle, Sparkles, Trash2, Send, CalendarClock, Scale } from "lucide-react";
+import { ArrowLeft, Link2, Globe, FileText, Mail, Phone, MapPin, Download, Clock, CheckCircle2, XCircle, Sparkles, Trash2, Send, CalendarClock, Scale, AlertTriangle, RefreshCw } from "lucide-react";
 import api from "../api/client.js";
 import { getSocket } from "../lib/socket.js";
+import { downloadFile } from "../lib/download.js";
 import { Card, Badge, Skeleton } from "../components/ui/Card.jsx";
 import { Select, Input, Textarea, Label, FormGroup } from "../components/ui/Field.jsx";
 import Button from "../components/ui/Button.jsx";
@@ -89,6 +90,7 @@ export default function CandidateDetail() {
   const [moving, setMoving] = useState(false);
   const [erasing, setErasing] = useState(false);
   const [resending, setResending] = useState(false);
+  const [rescoring, setRescoring] = useState(false);
   const [rescheduling, setRescheduling] = useState(false);
   const [newInterviewAt, setNewInterviewAt] = useState("");
   // The freshly-minted interview link, shown right after resend/reschedule so the
@@ -192,6 +194,22 @@ export default function CandidateDetail() {
 
   // DPDP right-to-erasure. Irreversible hard-delete of the candidate + all artifacts
   // (resume, identity photo, interview transcript, queue, usage). Double-confirmed.
+  // Re-scores against whatever rubric is approved NOW — the natural follow-up once
+  // a recruiter approves a rubric for a job whose candidates were screened while it
+  // was still a draft (they don't get a fair evaluation retroactively otherwise).
+  async function handleRescore() {
+    setRescoring(true);
+    try {
+      await api.post(`/candidates/${id}/ats/rerun`);
+      toast.success("Candidate rescored");
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Could not rescore candidate");
+    } finally {
+      setRescoring(false);
+    }
+  }
+
   async function handleErase() {
     if (!window.confirm("Permanently erase ALL data for this candidate (resume, interview, everything)? This cannot be undone.")) {
       return;
@@ -209,6 +227,25 @@ export default function CandidateDetail() {
     }
   }
 
+  // Bearer-authenticated downloads — a plain <a href> to these endpoints has no
+  // Authorization header and always 401s in the new tab.
+  async function handleResumeDownload() {
+    try {
+      await downloadFile(`/candidates/${id}/resume`, candidate.resumeOriginalName || "resume");
+    } catch {
+      toast.error("Could not download the resume");
+    }
+  }
+
+  async function handleExport() {
+    const safeName = String(candidate.basicDetails?.name || "candidate").replace(/[^a-z0-9]+/gi, "_");
+    try {
+      await downloadFile(`/candidates/${id}/export`, `${safeName}_report.json`);
+    } catch {
+      toast.error("Could not export candidate data");
+    }
+  }
+
   if (!candidate) {
     return (
       <div className="space-y-4">
@@ -222,13 +259,14 @@ export default function CandidateDetail() {
   const nextStages = timeline?.allowedNextStages || [];
   const terminal = isTerminal(candidate.status);
 
-  // Once the candidate has actually started or finished the interview, the link can no
-  // longer be resent/rescheduled (mirrors the backend guard). Otherwise recruiters can
-  // recover from a missed or expired slot themselves.
-  const interviewLocked =
-    ["in_progress", "completed"].includes(session?.status) ||
-    ["in_progress", "completed"].includes(session?.aiInterview?.status);
+  // Mirrors the backend guard (interviewInvitationService): a completed interview is
+  // final; a live in-progress attempt can't have its link rotated; but an in-progress
+  // interview whose link has EXPIRED is a locked-out candidate — resending is the
+  // recovery path (the interview resumes where they left off).
+  const interviewCompleted = session?.status === "completed" || session?.aiInterview?.status === "completed";
   const interviewExpired = session?.status === "expired" || (session?.expiresAt && new Date(session.expiresAt) < new Date());
+  const interviewInProgress = session?.status === "in_progress" || session?.aiInterview?.status === "in_progress";
+  const interviewLocked = interviewCompleted || (interviewInProgress && !interviewExpired);
 
   return (
     <div className="space-y-6">
@@ -250,7 +288,7 @@ export default function CandidateDetail() {
           <div className="flex items-center gap-3">
             {ats?.overallScore != null && (
               <Badge tone={ats.decision === "pass" ? "green" : ats.decision === "fail" ? "red" : "slate"}>
-                ATS {ats.overallScore}%
+                {ats.engine === "evidence" ? "ATS" : "Legacy Match"} {ats.overallScore}%
               </Badge>
             )}
             <Badge tone={stageTone(candidate.status)}>{stageLabel(candidate.status)}</Badge>
@@ -262,20 +300,39 @@ export default function CandidateDetail() {
                 <Scale className="h-4 w-4" /> Why this score
               </Link>
             )}
+            {ats?.overallScore != null && ats.engine !== "evidence" && (
+              <Link
+                to={`/jobs/${candidate.job?._id}/rubric`}
+                title="This job has no approved scoring rubric, so this candidate was scored by the legacy keyword matcher instead of the evidence-based engine."
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-100"
+              >
+                <AlertTriangle className="h-4 w-4" /> Approve rubric for evidence scoring
+              </Link>
+            )}
+            {ats?.overallScore != null && (
+              <button
+                type="button"
+                onClick={handleRescore}
+                disabled={rescoring}
+                title="Re-run scoring now — picks up the job's currently approved rubric (also works after fixing a rubric on an evidence-scored candidate)"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${rescoring ? "animate-spin" : ""}`} /> {rescoring ? "Rescoring…" : "Rescore"}
+              </button>
+            )}
             <Link
               to={`/candidates/${candidate._id}/interview-report`}
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
             >
               <Sparkles className="h-4 w-4" /> AI Report
             </Link>
-            <a
-              href={`${api.defaults.baseURL}/candidates/${candidate._id}/export`}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              type="button"
+              onClick={handleExport}
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
             >
               <Download className="h-4 w-4" /> Export
-            </a>
+            </button>
             <button
               type="button"
               onClick={handleErase}
@@ -305,14 +362,9 @@ export default function CandidateDetail() {
           </div>
           <div className="flex items-center gap-2 text-sm text-slate-600">
             <FileText className="h-4 w-4 text-slate-400" />
-            <a
-              href={`${api.defaults.baseURL}/candidates/${candidate._id}/resume`}
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-brand-700 hover:underline"
-            >
-              {candidate.resumeOriginalName}
-            </a>
+            <button type="button" onClick={handleResumeDownload} className="font-medium text-brand-700 hover:underline">
+              {candidate.resumeOriginalName || "Download resume"}
+            </button>
           </div>
           {basicDetails.linkedinUrl && (
             <div className="flex items-center gap-2 text-sm text-slate-600">
@@ -403,14 +455,18 @@ export default function CandidateDetail() {
 
           {interviewLocked ? (
             <p className="mt-4 text-sm text-slate-500">
-              The candidate has already {session.status === "completed" || session.aiInterview?.status === "completed" ? "completed" : "started"} this
-              interview, so the link can no longer be resent or rescheduled.
+              {interviewCompleted
+                ? "The candidate has already completed this interview, so the link can no longer be resent or rescheduled."
+                : "The candidate is taking this interview right now on a valid link — resending would cut them off. You can re-issue the link if it expires."}
             </p>
           ) : (
             <>
               {interviewExpired && (
                 <p className="mt-4 flex items-center gap-1.5 text-sm font-medium text-amber-600">
-                  <Clock className="h-4 w-4" /> This link has expired. Resend it or pick a new time to give the candidate a fresh link.
+                  <Clock className="h-4 w-4" />
+                  {interviewInProgress
+                    ? "The link expired while the interview was underway — resend to let the candidate continue where they left off."
+                    : "This link has expired. Resend it or pick a new time to give the candidate a fresh link."}
                 </p>
               )}
               <div className="mt-4 flex flex-wrap items-center gap-3">

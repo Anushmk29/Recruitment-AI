@@ -50,10 +50,11 @@ export default function Register() {
               <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
                 <MailCheck className="h-6 w-6" />
               </div>
-              <h3 className="text-lg font-semibold text-slate-900">Check Your Email</h3>
+              <h3 className="text-lg font-semibold text-slate-900">Account Created</h3>
               <p className="mt-2 text-sm text-slate-500">
-                We've sent a verification link to <strong>{form.email}</strong>. Open it to activate your account,
-                then <Link to="/login" className="font-semibold text-brand-700 hover:underline">log in</Link>.
+                Your account is ready — {" "}
+                <Link to="/login" className="font-semibold text-brand-700 hover:underline">log in</Link> to
+                continue.
               </p>
             </div>
           ) : (

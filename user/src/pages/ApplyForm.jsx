@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Plus, Trash2, CheckCircle2, Paperclip } from "lucide-react";
 import api from "../api/client.js";
-import { accountAuthHeader } from "../auth/accountAuth.js";
+import { accountAuthHeader, getAccountAuth } from "../auth/accountAuth.js";
 import { Card } from "../components/ui/Card.jsx";
 import { Input, Textarea, Label, FieldError, FormGroup } from "../components/ui/Field.jsx";
 import Button from "../components/ui/Button.jsx";
@@ -56,14 +56,18 @@ export default function ApplyForm() {
   const { id } = useParams();
   const [job, setJob] = useState(null);
 
+  // Prefill from the signed-in account. The server binds the application to the
+  // account's email regardless, so the email field is shown but not editable.
+  const account = getAccountAuth()?.user;
   const [basicDetails, setBasicDetails] = useState({
-    name: "",
-    email: "",
-    phone: "",
+    name: account?.name || "",
+    email: account?.email || "",
+    phone: account?.phone || "",
     location: "",
     linkedinUrl: "",
     portfolioUrl: "",
   });
+  const [receipt, setReceipt] = useState(null);
   const [resume, setResume] = useState(null);
   const [experience, setExperience] = useState([]);
   const [education, setEducation] = useState([]);
@@ -71,7 +75,6 @@ export default function ApplyForm() {
   const [projects, setProjects] = useState([]);
   const [certificates, setCertificates] = useState([]);
   const [consentData, setConsentData] = useState(false);
-  const [consentAi, setConsentAi] = useState(false);
 
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
@@ -86,6 +89,7 @@ export default function ApplyForm() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (status === "submitting") return; // double-click guard — one application, one submit
     if (!resume) {
       setError("Please attach your resume");
       return;
@@ -108,7 +112,9 @@ export default function ApplyForm() {
     data.append("projects", JSON.stringify(projects));
     data.append("certificates", JSON.stringify(certificates));
     data.append("consentDataProcessing", consentData);
-    data.append("consentAiProcessing", consentAi);
+    // The AI-assisted interview (including camera use) is a mandatory part of this
+    // process, not an opt-in — see the single consent checkbox below.
+    data.append("consentAiProcessing", true);
     // Phase 15.1 — source attribution carried from the apply link (?src=…).
     // Analytics-only; the server sanitises and it never affects scoring.
     const params = new URLSearchParams(window.location.search);
@@ -116,9 +122,10 @@ export default function ApplyForm() {
     if (params.get("campaign")) data.append("campaign", params.get("campaign"));
 
     try {
-      await api.post(`/jobs/${id}/apply`, data, {
+      const res = await api.post(`/jobs/${id}/apply`, data, {
         headers: { "Content-Type": "multipart/form-data", ...accountAuthHeader() },
       });
+      setReceipt(res.data);
       setStatus("submitted");
     } catch (err) {
       setError(err.response?.data?.error || "Failed to submit application");
@@ -135,10 +142,30 @@ export default function ApplyForm() {
           <CheckCircle2 className="h-7 w-7" />
         </div>
         <h1 className="text-lg font-semibold text-slate-900">Application Submitted!</h1>
-        <p className="mt-2 text-sm text-slate-500">Check your email for next steps.</p>
-        <Link to="/" className="mt-5 inline-block text-sm font-semibold text-brand-700 hover:underline">
-          &larr; Back to listings
-        </Link>
+        <p className="mt-2 text-sm text-slate-500">
+          Your application for <span className="font-medium text-slate-700">{job.title}</span> was received.
+        </p>
+        {receipt?._id && (
+          <p className="mt-1 text-xs text-slate-400">
+            Reference ID: <span className="font-mono">{receipt._id}</span>
+          </p>
+        )}
+        <div className="mx-auto mt-4 max-w-md rounded-xl bg-slate-50 p-4 text-left text-sm text-slate-600">
+          <p className="font-semibold text-slate-800">What happens next</p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5">
+            <li>Your resume is being screened now — this runs in the background.</li>
+            <li>You'll get an email (and a dashboard update) with the outcome.</li>
+            <li>If you're shortlisted, the email includes your interview link. A laptop or desktop is recommended for the interview.</li>
+          </ol>
+        </div>
+        <div className="mt-5 flex items-center justify-center gap-4">
+          <Link to="/dashboard" className="text-sm font-semibold text-brand-700 hover:underline">
+            Track it on your dashboard
+          </Link>
+          <Link to="/" className="text-sm font-semibold text-slate-500 hover:underline">
+            Back to listings
+          </Link>
+        </div>
       </Card>
     );
   }
@@ -162,7 +189,8 @@ export default function ApplyForm() {
             </FormGroup>
             <FormGroup>
               <Label required>Email</Label>
-              <Input name="email" type="email" value={basicDetails.email} onChange={handleBasicChange} required />
+              <Input name="email" type="email" value={basicDetails.email} disabled readOnly />
+              <p className="mt-1 text-xs text-slate-400">Applications are linked to your account email.</p>
             </FormGroup>
             <FormGroup>
               <Label>Phone</Label>
@@ -186,8 +214,8 @@ export default function ApplyForm() {
             <Label required>Resume</Label>
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600 hover:border-brand-400">
               <Paperclip className="h-4 w-4 text-slate-400" />
-              {resume ? resume.name : "Choose a PDF or DOCX file"}
-              <input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => setResume(e.target.files[0])} required />
+              {resume ? resume.name : "Choose a PDF or DOCX file (max 5 MB)"}
+              <input type="file" accept=".pdf,.docx" className="hidden" onChange={(e) => setResume(e.target.files[0])} required />
             </label>
           </FormGroup>
 
@@ -305,19 +333,9 @@ export default function ApplyForm() {
                 />
                 <span>
                   I consent to {job.company?.name || "the employer"} processing my application data (resume, profile, and
-                  interview responses) for this recruitment process. <span className="text-red-600">*</span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2 text-sm text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={consentAi}
-                  onChange={(e) => setConsentAi(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-400"
-                />
-                <span>
-                  I consent to an AI-assisted interview that may use a third-party AI model to generate questions and
-                  assess my answers. If left unchecked, a non-AI interview is used instead.
+                  interview responses) for this recruitment process, including a mandatory AI-assisted interview that
+                  may use my camera and a third-party AI model to generate questions and assess my answers.{" "}
+                  <span className="text-red-600">*</span>
                 </span>
               </label>
             </div>

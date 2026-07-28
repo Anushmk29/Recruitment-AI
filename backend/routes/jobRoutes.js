@@ -14,6 +14,7 @@ const {
 } = require("../controllers/jobController");
 const { applyToJob, listCandidatesForJob } = require("../controllers/candidateController");
 const upload = require("../middleware/upload");
+const { createLimiter } = require("../middleware/rateLimit");
 const { requireAuth, optionalAuth, requireRole, requireActiveCompany, requireActiveSubscription } = require("../middleware/auth");
 
 const router = express.Router();
@@ -30,7 +31,17 @@ router.put("/:id", requireAdmin, updateJob);
 router.patch("/:id/publish", requireAdmin, publishJob);
 router.delete("/:id", requireAdmin, deleteJob);
 
-router.post("/:id/apply", requireCandidate, upload.single("resume"), applyToJob);
+// Apply is the most expensive public-facing endpoint (storage write + pdf-parse
+// + in live mode several LLM calls) — bounded per account so one login can't
+// drive unbounded tenant spend. Sits after auth so the key is the user id.
+const applyLimiter = createLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  prefix: "rl:apply:",
+  keyGenerator: (req) => String(req.user?._id || req.ip),
+  message: "Too many applications in a short time — please wait a few minutes and try again.",
+});
+router.post("/:id/apply", requireCandidate, applyLimiter, upload.single("resume"), applyToJob);
 router.get("/:id/candidates", requireAdmin, listCandidatesForJob);
 
 // Phase 15 — multi-board publishing (mutations gated on an active subscription).

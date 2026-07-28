@@ -7,6 +7,7 @@ const Notification = require("../models/Notification");
 const CandidateProfile = require("../models/CandidateProfile");
 const CandidateDashboard = require("../models/CandidateDashboard");
 const { notifyCandidate } = require("../services/notificationService");
+const { toApplicationView, toSessionView } = require("../utils/candidateSerializers");
 
 async function getOrCreateProfile(userId) {
   let profile = await CandidateProfile.findOne({ user: userId });
@@ -71,6 +72,11 @@ async function getDashboard(req, res) {
   );
   const aiInterviewHistory = interviewSessions.filter((s) => s.status !== "scheduled" || s.interviewAt < now);
 
+  // Candidate-facing serializers only (utils/candidateSerializers.js): raw
+  // Candidate/InterviewSession docs carry recruiter-only material (evaluation,
+  // proctoring risk, tokenHash, resumeText, hostility) that must never reach
+  // the applicant's browser.
+  const resumeView = (r) => ({ _id: r._id, originalName: r.originalName, createdAt: r.createdAt });
   res.json({
     profile: {
       headline: profile.headline,
@@ -81,15 +87,15 @@ async function getDashboard(req, res) {
     },
     resume: {
       hasResume,
-      latest: resumes[0] || null,
-      history: resumes,
+      latest: resumes[0] ? resumeView(resumes[0]) : null,
+      history: resumes.map(resumeView),
     },
     recommendedJobs,
     savedJobs,
-    appliedJobs: applications,
+    appliedJobs: applications.map(toApplicationView),
     notifications,
-    upcomingInterviews,
-    aiInterviewHistory,
+    upcomingInterviews: upcomingInterviews.map(toSessionView),
+    aiInterviewHistory: aiInterviewHistory.map(toSessionView),
   });
 }
 

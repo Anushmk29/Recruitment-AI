@@ -10,6 +10,7 @@
 // never surprise-spend LLM budget — AI compilation is an explicit opt-in.
 
 require("dotenv").config();
+require("../config/dnsOverride").applyDnsOverride();
 const mongoose = require("mongoose");
 const Job = require("../models/Job");
 const RoleRubric = require("../models/RoleRubric");

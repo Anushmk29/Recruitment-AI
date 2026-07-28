@@ -18,7 +18,7 @@ async function register(req, res) {
       adminDetails: adminDetails || {},
     });
     res.status(201).json({
-      message: "Company registered. Please check your admin email for a verification code.",
+      message: "Company registered. Log in to continue to your subscription plan.",
       company: { id: createdCompany._id, name: createdCompany.name, companyCode: createdCompany.companyCode, status: createdCompany.status },
     });
   } catch (err) {

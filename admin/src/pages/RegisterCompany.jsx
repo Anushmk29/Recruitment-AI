@@ -63,8 +63,8 @@ export default function RegisterCompany() {
         company,
         admin: { fullName: admin.fullName, email: admin.email, phone: admin.phone, password: admin.password },
       });
-      toast.success("Company registered — check your email for a verification code.");
-      navigate("/verify-otp", { state: { email: admin.email } });
+      toast.success("Company registered — log in to continue to your subscription plan.");
+      navigate("/login", { state: { email: admin.email } });
     } catch (err) {
       setError(err.response?.data?.error || "Could not register your company");
     } finally {

@@ -18,6 +18,7 @@
 //   node scripts/smokeProbe.js
 
 require("dotenv").config();
+require("../config/dnsOverride").applyDnsOverride();
 process.env.OPENROUTER_API_KEY = "sk-stubbed-never-used";
 process.env.LLM_REPLAY = "";
 process.env.LLM_RECORD = "";

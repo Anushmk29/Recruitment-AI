@@ -7,7 +7,7 @@ const ReviewItem = require("../models/ReviewItem");
 const Candidate = require("../models/Candidate");
 const Job = require("../models/Job");
 const { advanceAfterAtsPass } = require("../services/atsService");
-const { applyTransition } = require("../services/pipelineService");
+const { applyTransition, emitStageUpdate } = require("../services/pipelineService");
 const { appendStageHistory } = require("../utils/pipeline");
 
 async function listQueue(req, res) {
@@ -45,6 +45,11 @@ async function resolveItem(req, res) {
     });
     await advanceAfterAtsPass(candidate, job, candidate.ats?.overallScore ?? item.label?.engineScore ?? 0);
     await candidate.save();
+    // advanceAfterAtsPass mutates status directly (it's the machine-pass path,
+    // reused here for a human "advance"), so it doesn't go through
+    // applyTransition — fire the same realtime event by hand so any open
+    // Hiring Pipeline / candidate profile tab reflects this decision live.
+    emitStageUpdate(candidate);
   } else {
     // applyTransition validates, saves, and sends the standard rejection
     // notifications — a human decline is an ordinary pipeline decision.

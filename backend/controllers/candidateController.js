@@ -18,6 +18,7 @@ const {
   recommendedAction,
   competencyTripletOrNull,
 } = require("../utils/interviewReportEngine");
+const { toApplyReceipt } = require("../utils/candidateSerializers");
 
 function parseJsonArray(value) {
   if (!value) return [];
@@ -51,10 +52,15 @@ function buildSource(body) {
 
 async function applyToJob(req, res) {
   const { id: jobIdOrSlug } = req.params;
-  const { name, email, phone, location, linkedinUrl, portfolioUrl, experience, education, skills, projects, certificates } =
+  const { name, phone, location, linkedinUrl, portfolioUrl, experience, education, skills, projects, certificates } =
     req.body;
   const consentAi = truthy(req.body.consentAiProcessing);
   const consentData = truthy(req.body.consentDataProcessing);
+
+  // The application is bound to the signed-in account's email, never a form
+  // value — a free-form email would let anyone apply as any address and route
+  // another person's notifications and interview link.
+  const email = String(req.user.email || "").toLowerCase().trim();
 
   const job = await Job.findByIdOrSlug(jobIdOrSlug);
   if (!job || job.status !== "published") {
@@ -65,6 +71,13 @@ async function applyToJob(req, res) {
   }
   if (!name || !email) {
     return res.status(400).json({ error: "Name and email are required" });
+  }
+
+  // One application per job per person. The unique (company, job, email) index
+  // is the race-proof guard; this pre-check exists for the friendly message.
+  const existing = await Candidate.findOne({ company: job.company, job: job._id, "basicDetails.email": email }).select("_id");
+  if (existing) {
+    return res.status(409).json({ error: "You have already applied to this job. You can track it from your dashboard." });
   }
 
   // Expired tenant ⇒ jobs stop accepting applications (Phase 11.2). The
@@ -91,52 +104,86 @@ async function applyToJob(req, res) {
     contentType: req.file.mimetype,
   });
 
-  const candidate = await Candidate.create({
-    job: job._id,
-    company: job.company,
-    basicDetails: { name, email, phone, location, linkedinUrl, portfolioUrl },
-    experience: parseJsonArray(experience),
-    education: parseJsonArray(education),
-    skills: parseJsonArray(skills),
-    projects: parseJsonArray(projects),
-    resumePath: resumeKey,
-    resumeOriginalName: req.file.originalname,
-    resumeSizeBytes: req.file.size,
-    stageHistory: [{ stage: "applied", by: "system" }],
-    // Phase 15.1 — source attribution from the apply link's ?src= / ?campaign=.
-    // Sanitised, analytics-only; never a scoring input.
-    source: buildSource(req.body),
-    consent: {
-      aiProcessing: consentAi,
-      dataProcessing: consentData,
-      at: consentAi || consentData ? new Date() : undefined,
-      ipAddress: req.ip,
-    },
-  });
+  let candidate;
+  try {
+    candidate = await Candidate.create({
+      job: job._id,
+      company: job.company,
+      basicDetails: { name, email, phone, location, linkedinUrl, portfolioUrl },
+      experience: parseJsonArray(experience),
+      education: parseJsonArray(education),
+      skills: parseJsonArray(skills),
+      projects: parseJsonArray(projects),
+      certificates: parseJsonArray(certificates),
+      resumePath: resumeKey,
+      resumeOriginalName: req.file.originalname,
+      resumeSizeBytes: req.file.size,
+      stageHistory: [{ stage: "applied", by: "system" }],
+      // Phase 15.1 — source attribution from the apply link's ?src= / ?campaign=.
+      // Sanitised, analytics-only; never a scoring input.
+      source: buildSource(req.body),
+      consent: {
+        aiProcessing: consentAi,
+        dataProcessing: consentData,
+        at: consentAi || consentData ? new Date() : undefined,
+        ipAddress: req.ip,
+      },
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({ error: "You have already applied to this job. You can track it from your dashboard." });
+    }
+    throw err;
+  }
 
-  const applicantUser = await User.findOne({ email: candidate.basicDetails.email, role: "candidate" });
+  // Respond the moment the application is durably stored. Screening (which in
+  // live mode is several LLM calls) and all notifications run in the background
+  // — the candidate gets a receipt now and outcome notifications when ready,
+  // instead of a spinner held hostage by pdf-parse + LLM + SMTP latency.
+  res.status(201).json(toApplyReceipt(candidate, job));
 
-  await notifyAdmin({
-    companyId: job.company,
-    type: "new_candidate_applied",
-    title: "New candidate applied",
-    message: `${candidate.basicDetails.name} applied for ${job.title}.`,
-    meta: { candidateId: candidate._id, jobId: job._id },
-  });
+  setImmediate(() => runPostApplyPipeline(candidate, job));
+}
 
-  await notifyCandidate({
-    candidateId: candidate._id,
-    userId: applicantUser?._id,
-    type: "application_submitted",
-    title: "Application submitted",
-    message: `Your application for ${job.title} has been received.`,
-    meta: { jobId: job._id },
-    email: { to: candidate.basicDetails.email, template: "applicationSubmittedEmailTemplate", args: [candidate, job] },
-  });
+// Post-201 work for a new application: notifications + ATS screening. Every
+// failure is contained here — an unhandled rejection would take the process
+// down (server.js exits on unhandledRejection in production), and the admin is
+// alerted so a failed screen is never silent.
+async function runPostApplyPipeline(candidate, job) {
+  try {
+    const applicantUser = await User.findOne({ email: candidate.basicDetails.email, role: "candidate" });
 
-  await runAtsForCandidate(candidate, job);
+    await notifyAdmin({
+      companyId: job.company,
+      type: "new_candidate_applied",
+      title: "New candidate applied",
+      message: `${candidate.basicDetails.name} applied for ${job.title}.`,
+      meta: { candidateId: candidate._id, jobId: job._id },
+    });
 
-  res.status(201).json(candidate);
+    await notifyCandidate({
+      candidateId: candidate._id,
+      userId: applicantUser?._id,
+      type: "application_submitted",
+      title: "Application submitted",
+      message: `Your application for ${job.title} has been received.`,
+      meta: { jobId: job._id },
+      email: { to: candidate.basicDetails.email, template: "applicationSubmittedEmailTemplate", args: [candidate, job] },
+    });
+
+    await runAtsForCandidate(candidate, job);
+  } catch (err) {
+    console.error(`[apply] background screening failed for candidate ${candidate._id}:`, err);
+    await notifyAdmin({
+      companyId: job.company,
+      type: "system_alert",
+      title: "Screening did not complete",
+      message:
+        `${candidate.basicDetails.name}'s application for ${job.title} was received, but automated screening failed ` +
+        `(${err.message}). Open the candidate and use "Re-run ATS" to retry.`,
+      meta: { candidateId: candidate._id, jobId: job._id },
+    }).catch(() => {});
+  }
 }
 
 // Shared pagination parsing (Phase 12.5). Legacy callers (no page/limit param)
@@ -190,7 +237,15 @@ async function moveStage(req, res) {
   const toStage = req.body.stage || req.body.status;
   if (!toStage) return res.status(400).json({ error: "A target stage is required" });
 
-  const candidate = await Candidate.findOne({ _id: req.params.id, company: req.user.company }).populate("job", "title");
+  // "title company interviewInstructions": a manual move INTO interview_scheduled
+  // mints the AI interview invite (see pipelineService.ensureInterviewInvite),
+  // which needs the job's company (tenant scope on the new session) and
+  // interviewInstructions — a bare "title" projection silently produced a
+  // sessionless, instructions-less invite.
+  const candidate = await Candidate.findOne({ _id: req.params.id, company: req.user.company }).populate(
+    "job",
+    "title company interviewInstructions"
+  );
   if (!candidate) return res.status(404).json({ error: "Candidate not found" });
 
   await applyTransition(candidate, toStage, {

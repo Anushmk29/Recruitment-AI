@@ -227,6 +227,27 @@ function listForJob(jobId, companyId) {
 }
 
 /**
+ * Latest rubric status for one job — "approved" | "draft" | "archived" | "none".
+ * Drives the "this job is still on the legacy engine" disclosure everywhere a
+ * recruiter can see a job or a candidate scored against it (rule 5: uncertainty
+ * must be visible, never rendered as a silent fallback).
+ */
+async function latestStatusForJob(jobId, companyId) {
+  const latest = await RoleRubric.findOne({ job: jobId, company: companyId }).sort({ version: -1 }).select("status");
+  return latest?.status || "none";
+}
+
+/** Batch form of latestStatusForJob, for job-list screens. */
+async function latestStatusesForJobs(jobIds, companyId) {
+  const rows = await RoleRubric.aggregate([
+    { $match: { job: { $in: jobIds }, company: companyId } },
+    { $sort: { version: -1 } },
+    { $group: { _id: "$job", status: { $first: "$status" } } },
+  ]);
+  return new Map(rows.map((r) => [String(r._id), r.status]));
+}
+
+/**
  * Called after a JD edit. If this job has rubrics and the JD content actually
  * changed (sourceHash differs from the newest version), compile a fresh draft.
  * The old approved version stays active — and historical scores keep pointing at
@@ -239,4 +260,14 @@ async function supersede(job) {
   return compile(job);
 }
 
-module.exports = { engineEnabled, compile, updateDraft, approve, getActiveRubric, listForJob, supersede };
+module.exports = {
+  engineEnabled,
+  compile,
+  updateDraft,
+  approve,
+  getActiveRubric,
+  listForJob,
+  latestStatusForJob,
+  latestStatusesForJobs,
+  supersede,
+};

@@ -9,6 +9,7 @@ const speech = require("../services/speechService");
 const proctoring = require("../utils/proctoring");
 const evidenceClipService = require("../services/evidenceClipService");
 const CompanySettings = require("../models/CompanySettings");
+const { candidateLinkBase } = require("../utils/corsOrigins");
 
 // Keep only a recent tail of raw events on the session (the per-type `counts` are the source of
 // truth for the score); bound how many events one flush can carry to cap ingest cost.
@@ -153,8 +154,11 @@ function missingChecks(session) {
   const dc = session.deviceCheck || {};
   if (!dc.camera) missing.push("camera");
   if (!dc.microphone) missing.push("microphone");
-  if (!dc.screenShare) missing.push("screenShare");
-  if (!dc.fullscreen) missing.push("fullscreen");
+  // screenShare and fullscreen are deliberately NOT required. The screen-share
+  // "check" was theater — the stream was stopped immediately and the screen was
+  // never captured during the interview — and getDisplayMedia doesn't exist on
+  // mobile browsers, so requiring it silently hard-blocked every mobile
+  // candidate. Fullscreen is best-effort: proctoring already flags exits.
   if (!dc.deviceCompatible) missing.push("deviceCompatible");
   if (!session.speedTest || typeof session.speedTest.downloadMbps !== "number") missing.push("speedTest");
   if (!session.identityVerification || session.identityVerification.status !== "captured") {
@@ -458,8 +462,9 @@ async function phonePair(req, res) {
     process.env.JWT_SECRET,
     { audience: "phone-pair", expiresIn: PHONE_PAIR_TOKEN_TTL }
   );
-  const base = (process.env.CLIENT_ORIGIN_USER || "http://localhost:5174").replace(/\/$/, "");
-  res.json({ token, url: `${base}/phone-cam/${token}` });
+  // candidateLinkBase: the address actually meant to be scanned/shared —
+  // PUBLIC_CANDIDATE_URL when set, else the first CLIENT_ORIGIN_USER origin.
+  res.json({ token, url: `${candidateLinkBase()}/phone-cam/${token}` });
 }
 
 // POST /interview-portal/phone/login — the phone exchanges the scanned pairing

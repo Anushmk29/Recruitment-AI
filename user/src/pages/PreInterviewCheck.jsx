@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, XCircle, Circle, Camera, Mic, ScreenShare, Maximize, Cpu, Gauge, ScanFace, Smartphone } from "lucide-react";
+import { CheckCircle2, XCircle, Circle, Camera, Mic, Maximize, Cpu, Gauge, ScanFace, Smartphone, Laptop } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import api from "../api/client.js";
 import { getAuth, authHeader } from "../portal/portalAuth.js";
@@ -14,16 +14,14 @@ import InterviewShell from "../components/portal/InterviewShell.jsx";
 // consent record.
 const EVIDENCE_CONSENT_VERSION = "2026-07-25.1";
 
+// Hard requirements only — things the interview genuinely cannot run without.
+// Screen share and fullscreen are deliberately NOT here: neither exists on
+// mobile browsers, and requiring them silently hard-blocked every mobile
+// candidate for capabilities the interview never actually uses.
 function detectDeviceCompatibility() {
   const issues = [];
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     issues.push("Camera/microphone access is not supported in this browser");
-  }
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-    issues.push("Screen sharing is not supported in this browser");
-  }
-  if (!document.documentElement.requestFullscreen) {
-    issues.push("Fullscreen mode is not supported in this browser");
   }
   if (typeof window.RTCPeerConnection === "undefined") {
     issues.push("Real-time video (WebRTC) is not supported in this browser");
@@ -33,6 +31,9 @@ function detectDeviceCompatibility() {
   }
   return { compatible: issues.length === 0, issues };
 }
+
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+const FULLSCREEN_SUPPORTED = Boolean(document.documentElement.requestFullscreen);
 
 function StatusIcon({ state }) {
   if (state === "ok") return <CheckCircle2 className="h-5 w-5 text-emerald-600" />;
@@ -59,7 +60,6 @@ export default function PreInterviewCheck() {
 
   const [camera, setCamera] = useState("pending");
   const [microphone, setMicrophone] = useState("pending");
-  const [screenShare, setScreenShare] = useState("pending");
   const [fullscreen, setFullscreen] = useState("pending");
   const [deviceCompat, setDeviceCompat] = useState({ status: "pending", issues: [] });
   const [speedStatus, setSpeedStatus] = useState("pending");
@@ -121,16 +121,6 @@ export default function PreInterviewCheck() {
       setMicrophone("ok");
     } catch {
       setMicrophone("failed");
-    }
-  }
-
-  async function requestScreenShare() {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      stream.getTracks().forEach((t) => t.stop());
-      setScreenShare("ok");
-    } catch {
-      setScreenShare("failed");
     }
   }
 
@@ -200,11 +190,11 @@ export default function PreInterviewCheck() {
     }, "image/jpeg", 0.9);
   }
 
+  // Fullscreen is recommended, never required — it doesn't exist on iOS Safari
+  // and blocking on it turned away every mobile candidate.
   const allDone =
     camera === "ok" &&
     microphone === "ok" &&
-    screenShare === "ok" &&
-    fullscreen === "ok" &&
     deviceCompat.status === "ok" &&
     speedStatus === "ok" &&
     identityStatus === "ok" &&
@@ -219,7 +209,6 @@ export default function PreInterviewCheck() {
         {
           camera: camera === "ok",
           microphone: microphone === "ok",
-          screenShare: screenShare === "ok",
           fullscreen: fullscreen === "ok",
           deviceCompatible: deviceCompat.status === "ok",
           browserInfo: navigator.userAgent,
@@ -265,6 +254,17 @@ export default function PreInterviewCheck() {
         </div>
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p>}
 
+        {IS_MOBILE && (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            <Laptop className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              You appear to be on a phone or tablet. The interview works best on a{" "}
+              <span className="font-semibold">laptop or desktop</span> — a bigger screen, steadier camera, and fewer
+              interruptions. Your link keeps working, so you can switch devices and come back before it expires.
+            </span>
+          </div>
+        )}
+
         <div className="grid gap-4 sm:grid-cols-2">
           <CheckCard icon={Camera} title="Camera" state={camera}>
             <video
@@ -285,16 +285,19 @@ export default function PreInterviewCheck() {
             </Button>
           </CheckCard>
 
-          <CheckCard icon={ScreenShare} title="Screen Share" state={screenShare}>
-            <Button variant={screenShare === "ok" ? "outline" : "primary"} size="sm" onClick={requestScreenShare} disabled={screenShare === "ok"}>
-              {screenShare === "ok" ? "Screen Share Enabled" : "Enable Screen Share"}
-            </Button>
-          </CheckCard>
-
-          <CheckCard icon={Maximize} title="Fullscreen" state={fullscreen}>
-            <Button variant={fullscreen === "ok" ? "outline" : "primary"} size="sm" onClick={requestFullscreen} disabled={fullscreen === "ok"}>
-              {fullscreen === "ok" ? "Fullscreen Enabled" : "Enter Fullscreen"}
-            </Button>
+          <CheckCard icon={Maximize} title="Fullscreen (recommended)" state={fullscreen === "ok" ? "ok" : "pending"}>
+            {FULLSCREEN_SUPPORTED ? (
+              <>
+                <p className="mb-2 text-sm text-slate-500">
+                  Recommended so notifications and other windows don't distract you. Optional — you can start without it.
+                </p>
+                <Button variant={fullscreen === "ok" ? "outline" : "primary"} size="sm" onClick={requestFullscreen} disabled={fullscreen === "ok"}>
+                  {fullscreen === "ok" ? "Fullscreen Enabled" : "Enter Fullscreen"}
+                </Button>
+              </>
+            ) : (
+              <p className="text-sm text-slate-500">Fullscreen isn't available in this browser — you can start without it.</p>
+            )}
           </CheckCard>
 
           <CheckCard icon={Cpu} title="Device Compatibility" state={deviceCompat.status}>

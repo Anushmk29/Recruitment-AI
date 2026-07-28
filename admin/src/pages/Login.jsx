@@ -10,7 +10,7 @@ import Button from "../components/ui/Button.jsx";
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [form, setForm] = useState({ email: "", password: "" });
+  const [form, setForm] = useState({ email: location.state?.email || "", password: "" });
   const [error, setError] = useState("");
   const [needsVerification, setNeedsVerification] = useState(false);
   const [submitting, setSubmitting] = useState(false);

@@ -1,7 +1,12 @@
 const mongoose = require("mongoose");
 const logger = require("../utils/logger");
+const { applyDnsOverride } = require("./dnsOverride");
 
 async function connectDB() {
+  // Must run before mongoose.connect fires the mongodb+srv:// SRV lookup — see
+  // dnsOverride.js for why this is sometimes necessary even when DNS looks fine otherwise.
+  applyDnsOverride();
+
   const uri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/recruitment";
   const isProd = process.env.NODE_ENV === "production";
 

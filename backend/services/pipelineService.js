@@ -6,7 +6,10 @@
 // consistent.
 
 const User = require("../models/User");
+const ReviewItem = require("../models/ReviewItem");
+const InterviewQueue = require("../models/InterviewQueue");
 const { notifyCandidate, notifyAdmin } = require("./notificationService");
+const { createInterviewSessionIfNeeded } = require("./interviewInvitationService");
 const { emitToCandidateUser, emitToCompany } = require("../config/socket");
 const {
   canTransition,
@@ -21,6 +24,13 @@ const {
 // email notifications fired when a candidate ENTERS that stage. `email` (when
 // present) names an emailTemplates key and how to build its args.
 const STAGE_NOTIFICATIONS = {
+  // No `candidate` entry: ensureInterviewInvite() already sent the authoritative
+  // "interview_invite" email with the real magic link for this exact transition —
+  // falling through to DEFAULT_NOTIFICATION here would double-notify the candidate
+  // with a second, contentless "status updated" message right next to it.
+  interview_scheduled: {
+    admin: { type: "candidate_stage_changed", title: "Interview scheduled" },
+  },
   ai_interview_completed: {
     candidate: { type: "interview_completed", title: "AI interview completed" },
     admin: { type: "interview_completed", title: "AI interview completed" },
@@ -127,6 +137,15 @@ async function applyTransition(candidate, toStage, { note, actorName, offerMessa
   syncOffer(candidate, target, offerMessage);
   await candidate.save();
 
+  // Keep the two satellite "needs action" caches honest. Review Queue and AI
+  // Interviews are populated by their own narrow code paths (atsService,
+  // reviewQueueController) but a stage move made from OUTSIDE those flows —
+  // the candidate profile page, the Hiring Pipeline board — has no reason to
+  // know about them. Without this, a candidate advanced/rejected there keeps
+  // showing up as still "needs review" / "awaiting interview" indefinitely.
+  await closeSatelliteQueues(candidate, target);
+  await ensureInterviewInvite(candidate, target);
+
   // Outcome capture (Phase 10.1): joins this candidate's engine score to what
   // actually happened, feeding the nightly calibration. Fire-and-forget — a
   // metering failure must never block a stage move.
@@ -138,6 +157,61 @@ async function applyTransition(candidate, toStage, { note, actorName, offerMessa
   emitStageUpdate(candidate);
 
   return candidate;
+}
+
+// A candidate is only ever "awaiting the AI interview" while parked at
+// interview_scheduled; any other destination — forward past it, or rejected —
+// means the machine-pass wait is over, so the queue entry is stale.
+async function closeSatelliteQueues(candidate, toStage) {
+  const openItem = await ReviewItem.findOne({
+    company: candidate.company,
+    candidate: candidate._id,
+    status: "open",
+  });
+  if (openItem) {
+    const decision = toStage === "rejected" ? "decline" : "advance";
+    openItem.status = "resolved";
+    openItem.resolution = {
+      decision,
+      note: `Auto-resolved: stage moved to "${stageLabel(toStage)}" outside the review queue.`,
+      at: new Date(),
+    };
+    openItem.label = { ...(openItem.label?.toObject?.() || openItem.label || {}), humanDecision: decision };
+    await openItem.save();
+  }
+
+  if (toStage !== "interview_scheduled") {
+    await InterviewQueue.findOneAndUpdate(
+      { company: candidate.company, candidate: candidate._id, status: "queued" },
+      { status: "removed" }
+    );
+  }
+}
+
+// A recruiter manually moving a candidate INTO interview_scheduled — from the
+// profile page or the Hiring Pipeline board — is deciding "send this person the
+// AI interview" exactly as much as an automatic ATS pass is. Without this,
+// atsService.advanceAfterAtsPass (the ATS-auto-pass path) was the ONLY way an
+// InterviewQueue entry or InterviewSession magic-link ever got created, so a
+// manual advancement left the candidate with a stage label and nothing else —
+// no queue entry, no email, no interview link.
+async function ensureInterviewInvite(candidate, toStage) {
+  if (toStage !== "interview_scheduled") return;
+  const job = candidate.job;
+  if (!job || !job._id) return; // job wasn't populated by the caller — nothing safe to act on
+
+  await InterviewQueue.findOneAndUpdate(
+    { candidate: candidate._id },
+    {
+      candidate: candidate._id,
+      job: job._id,
+      company: job.company,
+      atsScore: candidate.ats?.overallScore ?? 0,
+      status: "queued",
+    },
+    { upsert: true, new: true }
+  );
+  await createInterviewSessionIfNeeded(candidate, job);
 }
 
 async function dispatchStageNotifications(candidate, toStage, note) {
@@ -191,4 +265,4 @@ function emitStageUpdate(candidate) {
     .catch(() => {});
 }
 
-module.exports = { applyTransition, ROUND_STAGES };
+module.exports = { applyTransition, emitStageUpdate, ROUND_STAGES };

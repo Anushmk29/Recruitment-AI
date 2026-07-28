@@ -1,4 +1,5 @@
 require("dotenv").config();
+require("../config/dnsOverride").applyDnsOverride();
 const mongoose = require("mongoose");
 const SubscriptionPlan = require("../models/SubscriptionPlan");
 

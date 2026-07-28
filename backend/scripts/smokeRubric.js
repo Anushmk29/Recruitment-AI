@@ -12,6 +12,7 @@
 //   node scripts/smokeRubric.js
 
 require("dotenv").config();
+require("../config/dnsOverride").applyDnsOverride();
 // The smoke must be free and offline-safe: blank the LLM key IN-PROCESS so even
 // supersede() (which normally may use AI) takes the deterministic fallback.
 process.env.OPENROUTER_API_KEY = "";

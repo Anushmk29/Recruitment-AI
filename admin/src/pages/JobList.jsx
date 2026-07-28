@@ -25,6 +25,18 @@ function buildApplyUrl(job, src) {
 
 const PUB_STATUS_TONE = { published: "green", pending: "amber", failed: "red", expired: "slate", withdrawn: "slate" };
 
+// Every candidate for a job with no approved rubric is silently scored by the
+// legacy keyword engine (services/evidenceAtsService.js requires a human-
+// approved rubric before the evidence engine can drive a decision). Surfacing
+// that state here — before candidates ever pile up — is the fix: the gate
+// stays human-only, but a recruiter can no longer fail to notice it's open.
+const RUBRIC_STATUS_META = {
+  approved: { tone: "green", label: "Rubric approved" },
+  draft: { tone: "amber", label: "Rubric needs approval" },
+  archived: { tone: "amber", label: "Rubric needs approval" },
+  none: { tone: "slate", label: "No rubric yet" },
+};
+
 // Phase 15.7 — per-board publish panel. One action publishes to N boards;
 // per-board status/failure is visible per board, never silent.
 function PublishBoardsModal({ job, onClose }) {
@@ -232,6 +244,7 @@ export default function JobList() {
                   <th className="px-6 py-3 font-medium">Title</th>
                   <th className="px-6 py-3 font-medium">Department</th>
                   <th className="px-6 py-3 font-medium">Status</th>
+                  <th className="px-6 py-3 font-medium">Scoring Rubric</th>
                   <th className="px-6 py-3 font-medium">Candidates</th>
                   <th className="px-6 py-3 font-medium">Actions</th>
                 </tr>
@@ -243,6 +256,13 @@ export default function JobList() {
                     <td className="px-6 py-3 text-slate-500">{job.department || "—"}</td>
                     <td className="px-6 py-3">
                       <Badge tone={job.status === "published" ? "green" : "amber"}>{job.status}</Badge>
+                    </td>
+                    <td className="px-6 py-3">
+                      <Link to={`/jobs/${job._id}/rubric`} className="inline-flex">
+                        <Badge tone={(RUBRIC_STATUS_META[job.rubricStatus] || RUBRIC_STATUS_META.none).tone}>
+                          {(RUBRIC_STATUS_META[job.rubricStatus] || RUBRIC_STATUS_META.none).label}
+                        </Badge>
+                      </Link>
                     </td>
                     <td className="px-6 py-3">
                       <Link

@@ -5,7 +5,8 @@ const OTPVerification = require("../models/OTPVerification");
 const { hashPassword } = require("../utils/passwords");
 const { isStrongPassword, isValidPhone } = require("../utils/validators");
 const { generateOtp, hashOtp, computeExpiry, canResend, MAX_VERIFY_ATTEMPTS } = require("../utils/otp");
-const { sendOtpEmail } = require("../utils/mailer");
+const { otpEmailTemplate } = require("../utils/emailTemplates");
+const { dispatchEmail } = require("./emailDispatchService");
 const { ServiceError } = require("../utils/errors");
 const { notifyAdmin } = require("./notificationService");
 
@@ -36,7 +37,10 @@ async function sendCompanyOtp(email, companyName) {
     await OTPVerification.create({ email, purpose: "company_registration", otpHash, expiresAt });
   }
 
-  await sendOtpEmail(email, companyName, otp);
+  // Audited dispatch path (EmailLog + retries + failure alerting) — the OTP is
+  // the #1 "email never arrived" support case; every send must leave a trail.
+  const tpl = otpEmailTemplate(companyName, otp);
+  await dispatchEmail({ to: email, ...tpl, category: "company_otp", relatedType: "OTPVerification" });
 }
 
 async function registerCompany({ companyDetails, adminDetails }) {
@@ -82,7 +86,7 @@ async function registerCompany({ companyDetails, adminDetails }) {
     state,
     city,
     address,
-    status: "pending_verification",
+    status: "pending_payment",
   });
 
   const passwordHash = await hashPassword(password);
@@ -97,10 +101,8 @@ async function registerCompany({ companyDetails, adminDetails }) {
     passwordHash,
     role: "admin",
     company: company._id,
-    emailVerified: false,
+    emailVerified: true,
   });
-
-  await sendCompanyOtp(normalizedEmail, company.name);
 
   return { company, admin };
 }

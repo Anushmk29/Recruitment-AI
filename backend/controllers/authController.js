@@ -10,9 +10,10 @@ const {
   generateResetToken,
   generateRefreshToken,
 } = require("../utils/authTokens");
-const { sendVerificationEmail, sendPasswordResetEmail } = require("../utils/mailer");
+const { verificationEmailTemplate, passwordResetEmailTemplate } = require("../utils/emailTemplates");
 const { isStrongPassword, isValidPhone } = require("../utils/validators");
 const { initializeDashboard } = require("./candidateDashboardController");
+const { firstOrigin, candidateLinkBase } = require("../utils/corsOrigins");
 const { notifyAdmin, notifyCandidate } = require("../services/notificationService");
 const { dispatchEmail } = require("../services/emailDispatchService");
 const { passwordChangedEmailTemplate } = require("../utils/emailTemplates");
@@ -61,8 +62,8 @@ async function issueTokens(user, req, family) {
 
 function originForRole(role) {
   return role === "admin" || role === "superadmin"
-    ? process.env.CLIENT_ORIGIN_ADMIN || "http://localhost:5173"
-    : process.env.CLIENT_ORIGIN_USER || "http://localhost:5174";
+    ? firstOrigin(process.env.CLIENT_ORIGIN_ADMIN, "http://localhost:5173")
+    : candidateLinkBase();
 }
 
 async function sendVerificationForUser(user) {
@@ -72,10 +73,13 @@ async function sendVerificationForUser(user) {
   await user.save();
 
   const verifyUrl = `${originForRole(user.role)}/verify-email/${token}`;
+  // Audited dispatch path (EmailLog + queue retries + failure alerting) — an
+  // account-verification email that silently dies is a user who can never log in.
   try {
-    await sendVerificationEmail(user, verifyUrl);
+    const tpl = verificationEmailTemplate(user, verifyUrl);
+    await dispatchEmail({ to: user.email, ...tpl, category: "account_verification", relatedType: "User", relatedId: user._id });
   } catch (err) {
-    console.error("Failed to send verification email:", err.message);
+    console.error("Failed to dispatch verification email:", err.message);
   }
 }
 
@@ -104,12 +108,13 @@ async function register(req, res) {
     phone: phone.trim(),
     passwordHash,
     role: "candidate",
+    emailVerified: true,
   });
 
-  await sendVerificationForUser(user);
+  await initializeDashboard(user._id, user.name, user.email);
 
   res.status(201).json({
-    message: "Account created. Please check your email to verify your address before logging in.",
+    message: "Account created. You can log in now.",
     user: sanitizeUser(user),
   });
 }
@@ -153,12 +158,11 @@ async function adminRegister(req, res) {
     email: normalizedEmail,
     passwordHash,
     role: "superadmin",
+    emailVerified: true,
   });
 
-  await sendVerificationForUser(user);
-
   res.status(201).json({
-    message: "Superadmin account created. Please check your email to verify your address before logging in.",
+    message: "Superadmin account created. You can log in now.",
     user: sanitizeUser(user),
   });
 }
@@ -187,10 +191,6 @@ async function login(req, res) {
       meta: { email: user.email },
     });
     return res.status(401).json({ error: "Invalid email or password" });
-  }
-
-  if (!user.emailVerified) {
-    return res.status(403).json({ error: "Please verify your email before logging in", code: "EMAIL_NOT_VERIFIED" });
   }
 
   if (user.role === "admin" && user.company) {
@@ -347,10 +347,13 @@ async function forgotPassword(req, res) {
     await user.save();
 
     const resetUrl = `${originForRole(user.role)}/reset-password/${token}`;
+    // Audited dispatch path — a swallowed reset email is a locked-out user
+    // staring at a fake "email sent" success message.
     try {
-      await sendPasswordResetEmail(user, resetUrl);
+      const tpl = passwordResetEmailTemplate(user, resetUrl);
+      await dispatchEmail({ to: user.email, ...tpl, category: "password_reset", relatedType: "User", relatedId: user._id });
     } catch (err) {
-      console.error("Failed to send password reset email:", err.message);
+      console.error("Failed to dispatch password reset email:", err.message);
     }
   }
 

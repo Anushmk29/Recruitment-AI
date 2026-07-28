@@ -217,6 +217,12 @@ candidateSchema.index({ company: 1, updatedAt: 1 });
 // Candidate dashboard + notification ownership resolve applications by the account email,
 // across companies (runs outside tenant scope).
 candidateSchema.index({ "basicDetails.email": 1 });
+// One application per job per email — the race-proof duplicate guard behind the
+// apply endpoint's 409 pre-check (a double-click must never create two
+// Candidates, charge quota twice, or mint two interview links). Run
+// scripts/syncIndexes.js after deploy; pre-existing duplicates must be merged
+// or removed first or index creation fails.
+candidateSchema.index({ job: 1, "basicDetails.email": 1 }, { unique: true });
 
 candidateSchema.plugin(require("./plugins/tenantScope"));
 

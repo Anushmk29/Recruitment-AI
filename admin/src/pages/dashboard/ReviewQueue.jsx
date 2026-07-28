@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Inbox, CheckCircle2, XCircle, Scale } from "lucide-react";
 import api from "../../api/client.js";
+import { getSocket } from "../../lib/socket.js";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
 import { Textarea } from "../../components/ui/Field.jsx";
 import Button from "../../components/ui/Button.jsx";
@@ -39,6 +40,18 @@ export default function ReviewQueue() {
 
   useEffect(() => {
     load().catch(() => setItems([]));
+  }, [load]);
+
+  // Live-sync: a candidate's stage can change from outside this page (their
+  // profile, the Hiring Pipeline board) — the backend auto-resolves the
+  // matching review item when that happens, so refetch here to drop it from
+  // view instead of leaving a stale entry until the next manual reload.
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const onStage = () => load().catch(() => {});
+    socket.on("candidate:stage", onStage);
+    return () => socket.off("candidate:stage", onStage);
   }, [load]);
 
   async function resolve(item, decision) {

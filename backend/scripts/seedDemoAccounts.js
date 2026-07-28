@@ -8,6 +8,7 @@
 // Idempotent: re-running resets the passwords and re-activates the workspace.
 // This is a LOCAL DEV / DEMO convenience — never run it against production data.
 require("dotenv").config();
+require("../config/dnsOverride").applyDnsOverride();
 const crypto = require("crypto");
 const mongoose = require("mongoose");
 

@@ -2,6 +2,31 @@ const EmailLog = require("../models/EmailLog");
 const { sendMail } = require("../utils/mailer");
 const { getEmailQueue } = require("../queues/emailQueue");
 
+// A failed send must never be silent — an EmailLog row nobody looks at is how
+// "the OTP never arrived" stays undiagnosed for weeks. When the email belongs
+// to a tenant, its admins get an in-app alert (no email attached — an email
+// about a failing email must not itself loop through the failing pipeline);
+// platform-level failures (auth emails have no company) are logged loudly.
+async function alertEmailFailure(log) {
+  console.error(
+    `[emailDispatchService] EMAIL DELIVERY FAILED to ${log.to} (category=${log.category || "unknown"}): ${log.error}`
+  );
+  if (!log.company) return;
+  try {
+    // Lazy require: notificationService depends on this module.
+    const { notifyAdmin } = require("./notificationService");
+    await notifyAdmin({
+      companyId: log.company,
+      type: "system_alert",
+      title: "An email to a candidate could not be delivered",
+      message: `"${log.subject}" to ${log.to} failed to send (${log.error || "unknown error"}). The recipient has NOT received it — you may need to contact them another way.`,
+      meta: { emailLogId: log._id, category: log.category },
+    });
+  } catch (err) {
+    console.error("[emailDispatchService] could not raise email-failure alert:", err.message);
+  }
+}
+
 async function sendInline(log, attempt = 1) {
   try {
     await sendMail({ to: log.to, subject: log.subject, text: log.text, html: log.html });
@@ -18,7 +43,7 @@ async function sendInline(log, attempt = 1) {
     log.attempts = attempt;
     log.error = err.message;
     await log.save();
-    console.error(`[emailDispatchService] failed to send email to ${log.to}:`, err.message);
+    await alertEmailFailure(log);
   }
 }
 
@@ -47,4 +72,4 @@ async function dispatchEmail({ to, subject, text, html, category, relatedType, r
   return log;
 }
 
-module.exports = { dispatchEmail };
+module.exports = { dispatchEmail, alertEmailFailure };

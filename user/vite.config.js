@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5174,
+    strictPort: true, // fail loud on conflict rather than silently rebinding — see admin/vite.config.js
     host: true, // listen on 0.0.0.0 so LAN devices / tunnels can reach the dev server
     allowedHosts: true, // accept the Host header from tunnels (VS Code dev tunnels, cloudflared, ngrok)
     // Let the SPA call the backend same-origin (VITE_API_URL="/api"), so a single

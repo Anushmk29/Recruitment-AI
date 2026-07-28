@@ -1,8 +1,7 @@
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { KanbanSquare } from "lucide-react";
 import api from "../../api/client.js";
-import { getSocket } from "../../lib/socket.js";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
 import { useToast } from "../../components/ui/Toast.jsx";
@@ -52,14 +51,6 @@ export default function HiringPipeline() {
   const { allCandidates, loading, refresh } = useCompanyData();
   const toast = useToast();
   const [busyId, setBusyId] = useState(null);
-
-  useEffect(() => {
-    const socket = getSocket();
-    if (!socket) return;
-    const onStage = () => refresh();
-    socket.on("candidate:stage", onStage);
-    return () => socket.off("candidate:stage", onStage);
-  }, [refresh]);
 
   const columns = useMemo(() => {
     const grouped = Object.fromEntries(PRIMARY_STAGES.map((s) => [s, []]));

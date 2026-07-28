@@ -84,6 +84,14 @@ async function updateSettings(req, res) {
       set("ai.monthlyBudgetCents", asInt(ai.monthlyBudgetCents, { min: 0, max: 100000000, field: "Monthly budget" }));
     if ("hardCap" in ai) set("ai.hardCap", asBool(ai.hardCap));
     if ("temperature" in ai) set("ai.temperature", asNum(ai.temperature, { min: 0, max: 2, field: "Temperature" }));
+    if ("atsEngine" in ai) {
+      const mode = asString(ai.atsEngine, { max: 10, field: "ATS engine" }).toLowerCase();
+      if (mode && !["legacy", "shadow", "live"].includes(mode)) {
+        throw new Error('ATS engine must be "legacy", "shadow" or "live"');
+      }
+      // Empty string ⇒ unset ⇒ the ATS_ENGINE env default applies (evidenceAtsService.resolveEngineMode).
+      set("ai.atsEngine", mode || undefined);
+    }
   }
 
   if (body.compliance && typeof body.compliance === "object") {
