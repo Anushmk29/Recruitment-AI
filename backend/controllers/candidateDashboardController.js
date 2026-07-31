@@ -1,13 +1,22 @@
+const mongoose = require("mongoose");
 const User = require("../models/User");
 const Candidate = require("../models/Candidate");
 const Job = require("../models/Job");
 const Resume = require("../models/Resume");
 const InterviewSession = require("../models/InterviewSession");
+const AssessmentSession = require("../models/AssessmentSession");
 const Notification = require("../models/Notification");
 const CandidateProfile = require("../models/CandidateProfile");
 const CandidateDashboard = require("../models/CandidateDashboard");
 const { notifyCandidate } = require("../services/notificationService");
-const { toApplicationView, toSessionView } = require("../utils/candidateSerializers");
+const {
+  toApplicationView,
+  toSessionView,
+  toAssessmentSessionView,
+} = require("../utils/candidateSerializers");
+const { buildNextActions } = require("../utils/candidateNextActions");
+const { resendOrRescheduleInterview } = require("../services/interviewInvitationService");
+const { resendAssessment } = require("../services/assessmentService");
 
 async function getOrCreateProfile(userId) {
   let profile = await CandidateProfile.findOne({ user: userId });
@@ -67,10 +76,34 @@ async function getDashboard(req, res) {
     .populate("job", "title department")
     .sort({ interviewAt: -1 });
 
+  // Assessments were absent from this payload entirely, so a candidate who had
+  // been invited to one saw nothing here and could only discover it by finding
+  // the email. Since missing the start window auto-fails the application, that
+  // omission decided outcomes.
+  const assessmentSessions = await AssessmentSession.find({ candidate: { $in: applicationIds } })
+    .populate("job", "title department")
+    .sort({ expiresAt: -1 });
+
   const upcomingInterviews = interviewSessions.filter(
     (s) => (s.status === "scheduled" || s.status === "in_progress") && s.interviewAt >= now
   );
   const aiInterviewHistory = interviewSessions.filter((s) => s.status !== "scheduled" || s.interviewAt < now);
+
+  const assessmentViews = assessmentSessions.map(toAssessmentSessionView);
+  const interviewViews = interviewSessions.map(toSessionView);
+  const applicationViews = applications.map(toApplicationView);
+
+  // The differentiated part of this screen: for each application, who is it
+  // waiting on and by when. Computed server-side from the real session
+  // deadlines rather than restated from the stage label, because the stage
+  // field lags the sessions — a candidate whose assessment closes in two hours
+  // must be told that, not "Assessment Sent".
+  const nextActions = buildNextActions({
+    applications: applicationViews,
+    interviewSessions: interviewViews,
+    assessmentSessions: assessmentViews,
+    now: now.getTime(),
+  });
 
   // Candidate-facing serializers only (utils/candidateSerializers.js): raw
   // Candidate/InterviewSession docs carry recruiter-only material (evaluation,
@@ -92,10 +125,16 @@ async function getDashboard(req, res) {
     },
     recommendedJobs,
     savedJobs,
-    appliedJobs: applications.map(toApplicationView),
+    appliedJobs: applicationViews,
     notifications,
     upcomingInterviews: upcomingInterviews.map(toSessionView),
     aiInterviewHistory: aiInterviewHistory.map(toSessionView),
+    assessments: assessmentViews,
+    nextActions,
+    // Server clock. The UI computes "due in 3 hours" against this rather than
+    // the browser's clock, so a candidate with a skewed device is not told they
+    // have time they do not have.
+    serverTime: now.toISOString(),
   });
 }
 
@@ -140,6 +179,67 @@ async function toggleSavedJob(req, res) {
   res.json({ saved: index < 0, savedJobs: profile.savedJobs });
 }
 
+// POST /candidate-dashboard/sessions/:kind/:id/resend
+//
+// Self-serve recovery of the candidate's own access link. Until now, resend was
+// admin-only for both assessments and interviews, so a candidate who lost the
+// invitation email had no route back in and simply timed out — failing on a mail
+// problem rather than on merit, with a support ticket as the only remedy.
+//
+// The security shape matters more than the feature:
+//   - Ownership is proved by the application's email matching the authenticated
+//     account, so a session id alone grants nothing.
+//   - The new link is ONLY ever emailed to the address already on the
+//     application. It is never returned in the response, so this endpoint
+//     discloses no secret to its caller and is useless to an attacker holding a
+//     stolen token but not the mailbox.
+//   - Both underlying services already refuse to resend a completed session or
+//     to rotate the token out from under a live attempt. Those guards are
+//     reused rather than restated, so candidate and recruiter recovery can
+//     never drift apart.
+async function resendOwnSessionLink(req, res) {
+  const { kind, id } = req.params;
+  if (kind !== "assessment" && kind !== "interview") {
+    return res.status(404).json({ error: "Unknown session type" });
+  }
+  if (!mongoose.isValidObjectId(id)) return res.status(404).json({ error: "Session not found" });
+
+  const Model = kind === "assessment" ? AssessmentSession : InterviewSession;
+  const session = await Model.findById(id);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  // Ownership: the session's application must belong to this account's email.
+  const candidate = await Candidate.findById(session.candidate);
+  if (!candidate || candidate.basicDetails?.email !== req.user.email) {
+    // Deliberately the same 404 as a missing session — an attacker probing ids
+    // learns nothing about which ones exist.
+    return res.status(404).json({ error: "Session not found" });
+  }
+
+  const job = await Job.findById(session.job);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+
+  try {
+    if (kind === "assessment") {
+      await resendAssessment(session, candidate, job);
+    } else {
+      await resendOrRescheduleInterview(session, candidate, job, {});
+    }
+  } catch (err) {
+    // Guard rejections are conflicts, not server faults: the session is already
+    // completed, or live on a valid link. Surface the service's own wording.
+    return res.status(err.status || 409).json({ error: err.message });
+  }
+
+  res.json({
+    ok: true,
+    // Where it went, never what was sent. Confirming the destination is what
+    // makes the action trustworthy without disclosing the link.
+    sentTo: candidate.basicDetails.email,
+    message: "A fresh link is on its way to your email.",
+  });
+}
+
 async function initializeDashboard(userId, userName, userEmail) {
   let dashboard = await CandidateDashboard.findOne({ user: userId });
   if (!dashboard) {
@@ -162,4 +262,4 @@ async function initializeDashboard(userId, userName, userEmail) {
   return dashboard;
 }
 
-module.exports = { getDashboard, updateProfile, toggleSavedJob, initializeDashboard };
+module.exports = { getDashboard, updateProfile, toggleSavedJob, resendOwnSessionLink, initializeDashboard };

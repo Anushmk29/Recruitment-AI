@@ -24,6 +24,8 @@ import SubscriptionPage from "./pages/dashboard/SubscriptionPage.jsx";
 import Notifications from "./pages/dashboard/Notifications.jsx";
 import SettingsPage from "./pages/dashboard/SettingsPage.jsx";
 import RubricEditor from "./pages/dashboard/RubricEditor.jsx";
+import PaperEditor from "./pages/dashboard/PaperEditor.jsx";
+import AssessmentTracker from "./pages/dashboard/AssessmentTracker.jsx";
 import ScoreExplanation from "./pages/dashboard/ScoreExplanation.jsx";
 import ReviewQueue from "./pages/dashboard/ReviewQueue.jsx";
 import AuditTrail from "./pages/dashboard/AuditTrail.jsx";
@@ -84,6 +86,8 @@ export default function App() {
         <Route path="jobs/new" element={<JobForm />} />
         <Route path="jobs/:id/edit" element={<JobForm />} />
         <Route path="jobs/:id/rubric" element={<RubricEditor />} />
+        <Route path="jobs/:id/assessment" element={<PaperEditor />} />
+        <Route path="jobs/:id/assessments" element={<AssessmentTracker />} />
         <Route path="jobs/:id/candidates" element={<CandidateList />} />
         <Route path="candidates" element={<CandidatesAll />} />
         <Route path="pipeline" element={<HiringPipeline />} />

@@ -24,6 +24,10 @@ const DIMENSIONS = {
   aiInterviews: { limitKey: "maxAiInterviews", label: "AI interviews this billing period", window: "period" },
   resumeParsing: { limitKey: "maxResumeParsing", label: "resume screenings this billing period", window: "period" },
   storageMb: { limitKey: "storageLimitMb", label: "storage (MB)", window: "total" },
+  // ASSESSMENT-ENGINE-PLAN §7: counts STARTED sessions only — invitations that
+  // expire untouched consume neither quota nor money. Enforced at start, never
+  // mid-flight. Plans without a maxAssessments limit are simply unmetered.
+  assessments: { limitKey: "maxAssessments", label: "skills assessments this billing period", window: "period" },
 };
 
 async function planContext(companyId) {
@@ -44,6 +48,8 @@ async function measureUsage(companyId, dimension, periodStart) {
       return User.countDocuments({ company: companyId, role: "admin" });
     case "aiInterviews":
       return InterviewSession.countDocuments({ company: companyId, "aiInterview.startedAt": { $gte: periodStart } });
+    case "assessments":
+      return require("../models/AssessmentSession").countDocuments({ company: companyId, startedAt: { $gte: periodStart } });
     case "resumeParsing":
       return Candidate.countDocuments({ company: companyId, createdAt: { $gte: periodStart }, resumePath: { $ne: null } });
     case "storageMb": {

@@ -42,9 +42,10 @@ function createLimiter({ windowMs, max, prefix, keyGenerator, message }) {
 }
 
 // Key interview-portal limits by the session's candidate (falls back to IP) so one
-// magic-link token can't amplify cost regardless of source IP.
+// magic-link token can't amplify cost regardless of source IP. Also covers the
+// assessment portal, whose auth middleware attaches req.assessmentSession.
 function portalKey(req) {
-  return String(req.interviewSession?.candidate || req.ip);
+  return String(req.interviewSession?.candidate || req.assessmentSession?.candidate || req.ip);
 }
 
 module.exports = { createLimiter, portalKey };

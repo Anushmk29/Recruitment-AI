@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, XCircle, Circle, Camera, Mic, Maximize, Cpu, Gauge, ScanFace, Smartphone, Laptop } from "lucide-react";
+import { CheckCircle2, XCircle, Circle, Camera, Mic, Maximize, Cpu, Gauge, ScanFace, Smartphone, Laptop, Volume2 } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import api from "../api/client.js";
 import { getAuth, authHeader } from "../portal/portalAuth.js";
 import * as faceVision from "../portal/faceVision.js";
+import { measureAudioIsolation, MIC_CONSTRAINTS } from "../portal/audioIsolation.js";
 import { Card } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 import InterviewShell from "../components/portal/InterviewShell.jsx";
@@ -74,6 +75,10 @@ export default function PreInterviewCheck() {
   const [features, setFeatures] = useState({ evidenceClips: false, secondaryCam: false });
   const [evidenceConsent, setEvidenceConsent] = useState(false);
   const [phonePair, setPhonePair] = useState(null); // { url } once a QR is minted
+  // Sound check: does the output work, and does the mic hear it? Both facts come from one test
+  // tone. Recommended, never required — the interview runs either way, just turn-based if the
+  // interviewer would otherwise talk over itself. See portal/audioIsolation.js.
+  const [sound, setSound] = useState({ status: "pending", verdict: null, ratio: null, heard: null });
 
   useEffect(() => {
     if (!getAuth()?.jwt) {
@@ -116,12 +121,23 @@ export default function PreInterviewCheck() {
 
   async function requestMicrophone() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Same constraints the interview itself uses (echo cancellation explicitly requested, not
+      // left to the browser default) so this check exercises the real pipeline.
+      const stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
       stream.getTracks().forEach((t) => t.stop());
       setMicrophone("ok");
     } catch {
       setMicrophone("failed");
     }
+  }
+
+  // Plays a short tone and listens for it. Two answers from one test: the candidate confirms their
+  // output works, and we measure whether their mic hears it. The second is what decides whether the
+  // interviewer may keep listening while it speaks.
+  async function runSoundCheck() {
+    setSound({ status: "testing", verdict: null, ratio: null, heard: null });
+    const result = await measureAudioIsolation();
+    setSound({ status: "confirming", verdict: result.verdict, ratio: result.ratio, heard: null });
   }
 
   async function requestFullscreen() {
@@ -204,7 +220,7 @@ export default function PreInterviewCheck() {
     setSubmitting(true);
     setError("");
     try {
-      await api.post(
+      const checks = await api.post(
         "/interview-portal/checks",
         {
           camera: camera === "ok",
@@ -213,6 +229,11 @@ export default function PreInterviewCheck() {
           deviceCompatible: deviceCompat.status === "ok",
           browserInfo: navigator.userAgent,
           downloadMbps: speedMbps,
+          // Sound check. The SERVER decides barge-in eligibility from these — skipping the check
+          // leaves it "inconclusive", which fails closed to the turn-based interview.
+          echoPath: sound.verdict || "inconclusive",
+          echoRatio: sound.ratio ?? undefined,
+          audioOutputConfirmed: sound.heard === true,
         },
         { headers: authHeader() }
       );
@@ -234,6 +255,12 @@ export default function PreInterviewCheck() {
       sessionStorage.setItem(
         "evidenceCapture",
         JSON.stringify({ enabled: features.evidenceClips, consented: evidenceConsent })
+      );
+      // Mirror the SERVER's barge-in decision (not our own view of it) so the interview room only
+      // keeps the mic open during playback on a device where that was actually measured as safe.
+      sessionStorage.setItem(
+        "bargeIn",
+        JSON.stringify({ eligible: checks?.data?.deviceCheck?.bargeInEligible === true })
       );
       await api.post("/interview-portal/start", {}, { headers: authHeader() });
       cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -283,6 +310,73 @@ export default function PreInterviewCheck() {
             <Button variant={microphone === "ok" ? "outline" : "primary"} size="sm" onClick={requestMicrophone} disabled={microphone === "ok"}>
               {microphone === "ok" ? "Microphone Enabled" : "Enable Microphone"}
             </Button>
+          </CheckCard>
+
+          {/* Sound check — recommended, never required. It answers two things at once: can you
+              hear the interviewer, and can your microphone hear it too. The second decides whether
+              you'll be able to interrupt mid-question; if your speakers bleed into your mic, the
+              interviewer would interrupt itself, so it waits its turn instead. Either way the
+              interview runs. */}
+          <CheckCard
+            icon={Volume2}
+            title="Sound (recommended)"
+            state={sound.heard === true ? "ok" : sound.heard === false ? "failed" : "pending"}
+          >
+            {sound.status === "pending" && (
+              <>
+                <p className="mb-2 text-sm text-slate-500">
+                  We&apos;ll play a short tone so you can check your audio. Headphones are ideal but not required.
+                </p>
+                <Button size="sm" onClick={runSoundCheck}>Play test tone</Button>
+              </>
+            )}
+
+            {sound.status === "testing" && <p className="text-sm text-slate-500">Playing a test tone…</p>}
+
+            {sound.status === "confirming" && sound.heard === null && (
+              <>
+                <p className="mb-2 text-sm text-slate-700">Did you hear the tone?</p>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => setSound((s) => ({ ...s, heard: true }))}>Yes, I heard it</Button>
+                  <Button variant="outline" size="sm" onClick={() => setSound((s) => ({ ...s, heard: false }))}>
+                    No, I didn&apos;t
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {sound.heard === true && (
+              <div className="space-y-1.5 text-sm">
+                <p className="text-emerald-700">Audio confirmed.</p>
+                {sound.verdict === "bleeding" && (
+                  <p className="text-slate-500">
+                    We can hear your speakers through your microphone. That&apos;s fine — the interviewer will finish each
+                    question before listening. With headphones you&apos;d also be able to interrupt it mid-question.
+                  </p>
+                )}
+                {sound.verdict === "isolated" && (
+                  <p className="text-slate-500">
+                    Your microphone is well isolated, so you can interrupt the interviewer mid-question if you want to.
+                  </p>
+                )}
+                {sound.verdict === "inconclusive" && (
+                  <p className="text-slate-500">
+                    We couldn&apos;t measure your audio setup in this browser. The interviewer will finish each question
+                    before listening.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {sound.heard === false && (
+              <div className="space-y-2 text-sm">
+                <p className="text-red-600">
+                  Check your volume and output device, then try again. You can still take the interview by typing your
+                  answers.
+                </p>
+                <Button variant="outline" size="sm" onClick={runSoundCheck}>Play the tone again</Button>
+              </div>
+            )}
           </CheckCard>
 
           <CheckCard icon={Maximize} title="Fullscreen (recommended)" state={fullscreen === "ok" ? "ok" : "pending"}>

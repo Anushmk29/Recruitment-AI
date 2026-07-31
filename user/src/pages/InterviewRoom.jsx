@@ -90,11 +90,25 @@ export default function InterviewRoom() {
     interim,
     error: voiceError,
     endingSoon,
-    speak,
-    startListening,
+    backchannel,
+    personaName,
+    askAndListen,
+    acknowledge,
     finishListening,
     cancelListening,
   } = voice;
+
+  // Barge-in is only on where the pre-check MEASURED that this device's mic doesn't hear its own
+  // speakers, and the decision came from the server, not from this page. Anywhere else the
+  // interviewer finishes each question before listening — otherwise it hears itself start talking
+  // and stops mid-question, every question.
+  const bargeIn = useMemo(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem("bargeIn") || "null")?.eligible === true;
+    } catch {
+      return false;
+    }
+  }, []);
 
   const [state, setState] = useState(null);
   // Start in text mode if a recovered draft exists, so it's visible immediately instead of
@@ -281,8 +295,10 @@ export default function InterviewRoom() {
 
   const voiceMode = mode === "voice" && supported;
 
-  // Voice orchestration: for each new AI question, speak it aloud then open the mic. The candidate
-  // ends their turn with "Done". Runs only in voice mode after the start gesture.
+  // Voice orchestration: for each new AI question, ask it and listen. On devices where the
+  // pre-check measured an isolated mic the two overlap, so the candidate can cut in mid-question;
+  // elsewhere the question finishes first. Either way the turn ends on a pause or on "Done".
+  // Runs only in voice mode after the start gesture.
   useEffect(() => {
     if (mode !== "voice" || !started || !state) return;
     if (state.completed || state.status === "not_started") return;
@@ -293,8 +309,7 @@ export default function InterviewRoom() {
     handledRef.current = q;
     (async () => {
       try {
-        await speak(q);
-        await startListening();
+        await askAndListen(q, { bargeIn });
       } catch {
         setError("Couldn't start the microphone — you can type your answer instead.");
         setMode("text");
@@ -302,7 +317,7 @@ export default function InterviewRoom() {
         busyRef.current = false;
       }
     })();
-  }, [mode, started, state, phase, speak, startListening]);
+  }, [mode, started, state, phase, askAndListen, bargeIn]);
 
   // Watchdog: `phase === "idle"` while voice mode is armed should always be momentary (the
   // orchestration effect above immediately re-arms it). If it isn't — the effect bailed because
@@ -327,17 +342,31 @@ export default function InterviewRoom() {
         handledRef.current = null; // allow re-opening the mic for the same question
         return;
       }
+      // Say "thank you" out loud while the next question is being prepared, instead of leaving
+      // the candidate in dead air. Non-blocking, and the event is attributed to THIS answer
+      // rather than the next one by sending it along with the submit.
+      const ack = acknowledge();
       await submitAnswer({
         text: result.transcript,
         inputMode: "voice",
         transcriptConfidence: result.confidence,
         audioDurationMs: result.durationMs,
         acoustic: result.acoustic,
+        // Lets the server strip any of the interviewer's own words the mic picked up, and record
+        // the interview's real conversational conditions. Server-validated against its own
+        // approved bank — arbitrary strings are ignored.
+        backchannels: [...(result.backchannels || []), ...(ack ? [ack] : [])],
+        // How many times this question had to be repeated. Recorded as a condition of the
+        // interview; no scorer reads it (see backend/utils/repeatIntent.js).
+        repeatCount: result.repeatCount,
+        // Whether the question was finished before they started answering. A question the candidate
+        // talked over was not fully asked, and the server must not count it as probe coverage.
+        questionDelivery: result.questionDelivery,
       });
     } finally {
       finishingRef.current = false;
     }
-  }, [finishListening, submitAnswer]);
+  }, [finishListening, submitAnswer, acknowledge]);
 
   // Keep the ref the voice hook calls pointed at the latest handleDone.
   useEffect(() => {
@@ -524,7 +553,7 @@ export default function InterviewRoom() {
           <h1 className="text-2xl font-bold text-slate-900">AI Interview</h1>
           <p className="mt-1 text-sm text-slate-500">
             {voiceMode
-              ? "Speak your answers naturally. Take your time — you'll get a heads-up before your turn wraps up."
+              ? "Speak your answers naturally. Take your time — pausing to think won't end your turn, and you can ask for a question to be repeated."
               : "Answer each question in your own words. There's no time pressure — take a moment to think."}
           </p>
         </div>
@@ -618,11 +647,27 @@ export default function InterviewRoom() {
               <div className="flex flex-col items-center gap-3 py-1">
                 <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
                   {phase === "speaking" && (
+                    <>
+                      <p className="flex items-center gap-2 text-sm font-medium text-brand-700">
+                        <Volume2 className="h-4 w-4 animate-pulse" />{" "}
+                        {personaName ? `${personaName} is speaking…` : "Interviewer is speaking…"}
+                      </p>
+                      {bargeIn && (
+                        <p className="text-xs text-slate-500">You can start answering whenever you&apos;re ready — just talk.</p>
+                      )}
+                    </>
+                  )}
+                  {/* What the interviewer just said out loud, shown as well as spoken — a candidate
+                      who is deaf or hard of hearing, or on a device with no audio, must still get
+                      "take your time" rather than silence. Rendered in the live status region and
+                      deliberately NOT as a chat bubble: a backchannel is not a question and must
+                      never be mistakable for one in the transcript. */}
+                  {backchannel && (
                     <p className="flex items-center gap-2 text-sm font-medium text-brand-700">
-                      <Volume2 className="h-4 w-4 animate-pulse" /> Interviewer is speaking…
+                      <Volume2 className="h-4 w-4 animate-pulse" /> &ldquo;{backchannel}&rdquo;
                     </p>
                   )}
-                  {phase === "listening" && (
+                  {phase === "listening" && !backchannel && (
                     <p
                       className={`flex items-center gap-2 text-sm font-medium ${
                         endingSoon ? "text-brand-700" : "text-emerald-700"
@@ -643,19 +688,19 @@ export default function InterviewRoom() {
                       {endingSoon ? "Still there? Keep talking to continue." : "Listening — speak your answer"}
                     </p>
                   )}
-                  {phase === "listening" && (
+                  {phase === "listening" && !backchannel && (
                     <p className="text-xs text-slate-500">
                       {endingSoon
                         ? "Your answer will be submitted in a few seconds unless you keep talking."
-                        : "This moves on automatically once you pause — or tap Done."}
+                        : "Pause when you're finished — there's no hurry. Say “could you repeat that?” to hear the question again, or tap Done."}
                     </p>
                   )}
-                  {phase === "processing" && (
+                  {phase === "processing" && !backchannel && (
                     <p className="flex items-center gap-2 text-sm text-slate-500">
                       <Loader2 className="h-4 w-4 animate-spin" /> Transcribing your answer…
                     </p>
                   )}
-                  {phase === "idle" && !sending && !pending && (
+                  {phase === "idle" && !backchannel && !sending && !pending && (
                     <p className="flex items-center gap-2 text-sm text-slate-500">
                       <Loader2 className="h-4 w-4 animate-spin" /> Preparing the next question…
                     </p>

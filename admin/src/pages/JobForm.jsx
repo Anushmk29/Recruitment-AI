@@ -4,7 +4,7 @@ import { ArrowLeft, Save, ClipboardCheck, AlertTriangle } from "lucide-react";
 import api from "../api/client.js";
 import { useToast } from "../components/ui/Toast.jsx";
 import { Card, Badge, Skeleton } from "../components/ui/Card.jsx";
-import { Input, Textarea, Label, FormGroup } from "../components/ui/Field.jsx";
+import { Input, Textarea, Label, FormGroup, Select } from "../components/ui/Field.jsx";
 import Button from "../components/ui/Button.jsx";
 
 const EMPTY = {
@@ -20,6 +20,7 @@ const EMPTY = {
   interviewMinQuestions: "",
   interviewMaxQuestions: "",
   interviewInstructions: "",
+  assessmentPolicy: "off",
 };
 
 // Kept in sync with JobList.jsx's RUBRIC_STATUS_META — an unapproved rubric
@@ -48,6 +49,7 @@ function fromJob(j) {
     interviewMinQuestions: j.interviewMinQuestions != null ? String(j.interviewMinQuestions) : "",
     interviewMaxQuestions: j.interviewMaxQuestions != null ? String(j.interviewMaxQuestions) : "",
     interviewInstructions: j.interviewInstructions || "",
+    assessmentPolicy: j.assessmentPolicy || "off",
   };
 }
 
@@ -71,6 +73,7 @@ function toPayload(f) {
   };
   if (f.interviewMinQuestions !== "") payload.interviewMinQuestions = Number(f.interviewMinQuestions);
   if (f.interviewMaxQuestions !== "") payload.interviewMaxQuestions = Number(f.interviewMaxQuestions);
+  payload.assessmentPolicy = f.assessmentPolicy || "off";
   return payload;
 }
 
@@ -180,6 +183,12 @@ export default function JobForm() {
             <Button as={Link} to={`/jobs/${id}/rubric`} variant="secondary">
               <ClipboardCheck className="h-4 w-4" /> Scoring Rubric
             </Button>
+            <Button as={Link} to={`/jobs/${id}/assessment`} variant="secondary">
+              <ClipboardCheck className="h-4 w-4" /> Assessment Paper
+            </Button>
+            <Button as={Link} to={`/jobs/${id}/assessments`} variant="secondary">
+              <ClipboardCheck className="h-4 w-4" /> Assessments
+            </Button>
           </div>
         )}
       </div>
@@ -248,6 +257,27 @@ export default function JobForm() {
                 <Label>Screening threshold (0–100)</Label>
                 <Input type="number" min="0" max="100" step="1" name="atsThreshold" value={form.atsThreshold} onChange={handleChange} className="max-w-[10rem]" />
                 <p className="mt-1 text-xs text-slate-400">Applicants scoring at or above this advance to the AI interview. Default 60.</p>
+              </FormGroup>
+            </div>
+
+            <h2 className="mb-1 mt-2 text-base font-semibold text-slate-900">Skills assessment</h2>
+            <p className="mb-4 text-sm text-slate-500">
+              A timed, proctored test generated from this job's approved rubric. Runs only for candidates you assign — nothing is
+              automatic in manual mode.
+            </p>
+            <div className="mb-6 grid gap-4 sm:grid-cols-2">
+              <FormGroup className="sm:col-span-2">
+                <Label>Assessment policy</Label>
+                <Select name="assessmentPolicy" value={form.assessmentPolicy} onChange={handleChange}>
+                  <option value="off">Off — candidates go straight to the AI interview (default)</option>
+                  <option value="manual">Manual — you decide per candidate: send assessment, or skip to interview</option>
+                  <option value="auto">Auto — every ATS pass is assigned (for high-volume drives only)</option>
+                </Select>
+                <p className="mt-1 text-xs text-slate-400">
+                  In manual mode, ATS-passed candidates wait in an "awaiting decision" queue — a senior hire can be skipped
+                  straight to the interview with one click, and the skip is recorded as your decision (it never reads as missing
+                  data, and it costs nothing).
+                </p>
               </FormGroup>
             </div>
 

@@ -152,7 +152,13 @@ async function extractForCandidate(candidate, job) {
     system: CLAIM_SYSTEM,
     prompt: claimPrompt(modelText),
     schema: CLAIM_SCHEMA,
-    maxTokens: 4096,
+    // A whole résumé decomposes into ~80 atomic claims, each carrying spans,
+    // normalisation and verbatim quotes: measured 5.4k completion tokens for a
+    // 9k-char CV. The old 4096 cap truncated mid-JSON on every real résumé, and
+    // the truncated parse surfaced as a generic error that dropped the candidate
+    // to the legacy keyword scorer. Sized with headroom for long CVs.
+    maxTokens: 16384,
+    timeoutMs: llm.heavyTimeoutMs(),
     model: resolved.model,
     temperature: 0,
     promptVersion: CLAIM_PROMPT_VERSION,

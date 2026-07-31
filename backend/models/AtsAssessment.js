@@ -33,7 +33,9 @@ const atsAssessmentSchema = new mongoose.Schema(
     claimGraph: { type: mongoose.Schema.Types.ObjectId, ref: "ClaimGraph", required: true },
     resumeHash: { type: String, required: true },
 
-    stage: { type: String, enum: ["pre_interview", "post_interview"], default: "pre_interview" },
+    // post_assessment (A3.3) sits between the pre and post_interview legs: the same
+    // pure rescore machinery, run after the skills-assessment verdict write-back.
+    stage: { type: String, enum: ["pre_interview", "post_assessment", "post_interview"], default: "pre_interview" },
     // shadow = logged only, behaviour ran on the legacy engine; live = this
     // assessment drove the decision.
     mode: { type: String, enum: ["shadow", "live"], required: true },

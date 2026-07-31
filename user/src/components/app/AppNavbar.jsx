@@ -1,15 +1,25 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Sparkles, Menu, X, LogOut, LayoutDashboard } from "lucide-react";
+import { Sparkles, Menu, X, LogOut, LayoutDashboard, FileText, UserRound } from "lucide-react";
 import { useAccountAuth } from "../../auth/useAccountAuth.js";
 import { logoutAccount } from "../../auth/logout.js";
 import NotificationBell from "./NotificationBell.jsx";
 
-const LINKS = [
+// Public links, shown to everyone. "Interview Dashboard" is deliberately NOT
+// here: /portal/dashboard needs a magic-link session, so for a signed-in
+// candidate without one it is a dead end that looks like their dashboard.
+const PUBLIC_LINKS = [
   { to: "/", label: "Careers" },
   { to: "/welcome", label: "How it Works" },
-  { to: "/resume", label: "My Resumes" },
-  { to: "/portal/dashboard", label: "Interview Dashboard" },
+];
+
+// Signed-in links. "Dashboard" is labelled as itself rather than being folded
+// into the account name — it used to render as the user's name with a
+// dashboard icon, which reads as a profile menu, so the tracking screen was
+// effectively unreachable for anyone who did not already know the URL.
+const ACCOUNT_LINKS = [
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/resume", label: "My Resumes", icon: FileText },
 ];
 
 function AccountLinks({ onNavigate }) {
@@ -37,11 +47,11 @@ function AccountLinks({ onNavigate }) {
     <>
       <NotificationBell />
       <Link
-        to="/dashboard"
+        to="/account"
         onClick={onNavigate}
         className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-brand-700"
       >
-        <LayoutDashboard className="h-4 w-4" /> {user?.name || "My Dashboard"}
+        <UserRound className="h-4 w-4" /> {user?.name || "Account"}
       </Link>
       <button
         type="button"
@@ -60,6 +70,8 @@ function AccountLinks({ onNavigate }) {
 
 export default function AppNavbar() {
   const [open, setOpen] = useState(false);
+  const { isAuthenticated } = useAccountAuth();
+  const links = isAuthenticated ? [...PUBLIC_LINKS, ...ACCOUNT_LINKS] : PUBLIC_LINKS;
 
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
@@ -72,8 +84,13 @@ export default function AppNavbar() {
         </Link>
 
         <nav className="hidden items-center gap-6 md:flex">
-          {LINKS.map((link) => (
-            <Link key={link.to} to={link.to} className="text-sm font-medium text-slate-600 hover:text-brand-700">
+          {links.map((link) => (
+            <Link
+              key={link.to}
+              to={link.to}
+              className="flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-brand-700"
+            >
+              {link.icon && <link.icon className="h-4 w-4" />}
               {link.label}
             </Link>
           ))}
@@ -89,8 +106,14 @@ export default function AppNavbar() {
       {open && (
         <div className="border-t border-slate-200 bg-white px-5 pb-5 pt-3 md:hidden">
           <nav className="flex flex-col gap-3">
-            {LINKS.map((link) => (
-              <Link key={link.to} to={link.to} onClick={() => setOpen(false)} className="py-1 text-sm font-medium text-slate-700">
+            {links.map((link) => (
+              <Link
+                key={link.to}
+                to={link.to}
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-1.5 py-1 text-sm font-medium text-slate-700"
+              >
+                {link.icon && <link.icon className="h-4 w-4" />}
                 {link.label}
               </Link>
             ))}

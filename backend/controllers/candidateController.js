@@ -1,6 +1,8 @@
+const mongoose = require("mongoose");
 const Candidate = require("../models/Candidate");
 const Job = require("../models/Job");
 const User = require("../models/User");
+const Resume = require("../models/Resume");
 const InterviewSession = require("../models/InterviewSession");
 const AtsAssessment = require("../models/AtsAssessment");
 const ClaimGraph = require("../models/ClaimGraph");
@@ -50,6 +52,62 @@ function buildSource(body) {
   return { channel, campaign: campaign || undefined, capturedAt: new Date() };
 }
 
+// Resolve which résumé this application carries. Two accepted shapes:
+//
+//   req.file            — a direct multipart upload (the original path).
+//   body.resumeId       — a résumé already in the caller's own library, which is
+//                         what the autofill flow produces: the file is uploaded
+//                         and parsed BEFORE the form is filled, so there is
+//                         nothing left to upload at submit time.
+//
+// Ownership is enforced by scoping the lookup to the authenticated account's
+// email, and a miss returns null (the caller 400s) rather than distinguishing
+// "not yours" from "does not exist".
+async function resolveResumeRef(req, email) {
+  if (req.file) {
+    return { size: req.file.size, originalName: req.file.originalname, mimeType: req.file.mimetype, file: req.file };
+  }
+  const resumeId = String(req.body?.resumeId || "").trim();
+  if (!resumeId || !mongoose.isValidObjectId(resumeId)) return null;
+
+  const resume = await Resume.findOne({ _id: resumeId, candidateEmail: email });
+  if (!resume) return null;
+  return { size: resume.sizeBytes, originalName: resume.originalName, mimeType: resume.mimeType, resume };
+}
+
+// POST /api/jobs/:id/apply/autofill  { resumeId }
+//
+// Suggest form fields from a résumé the caller already uploaded to their own
+// library. Job-scoped for two reasons: the job gives the LLM spend a tenant to
+// meter against, and it lets a closed job be rejected before a model call is
+// made — not because the job influences the output. It cannot: extraction is
+// job-blind by construction (see autofillPrompts), which is exactly why the
+// result is cached per-résumé and reused across employers.
+//
+// Suggestions are never written to anything. They are proposals the candidate
+// accepts, edits, or discards; the application is created only by applyToJob.
+async function autofillFromResume(req, res) {
+  const email = String(req.user.email || "").toLowerCase().trim();
+
+  const job = await Job.findByIdOrSlug(req.params.id);
+  if (!job || job.status !== "published") {
+    return res.status(404).json({ error: "Job not found or not accepting applications" });
+  }
+
+  const resumeId = String(req.body?.resumeId || "").trim();
+  if (!resumeId || !mongoose.isValidObjectId(resumeId)) {
+    return res.status(400).json({ error: "resumeId is required" });
+  }
+  // Scoped to the caller's own email: a résumé id is not a capability, and a
+  // miss is a 404 rather than a 403 so this can't be used to probe for ids.
+  const resume = await Resume.findOne({ _id: resumeId, candidateEmail: email });
+  if (!resume) return res.status(404).json({ error: "Resume not found" });
+
+  const autofillService = require("../services/autofillService");
+  const payload = await autofillService.suggestForResume(resume, { company: job.company });
+  res.json(payload);
+}
+
 async function applyToJob(req, res) {
   const { id: jobIdOrSlug } = req.params;
   const { name, phone, location, linkedinUrl, portfolioUrl, experience, education, skills, projects, certificates } =
@@ -66,7 +124,8 @@ async function applyToJob(req, res) {
   if (!job || job.status !== "published") {
     return res.status(404).json({ error: "Job not found or not accepting applications" });
   }
-  if (!req.file) {
+  const resumeRef = await resolveResumeRef(req, email);
+  if (!resumeRef) {
     return res.status(400).json({ error: "Resume file is required" });
   }
   if (!name || !email) {
@@ -94,15 +153,40 @@ async function applyToJob(req, res) {
   // machine-readable reason and writes an AuditLog row.
   const quotaService = require("../services/quotaService");
   await quotaService.enforce(job.company, "resumeParsing");
-  await quotaService.enforce(job.company, "storageMb", { incoming: req.file.size / (1024 * 1024) });
+  await quotaService.enforce(job.company, "storageMb", { incoming: resumeRef.size / (1024 * 1024) });
 
   // Persist the resume through the storage abstraction with a tenant-partitioned key,
   // so it's reachable from every instance (S3/MinIO) and never leaks across tenants.
+  // A library résumé is COPIED here rather than referenced: the library lives
+  // outside any tenant's partition, and a tenant must never read from a path
+  // shared with other tenants' candidates.
+  const resumeBuffer = resumeRef.file
+    ? resumeRef.file.buffer
+    : await storageService.getObjectBuffer(resumeRef.resume.filePath);
   const resumeKey = await storageService.putObject({
-    buffer: req.file.buffer,
-    key: storageService.buildKey("resumes", { company: job.company, originalName: req.file.originalname }),
-    contentType: req.file.mimetype,
+    buffer: resumeBuffer,
+    key: storageService.buildKey("resumes", { company: job.company, originalName: resumeRef.originalName }),
+    contentType: resumeRef.mimeType,
   });
+
+  // Attribute every submitted field against the suggestions this résumé was
+  // offered. Computed here, from OUR cached payload — the client sends form
+  // values only and has no say in what counts as machine-written. A candidate
+  // who never used autofill (no cached payload) attributes cleanly to
+  // "candidate" for everything, which is the truth.
+  const autofillService = require("../services/autofillService");
+  const cachedSuggestions = resumeRef.resume?.autofill?.payload || null;
+  const attributed = autofillService.attributeProvenance(
+    {
+      experience: parseJsonArray(experience),
+      education: parseJsonArray(education),
+      skills: parseJsonArray(skills),
+      projects: parseJsonArray(projects),
+      certificates: parseJsonArray(certificates),
+    },
+    cachedSuggestions
+  );
+  const usedAutofill = attributed.counts.accepted > 0 || attributed.counts.edited > 0;
 
   let candidate;
   try {
@@ -110,14 +194,26 @@ async function applyToJob(req, res) {
       job: job._id,
       company: job.company,
       basicDetails: { name, email, phone, location, linkedinUrl, portfolioUrl },
-      experience: parseJsonArray(experience),
-      education: parseJsonArray(education),
+      experience: attributed.experience,
+      education: attributed.education,
       skills: parseJsonArray(skills),
-      projects: parseJsonArray(projects),
-      certificates: parseJsonArray(certificates),
+      skillProvenance: attributed.skillProvenance,
+      projects: attributed.projects,
+      certificates: attributed.certificates,
+      autofill: {
+        used: usedAutofill,
+        version: cachedSuggestions?.version,
+        promptVersion: cachedSuggestions?.promptVersion,
+        engine: cachedSuggestions?.engine,
+        ...attributed.counts,
+        // Only meaningful when the machine actually contributed something; an
+        // attestation recorded for a hand-typed form would be noise in the audit.
+        attestedAt: usedAutofill ? new Date() : undefined,
+        ipAddress: usedAutofill ? req.ip : undefined,
+      },
       resumePath: resumeKey,
-      resumeOriginalName: req.file.originalname,
-      resumeSizeBytes: req.file.size,
+      resumeOriginalName: resumeRef.originalName,
+      resumeSizeBytes: resumeRef.size,
       stageHistory: [{ stage: "applied", by: "system" }],
       // Phase 15.1 — source attribution from the apply link's ?src= / ?campaign=.
       // Sanitised, analytics-only; never a scoring input.
@@ -403,11 +499,31 @@ async function rerunAts(req, res) {
   if (!job) return res.status(404).json({ error: "Job not found for this candidate" });
 
   // A rerun re-parses and re-scores — a tenant at their screening cap can't
-  // route around it through reruns (Phase 11.1).
+  // route around it through reruns (Phase 11.1). Enforced BEFORE the ack, so a
+  // capped tenant still gets a real error instead of a silent no-op.
   await require("../services/quotaService").enforce(req.user.company, "resumeParsing", { actor: req.user });
 
-  await runAtsForCandidate(candidate, job);
-  res.json(candidate);
+  // Ack now, score in the background — same shape as applyToJob. A live-mode
+  // rescore is several LLM calls (claim extraction alone runs over a minute),
+  // which comfortably exceeds httpServer.requestTimeout: awaiting it here meant
+  // the socket was torn down mid-scoring and the recruiter was shown "Could not
+  // rescore candidate" for work that then completed successfully.
+  res.status(202).json({ status: "rescoring", candidateId: candidate._id, previousScoredAt: candidate.ats?.scoredAt || null });
+
+  setImmediate(async () => {
+    try {
+      await runAtsForCandidate(candidate, job);
+    } catch (err) {
+      console.error(`[rescore] failed for candidate ${candidate._id}:`, err);
+      await notifyAdmin({
+        companyId: job.company,
+        type: "system_alert",
+        title: "Rescore did not complete",
+        message: `Rescoring ${candidate.basicDetails.name} for ${job.title} failed (${err.message}). The previous score is unchanged.`,
+        meta: { candidateId: candidate._id, jobId: job._id },
+      }).catch(() => {});
+    }
+  });
 }
 
 // Curated AI-interview report for the admin review screen. Returns only what the
@@ -617,6 +733,7 @@ async function getInterviewReportPdf(req, res) {
 
 module.exports = {
   applyToJob,
+  autofillFromResume,
   listCandidates,
   listCandidatesForJob,
   getCandidate,

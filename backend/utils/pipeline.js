@@ -9,6 +9,12 @@
 const STAGES = [
   "applied",
   "ats_passed",
+  // Assessment stages (ASSESSMENT-ENGINE-PLAN A2.3) are OPT-IN: a candidate only
+  // enters them when a recruiter explicitly assigns an assessment. The skip path
+  // (ats_passed → interview_scheduled) is a plain forward move and never touches
+  // them, so tenants without the feature see byte-identical transitions.
+  "assessment_scheduled",
+  "assessment_completed",
   "interview_scheduled",
   "ai_interview_completed",
   "under_review",
@@ -34,6 +40,8 @@ const ROUND_STAGES = ["hr_interview", "technical_interview", "manager_interview"
 const STAGE_LABELS = {
   applied: "Applied",
   ats_passed: "ATS Passed",
+  assessment_scheduled: "Assessment Sent",
+  assessment_completed: "Assessment Completed",
   interview_scheduled: "Interview Scheduled",
   ai_interview_completed: "AI Interview Completed",
   under_review: "Under Review",

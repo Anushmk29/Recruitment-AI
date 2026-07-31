@@ -54,6 +54,13 @@ const companySettingsSchema = new mongoose.Schema(
       secondaryCam: { type: Boolean },
     },
 
+    // Assessment engine per-tenant gate (ASSESSMENT-ENGINE-PLAN §4 — gate 2 of 4:
+    // env flag → THIS → Job.assessmentPolicy → per-candidate assignment). Unset ⇒
+    // the ASSESSMENT_ENGINE_ENABLED env default applies; explicit false wins.
+    assessments: {
+      enabled: { type: Boolean },
+    },
+
     // Phase 15 — distribution rollout, per tenant. Unset ⇒ the
     // CAREERS_PAGES_ENABLED / JOB_PUBLISHING_ENABLED env defaults apply.
     // Off ⇒ the public careers/feed routes 404 and the publish UI hides.

@@ -21,6 +21,18 @@ const jobSchema = new mongoose.Schema(
     // hard ceiling.
     interviewMinQuestions: { type: Number, min: 1, max: 30 },
     interviewMaxQuestions: { type: Number, min: 1, max: 30 },
+
+    // Assessment engine (ASSESSMENT-ENGINE-PLAN A2.3) — the per-job gate.
+    //   off    → today's flow, untouched (the default for every existing job).
+    //   manual → ATS-passed candidates PARK at ats_passed until a recruiter
+    //            explicitly chooses "Send assessment" or "Skip to AI interview".
+    //   auto   → every ATS pass is auto-assigned (sanctioned only for
+    //            high-volume drives, A4.4 — creating the drive IS the bulk
+    //            assignment decision).
+    assessmentPolicy: { type: String, enum: ["off", "manual", "auto"], default: "off" },
+    // Per-job assessment window config (applies at assignment time).
+    assessmentValidityHours: { type: Number, min: 1, max: 720 },     // link validity (default env, 72h)
+    assessmentStartDeadlineHours: { type: Number, min: 1, max: 720 }, // must START within this (default = validity)
   },
   { timestamps: true }
 );

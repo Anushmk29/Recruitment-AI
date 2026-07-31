@@ -1,10 +1,32 @@
 // Fail-fast environment validation. A missing critical secret should crash the process
 // at boot with a clear message, not fail silently on the first request that needs it.
 
+const { candidateLinkBase, isDisposableHost, isLocalHost } = require("../utils/corsOrigins");
+
 function validateEnv() {
   const isProd = process.env.NODE_ENV === "production";
   const errors = [];
   const warnings = [];
+
+  // Emailed interview links outlive the process that sent them by days
+  // (INTERVIEW_LINK_VALIDITY_HOURS, 48h default). Because only the token HASH is
+  // stored, a link built on a hostname that later disappears cannot be regenerated
+  // — the recruiter's only recovery is to rotate the token and re-email every
+  // affected candidate. Catch it at boot, not in the inbox.
+  const linkBase = candidateLinkBase();
+  if (isDisposableHost(linkBase)) {
+    const msg =
+      `Candidate link base is a disposable dev tunnel (${linkBase}). Every interview ` +
+      `invitation would embed a hostname that dies when the tunnel restarts. Set ` +
+      `PUBLIC_CANDIDATE_URL to a permanent origin (it overrides CLIENT_ORIGIN_USER for links).`;
+    if (isProd) errors.push(msg);
+    else warnings.push(msg + " — emails sent from this run will break for the recipient.");
+  } else if (isProd && isLocalHost(linkBase)) {
+    errors.push(
+      `Candidate link base resolves to ${linkBase}, which is unreachable from a candidate's ` +
+        `browser. Set PUBLIC_CANDIDATE_URL to the public candidate-app origin.`
+    );
+  }
 
   // Both JWT secrets are always required — mixing them up (or missing one) breaks auth
   // or the interview portal silently. See CLAUDE.md.

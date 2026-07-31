@@ -5,6 +5,8 @@
 export const STAGES = [
   "applied",
   "ats_passed",
+  "assessment_scheduled",
+  "assessment_completed",
   "interview_scheduled",
   "ai_interview_completed",
   "under_review",
@@ -21,6 +23,8 @@ export const STAGES = [
 export const STAGE_LABELS = {
   applied: "Applied",
   ats_passed: "ATS Passed",
+  assessment_scheduled: "Assessment Invited",
+  assessment_completed: "Assessment Completed",
   interview_scheduled: "Interview Scheduled",
   ai_interview_completed: "AI Interview Completed",
   under_review: "Under Review",
@@ -40,6 +44,8 @@ const LEGACY_STAGE_MAP = { interview_queue: "interview_scheduled", next_round: "
 const STAGE_TONES = {
   applied: "slate",
   ats_passed: "brand",
+  assessment_scheduled: "brand",
+  assessment_completed: "brand",
   interview_scheduled: "brand",
   ai_interview_completed: "brand",
   under_review: "amber",

@@ -79,6 +79,54 @@ function interviewInvitationEmailTemplate(candidate, job, session) {
   return { subject, text, html };
 }
 
+function assessmentInvitationEmailTemplate(candidate, job, session) {
+  const name = candidate.basicDetails.name;
+  const deadline = formatDateTime(new Date(session.expiresAt));
+  const startBy = formatDateTime(new Date(session.startDeadline));
+  const instructions =
+    session.instructions ||
+    "Use a laptop or desktop in a quiet place with a stable connection. Each section is timed — once you start a section, its clock runs until you submit it.";
+
+  const subject = `Skills assessment for ${job.title}`;
+  const text =
+    `Hi ${name},\n\n` +
+    `You've been invited to a skills assessment for the ${job.title} position.\n\n` +
+    `Start it any time before: ${startBy}\n` +
+    `Your link stays valid until: ${deadline}\n\n` +
+    `Assessment Link: ${session.assessmentUrl}\n\n` +
+    `Instructions:\n${instructions}\n\n` +
+    `Your answers save automatically — if you lose connection, reopen the same link to resume exactly where you left off.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(name)},</p>` +
+    `<p>You've been invited to a skills assessment for the <strong>${escapeHtml(job.title)}</strong> position.</p>` +
+    `<p>Start it any time before <strong>${escapeHtml(startBy)}</strong>. Your link stays valid until <strong>${escapeHtml(deadline)}</strong>.</p>` +
+    `<p><a href="${escapeHtml(session.assessmentUrl)}" style="display:inline-block;padding:10px 18px;background:#2a5f4f;color:#fff;text-decoration:none;border-radius:6px;">Start Assessment</a></p>` +
+    `<p>Or open this link: <a href="${escapeHtml(session.assessmentUrl)}">${escapeHtml(session.assessmentUrl)}</a></p>` +
+    `<p><strong>Instructions:</strong><br/>${escapeHtml(instructions)}</p>` +
+    `<p>Your answers save automatically — if you lose connection, reopen the same link to resume exactly where you left off.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
+function assessmentReminderEmailTemplate(candidate, job, session) {
+  const name = candidate.basicDetails.name;
+  const startBy = formatDateTime(new Date(session.startDeadline));
+  const subject = `Reminder: your skills assessment for ${job.title}`;
+  const text =
+    `Hi ${name},\n\n` +
+    `A reminder that your skills assessment for ${job.title} is waiting. ` +
+    `Start it before ${startBy} using the link from your invitation email.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(name)},</p>` +
+    `<p>A reminder that your skills assessment for <strong>${escapeHtml(job.title)}</strong> is waiting. ` +
+    `Start it before <strong>${escapeHtml(startBy)}</strong> using the link from your invitation email.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+  return { subject, text, html };
+}
+
 function verificationEmailTemplate(user, verifyUrl) {
   const subject = "Verify your email address";
   const text =
@@ -349,6 +397,8 @@ function passwordChangedEmailTemplate(user) {
 module.exports = {
   rejectionEmailTemplate,
   interviewInvitationEmailTemplate,
+  assessmentInvitationEmailTemplate,
+  assessmentReminderEmailTemplate,
   verificationEmailTemplate,
   passwordResetEmailTemplate,
   otpEmailTemplate,

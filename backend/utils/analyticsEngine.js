@@ -17,7 +17,17 @@ function computeFunnel(candidates) {
   }
   const stages = STAGES.map((stage, i) => {
     const count = reached[stage];
-    const prev = i === 0 ? candidates.length : reached[STAGES[i - 1]];
+    // Convert from the nearest PRIOR stage anyone actually reached — the
+    // assessment stages are opt-in (skipped candidates go ats_passed →
+    // interview_scheduled directly), so an untouched intermediate stage must
+    // not zero out the next stage's conversion.
+    let prev = candidates.length;
+    for (let j = i - 1; j >= 0; j--) {
+      if (reached[STAGES[j]] > 0) {
+        prev = reached[STAGES[j]];
+        break;
+      }
+    }
     return {
       stage,
       count,

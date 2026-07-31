@@ -167,9 +167,13 @@ async function generateProbesForSession(session, candidate) {
     const graph = await ClaimGraph.findById(assessment.claimGraph);
     if (!graph) return { probes: [], engine: "none" };
     const claimsById = new Map(graph.claims.map((c) => [c.id, c]));
+    // Probe dedup (ASSESSMENT-ENGINE-PLAN A3.4): a claim the skills assessment
+    // already VERIFIED needs no interview time — the interview gets shorter and
+    // sharper. Contradicted claims STAY probed: the interview is the candidate's
+    // chance to explain (procedural fairness).
     const targets = assessment.unverifiedHighWeightClaims
       .map((u) => ({ claim: claimsById.get(u.claimId), criterionId: u.criterionId }))
-      .filter((t) => t.claim)
+      .filter((t) => t.claim && t.claim.verificationStatus !== "verified_in_assessment")
       .slice(0, PROBE_CAP);
     if (!targets.length) return { probes: [], engine: "none" };
 

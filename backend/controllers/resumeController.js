@@ -23,10 +23,19 @@ async function uploadResume(req, res) {
 
   const existing = await Resume.findOne({ candidateEmail, checksum });
   if (existing) {
+    // Resumes uploaded before span-addressable ingest shipped have no textHash /
+    // pageBreaks / artifacts, so autofill could not run the defense pass on them.
+    // Backfill from the bytes we already have in hand rather than leaving a
+    // silently second-class resume in the library.
+    if (!existing.textHash && existing.extractedText) {
+      const ingest = await extractResumeText(buffer, mimetype);
+      applyIngest(existing, ingest);
+      await existing.save();
+    }
     return res.status(200).json(existing);
   }
 
-  const { text, status } = await extractResumeText(buffer, mimetype);
+  const ingest = await extractResumeText(buffer, mimetype);
 
   const key = await storageService.putObject({
     buffer,
@@ -34,7 +43,7 @@ async function uploadResume(req, res) {
     contentType: mimetype,
   });
 
-  const resume = await Resume.create({
+  const resume = new Resume({
     candidateEmail,
     originalName: originalname,
     storedFileName: key.split("/").pop(),
@@ -42,11 +51,25 @@ async function uploadResume(req, res) {
     mimeType: mimetype,
     sizeBytes: size,
     checksum,
-    extractedText: text,
-    extractionStatus: status,
   });
+  applyIngest(resume, ingest);
+  await resume.save();
 
   res.status(201).json(resume);
+}
+
+// Copy one extraction result onto a Resume doc. The canonical text and its
+// derived coordinates (textHash, pageBreaks) always move together — a text
+// change with stale pageBreaks would put every downstream span in the wrong place.
+function applyIngest(resume, ingest) {
+  resume.extractedText = ingest.text;
+  resume.textHash = ingest.text ? crypto.createHash("sha256").update(ingest.text, "utf8").digest("hex") : "";
+  resume.pageBreaks = ingest.pageBreaks || [];
+  resume.artifacts = ingest.artifacts || {};
+  resume.extractionStatus = ingest.status;
+  // The cached suggestions describe the OLD text. Drop them rather than serve a
+  // parse of a document this resume no longer holds.
+  resume.autofill = undefined;
 }
 
 // Ownership is enforced by scoping the query to the caller's own email, and a
@@ -65,8 +88,10 @@ async function downloadResume(req, res) {
 }
 
 async function listResumeHistory(req, res) {
+  // The full text and the cached suggestion payload are both large and neither
+  // is used by a list view — fetch them per-resume, not per-page.
   const resumes = await Resume.find({ candidateEmail: req.user.email })
-    .select("-extractedText")
+    .select("-extractedText -autofill")
     .sort({ createdAt: -1 });
   res.json(resumes);
 }

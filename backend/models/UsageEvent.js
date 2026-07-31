@@ -13,9 +13,15 @@ const usageEventSchema = new mongoose.Schema(
     // turns already tag plan/question/evaluation; rubric_compile, claim_extract,
     // match, probe_gen and report are reserved for Phases 3-8 so per-feature unit
     // economics and Phase 11 quotas can tell them apart.
+    //
+    // `autofill` is spend on the CANDIDATE's side of the funnel (résumé → form
+    // suggestions), before an application exists. It is metered to the job's
+    // tenant for visibility but deliberately draws no quota — a tenant must not
+    // be billed against their screening allowance for applicants who never
+    // finish applying.
     kind: {
       type: String,
-      enum: ["plan", "question", "evaluation", "rubric_compile", "claim_extract", "match", "probe_gen", "verdict", "report", "stt", "tts", "other"],
+      enum: ["plan", "question", "evaluation", "rubric_compile", "claim_extract", "match", "probe_gen", "verdict", "report", "stt", "tts", "autofill", "other"],
       default: "other",
     },
     provider: { type: String, trim: true },

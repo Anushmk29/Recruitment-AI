@@ -1,0 +1,155 @@
+# Render Blueprint — three services from one repo.
+#
+# Two-pass deploy: the *.onrender.com hostnames don't exist until the services are
+# created, and several env vars have to reference each other's URL. Everything marked
+# `sync: false` is deliberately left blank here and filled in from the dashboard after
+# the first deploy. See DEPLOY.md for the exact values.
+#
+# Region: singapore is the closest to India — lowest latency for candidates and for
+# an Atlas cluster in ap-south-1/ap-southeast-1.
+
+services:
+  # ---------------------------------------------------------------- API + Socket.io
+  - type: web
+    name: recruitment-api
+    runtime: node
+    region: singapore
+    # `free` spins the service down after ~15 min idle. That is survivable for browsing
+    # but it silently breaks two things: the node-cron interview reminders (24h/1h) never
+    # fire while asleep, and a candidate opening a magic link waits ~50s for a cold start.
+    # Change to `starter` ($7/mo, always-on) before inviting real candidates. See DEPLOY.md.
+    plan: free
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RUN_WORKERS_IN_API
+        # Single instance — the API runs its own cron/queue workers. Set to false only
+        # when you also run a separate `npm run worker` service.
+        value: "true"
+
+      # --- secrets Render generates once and stores (never in git) ---
+      # These are NOT interchangeable: AUTH_JWT_SECRET signs User/socket tokens,
+      # JWT_SECRET signs interview-portal tokens. See CLAUDE.md.
+      - key: AUTH_JWT_SECRET
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_SIGNUP_KEY
+        generateValue: true
+
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: recruitment-kv
+          property: connectionString
+
+      # --- pass 2: paste after the first deploy (DEPLOY.md step 5) ---
+      - key: MONGODB_URI
+        sync: false
+      - key: CLIENT_ORIGIN_ADMIN
+        sync: false
+      - key: CLIENT_ORIGIN_USER
+        sync: false
+      # The ONE base for candidate-facing emailed links. Boot FAILS if this resolves to a
+      # dev tunnel or localhost — config/env.js refuses to start rather than send links
+      # that die. Set it to the recruitment-user URL, with scheme.
+      - key: PUBLIC_CANDIDATE_URL
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+
+      # --- object storage: REQUIRED here, unlike locally ---
+      # Render's filesystem is ephemeral. With these unset, storageService falls back to
+      # backend/uploads and every uploaded resume is destroyed on the next deploy or
+      # restart — after which ATS extracts empty text and scores a candidate on nothing.
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: auto
+      - key: S3_FORCE_PATH_STYLE
+        value: "true"
+
+      # --- email (required in production — boot fails without SMTP_HOST) ---
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_SECURE
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: MAIL_TIMEZONE
+        value: Asia/Kolkata
+
+      # --- AI (unset => deterministic fallback mode, labelled as such in the UI) ---
+      - key: OPENROUTER_API_KEY
+        sync: false
+
+      # --- payments (unset => checkout 503s, UI shows "Payments Coming Soon") ---
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+
+      - key: METRICS_TOKEN
+        generateValue: true
+
+  # ---------------------------------------------------------------- candidate SPA
+  # Static sites are free, CDN-backed and never spin down — only the API sleeps.
+  - type: web
+    name: recruitment-user
+    runtime: static
+    rootDir: user
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      # React Router owns /interview/:token etc. Without this rewrite, a candidate
+      # opening a magic link directly gets a 404 from the CDN — the SPA never loads.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Build-time. Must be the ABSOLUTE API URL ending in /api — the "/api" value used
+      # in dev relies on the Vite dev-server proxy, which does not exist in a static build.
+      - key: VITE_API_URL
+        sync: false
+
+  # ---------------------------------------------------------------- recruiter SPA
+  - type: web
+    name: recruitment-admin
+    runtime: static
+    rootDir: admin
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+
+  # ---------------------------------------------------------------- Redis / Key Value
+  # Backs the Socket.io adapter, the BullMQ email queue, distributed cron locks and
+  # shared rate limiting. Required in production — the API refuses to boot without it.
+  - type: keyvalue
+    name: recruitment-kv
+    region: singapore
+    plan: free
+    ipAllowList: []   # private network only — no public access

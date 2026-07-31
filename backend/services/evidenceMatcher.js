@@ -72,7 +72,11 @@ async function matchEvidence({ rubric, claimGraph, company, usageKind = "match" 
     system: MATCH_SYSTEM,
     prompt: matchPrompt({ criteria: rubric.criteria || [], claims }),
     schema: MATCH_SCHEMA,
-    maxTokens: 4096,
+    // One reasoned finding per criterion over the full claim set — a 10-criterion
+    // rubric against ~80 claims. Same truncation/timeout class as claim
+    // extraction, and on the slower `reasoning` model.
+    maxTokens: 8192,
+    timeoutMs: llm.heavyTimeoutMs(),
     model: resolved.model,
     temperature: 0,
     promptVersion: MATCH_PROMPT_VERSION,

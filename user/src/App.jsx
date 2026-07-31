@@ -9,6 +9,9 @@ import InterviewDashboard from "./pages/InterviewDashboard.jsx";
 import PreInterviewCheck from "./pages/PreInterviewCheck.jsx";
 import InterviewRoom from "./pages/InterviewRoom.jsx";
 import PhoneCam from "./pages/PhoneCam.jsx";
+import AssessmentLogin from "./pages/AssessmentLogin.jsx";
+import AssessmentHub from "./pages/AssessmentHub.jsx";
+import AssessmentRoom from "./pages/AssessmentRoom.jsx";
 import Register from "./pages/Register.jsx";
 import Login from "./pages/Login.jsx";
 import VerifyEmail from "./pages/VerifyEmail.jsx";
@@ -47,6 +50,9 @@ export default function App() {
           (InterviewRoom's stage changes across a single mount as the interview progresses). */}
       <Route path="/portal/pre-check" element={<PreInterviewCheck />} />
       <Route path="/portal/interview" element={<InterviewRoom />} />
+      {/* Assessment shell — the live item screen sits outside AppShell for the
+          same accidental-exit reasons as the interview room. */}
+      <Route path="/assessment-portal/section/:sectionId" element={<AssessmentRoom />} />
       {/* Phase 14.6 — phone companion camera, opened by scanning the pre-check QR.
           Deliberately outside AppShell: it's a single-purpose kiosk page. */}
       <Route path="/phone-cam/:token" element={<PhoneCam />} />
@@ -76,6 +82,8 @@ export default function App() {
               />
               <Route path="/interview/:token" element={<InterviewLogin />} />
               <Route path="/portal/dashboard" element={<InterviewDashboard />} />
+              <Route path="/assessment/:token" element={<AssessmentLogin />} />
+              <Route path="/assessment-portal/hub" element={<AssessmentHub />} />
               <Route
                 path="/account"
                 element={

@@ -1,6 +1,44 @@
 const mongoose = require("mongoose");
 const { STAGES, REJECTED } = require("../utils/pipeline");
 
+// Where one submitted form field came from. Computed SERVER-SIDE at submit by
+// diffing what the candidate sent against the suggestions we cached for their
+// résumé — never asserted by the client, which could otherwise claim it typed
+// everything itself and erase the distinction this record exists to preserve.
+//
+//   candidate         — typed by the person. Their own independent attestation.
+//   autofill_accepted — machine-suggested from their résumé, accepted verbatim.
+//                       This is the RÉSUMÉ RESTATED, not a second source: it may
+//                       never be treated as independent corroboration of the
+//                       span it came from.
+//   autofill_edited   — machine-suggested, then changed. The edit is the
+//                       candidate's own act; a change that contradicts the cited
+//                       span is a divergence worth a probe, never an auto-penalty.
+//
+// `spans` index into the canonical résumé text (Candidate.resumeText), so any
+// screen can show a recruiter the exact sentence a field came from.
+const fieldSpanSchema = new mongoose.Schema(
+  {
+    start: { type: Number, required: true },
+    end: { type: Number, required: true },
+    quote: { type: String, required: true },
+  },
+  { _id: false }
+);
+
+const provenanceSchema = new mongoose.Schema(
+  {
+    source: {
+      type: String,
+      enum: ["candidate", "autofill_accepted", "autofill_edited"],
+      default: "candidate",
+    },
+    spans: { type: [fieldSpanSchema], default: [] },
+    promptVersion: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
 const experienceSchema = new mongoose.Schema(
   {
     company: { type: String, required: true, trim: true },
@@ -9,6 +47,7 @@ const experienceSchema = new mongoose.Schema(
     endDate: { type: String, trim: true },
     currentlyWorking: { type: Boolean, default: false },
     description: { type: String, trim: true },
+    provenance: { type: provenanceSchema },
   },
   { _id: false }
 );
@@ -21,6 +60,7 @@ const educationSchema = new mongoose.Schema(
     startYear: { type: String, trim: true },
     endYear: { type: String, trim: true },
     grade: { type: String, trim: true },
+    provenance: { type: provenanceSchema },
   },
   { _id: false }
 );
@@ -31,6 +71,7 @@ const projectSchema = new mongoose.Schema(
     description: { type: String, trim: true },
     techStack: { type: String, trim: true },
     link: { type: String, trim: true },
+    provenance: { type: provenanceSchema },
   },
   { _id: false }
 );
@@ -41,6 +82,51 @@ const certificateSchema = new mongoose.Schema(
     issuer: { type: String, trim: true },
     issueDate: { type: String, trim: true },
     credentialUrl: { type: String, trim: true },
+    provenance: { type: provenanceSchema },
+  },
+  { _id: false }
+);
+
+// `skills` stays a flat [String] (every consumer reads it that way), so its
+// provenance rides alongside in a parallel array keyed by value rather than by
+// index — indices shift when a candidate removes a skill, value does not.
+const skillProvenanceSchema = new mongoose.Schema(
+  {
+    value: { type: String, required: true, trim: true },
+    source: { type: String, enum: ["candidate", "autofill_accepted", "autofill_edited"], default: "candidate" },
+    spans: { type: [fieldSpanSchema], default: [] },
+  },
+  { _id: false }
+);
+
+// Application-autofill record. Exists so that "did a machine write this
+// candidate's application?" is a query, not an archaeology exercise — and so a
+// bias audit can compare outcomes between candidates who used it and who did not.
+const autofillRecordSchema = new mongoose.Schema(
+  {
+    used: { type: Boolean, default: false },
+    version: { type: String, trim: true },
+    promptVersion: { type: String, trim: true },
+    engine: { type: String, enum: ["ai", "deterministic"] },
+    // Counts across every section: how many suggestions were offered, taken
+    // verbatim, taken with edits, and ignored. `discarded` is the honest signal
+    // that the candidate actually read them.
+    suggested: { type: Number, default: 0 },
+    accepted: { type: Number, default: 0 },
+    edited: { type: Number, default: 0 },
+    discarded: { type: Number, default: 0 },
+    // The candidate's explicit "I have reviewed these and they are accurate".
+    // Separate from the data/AI consent: consent is permission to process,
+    // attestation is authorship. An adverse action resting on a machine-written
+    // claim the person never adopted is exactly what this record prevents.
+    attestedAt: { type: Date },
+    ipAddress: { type: String, trim: true },
+    // How much of the deterministic score came from suggestions the candidate
+    // accepted verbatim: score(as submitted) - score(with those fields removed).
+    // Recorded, never subtracted — the candidate attested to the fields, so they
+    // are legitimately theirs. It is here so the dependency is VISIBLE to a
+    // recruiter and measurable in an audit rather than silently baked in.
+    scoreDelta: { type: Number },
   },
   { _id: false }
 );
@@ -156,8 +242,11 @@ const candidateSchema = new mongoose.Schema(
     experience: { type: [experienceSchema], default: [] },
     education: { type: [educationSchema], default: [] },
     skills: { type: [String], default: [] },
+    skillProvenance: { type: [skillProvenanceSchema], default: [] },
     projects: { type: [projectSchema], default: [] },
     certificates: { type: [certificateSchema], default: [] },
+
+    autofill: { type: autofillRecordSchema, default: () => ({ used: false }) },
 
     resumePath: { type: String, required: true },
     resumeOriginalName: { type: String },
@@ -182,6 +271,19 @@ const candidateSchema = new mongoose.Schema(
 
     // Append-only audit trail of every stage the candidate has passed through.
     stageHistory: { type: [stageHistorySchema], default: () => [] },
+
+    // The recruiter gate decision (ASSESSMENT-ENGINE-PLAN §3 rule 8). Recorded so a
+    // skipped assessment renders everywhere as "skipped by recruiter decision
+    // (who, when)" — never as missing data — and so the awaiting-decision queue is
+    // a query (ats_passed + no decision), not a hunt. `auto` = drive-mode bulk
+    // assignment (A4.4), still a recorded human decision (creating the drive).
+    assessmentDecision: {
+      action: { type: String, enum: ["sent", "skipped"] },
+      mode: { type: String, enum: ["manual", "auto"] },
+      by: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      byName: { type: String, trim: true },
+      at: { type: Date },
+    },
 
     offer: { type: offerSchema, default: () => ({}) },
 

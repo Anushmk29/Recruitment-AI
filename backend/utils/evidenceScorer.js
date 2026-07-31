@@ -29,6 +29,8 @@ const VERIFICATION_MULT = {
   unverified: 0.75,               // self-reported assertion, nothing checked yet
   corroborated_internally: 0.9,   // consistent with the rest of the document
   contradicted_internally: 0.5,   // internally inconsistent — weakened, probed, never zeroed by code alone
+  verified_in_assessment: 0.95,   // proven by targeted test items (A3.2) — real proof, below a live probe
+  contradicted_in_assessment: 0,  // targeted items majority-failed — surfaced to a human, never auto-rejects
   verified_in_interview: 1,       // proven live (Phase 8 writes this back)
   contradicted_in_interview: 0,   // proven false live
 };

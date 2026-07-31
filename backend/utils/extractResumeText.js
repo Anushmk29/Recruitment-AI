@@ -1,17 +1,21 @@
 // Span-addressable résumé extraction (BUILD-PLAN Phase 4.1).
 //
-// Returns { text, blocks, artifacts, status }:
-//   text      — the CANONICAL normalised string (utils/textNormalize). Every
-//               downstream span (claims, hostility, UI highlights) indexes into
-//               this exact string. Immutable once produced.
-//   blocks    — [{ text, start, end, page, styleHints }] paragraph blocks with
-//               offsets satisfying text.slice(start, end) === block.text.
-//   artifacts — extraction-level hostility inputs consumed by
-//               resumeDefenseService: invisibleChars, controlChars, and for
-//               PDFs tinyFontChars / tinyFontSamples / textLayerChars (a text
-//               layer far larger than its visibly-rendered share is a hidden
-//               layer).
-//   status    — success | empty | failed (unchanged contract).
+// Returns { text, blocks, pageBreaks, artifacts, status }:
+//   text       — the CANONICAL normalised string (utils/textNormalize). Every
+//                downstream span (claims, hostility, UI highlights) indexes into
+//                this exact string. Immutable once produced.
+//   blocks     — [{ text, start, end, page, styleHints }] paragraph blocks with
+//                offsets satisfying text.slice(start, end) === block.text.
+//   pageBreaks — canonical offsets where a new page starts. Persisted (Resume)
+//                so `blocks` can be rebuilt later via textNormalize.buildBlocks
+//                without re-parsing the file — re-parsing would re-normalise and
+//                silently invalidate every stored offset.
+//   artifacts  — extraction-level hostility inputs consumed by
+//                resumeDefenseService: invisibleChars, controlChars, and for
+//                PDFs tinyFontChars / tinyFontSamples / textLayerChars (a text
+//                layer far larger than its visibly-rendered share is a hidden
+//                layer).
+//   status     — success | empty | failed (unchanged contract).
 //
 // Backward compatible: existing callers destructure { text } and keep working.
 
@@ -99,10 +103,10 @@ async function extractResumeText(buffer, mimeType) {
     }
 
     const blocks = buildBlocks(text, pageBreaks);
-    return { text, blocks, artifacts, status: text.length > 0 ? "success" : "empty" };
+    return { text, blocks, pageBreaks, artifacts, status: text.length > 0 ? "success" : "empty" };
   } catch (err) {
     console.error("Resume text extraction failed:", err.message);
-    return { text: "", blocks: [], artifacts: { invisibleChars: 0, controlChars: 0 }, status: "failed" };
+    return { text: "", blocks: [], pageBreaks: [], artifacts: { invisibleChars: 0, controlChars: 0 }, status: "failed" };
   }
 }
 

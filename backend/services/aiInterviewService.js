@@ -37,6 +37,7 @@ const {
 } = require("../utils/interviewPrompts");
 
 const probeService = require("./probeService");
+const backchannel = require("../utils/backchannel");
 
 const PROVIDER = "openrouter";
 const MAX_ANSWER_CHARS = 4000;
@@ -55,6 +56,21 @@ function pendingProbes(ai) {
 
 // Mark the probe a just-pushed question turn addresses (validated: only a
 // pending probe's id counts — the model can't invent coverage).
+// How much of a question has to have been spoken for it to count as asked. A candidate who cut in
+// on the last few words heard the question; one who cut in on the opening clause did not. The
+// number is deliberately a constant in code rather than a model judgement — whether a probe was
+// covered decides whether an interview may end, and that must be reproducible.
+const DELIVERY_COVERAGE_MIN = 0.7;
+
+function probeUncoveredByInterruption(questionTurn) {
+  if (!questionTurn?.probeId) return false;
+  const total = String(questionTurn.text || "").length;
+  if (!total) return true;
+  const spoken = Number(questionTurn.interruptedAtChar);
+  if (!Number.isFinite(spoken)) return true; // interrupted, but we don't know where — assume not heard
+  return spoken / total < DELIVERY_COVERAGE_MIN;
+}
+
 function markProbeAsked(ai, probeId) {
   if (!probeId) return;
   const probe = (ai.probes || []).find((p) => p.claimId === probeId && p.status === "pending");
@@ -400,7 +416,15 @@ async function submitAnswer(session, answerText, opts = {}) {
   if (ai.status !== "in_progress") {
     throw Object.assign(new Error("The interview is not in progress"), { status: 400 });
   }
-  const text = String(answerText || "").trim().slice(0, MAX_ANSWER_CHARS);
+  const raw = String(answerText || "").trim().slice(0, MAX_ANSWER_CHARS);
+
+  // The interviewer's own non-evaluative speech ("take your time — I'm here") is played while
+  // the microphone is open, so it can land in the transcript. Strip it before anything treats
+  // this text as the candidate's evidence — our words must never be scored as theirs. Only
+  // phrases from the approved bank are removable, so the client cannot use this to delete its
+  // own content (utils/backchannel.stripEcho).
+  const echo = backchannel.stripEcho(raw, opts.backchannels);
+  const text = echo.text;
   if (!text) throw Object.assign(new Error("An answer is required"), { status: 400 });
 
   const answerTurn = { role: "candidate", kind: "answer", text, inputMode: opts.inputMode === "voice" ? "voice" : "text" };
@@ -412,8 +436,53 @@ async function submitAnswer(session, answerText, opts = {}) {
       // Derive the per-answer delivery score server-side (never trust a client-sent score).
       answerTurn.acoustic = { ...opts.acoustic, deliveryScore: scoreDelivery(opts.acoustic) };
     }
+    if (echo.removed.length) {
+      answerTurn.backchannelEchoRemoved = echo.removed.length;
+      console.warn(
+        `[aiInterview] stripped ${echo.removed.length} backchannel echo(es) from a spoken answer ` +
+          `(session ${session._id}) — client-side capture pausing is not holding on that device`
+      );
+    }
   }
+  const lastQuestion = [...ai.turns].reverse().find((t) => t.role === "ai" && t.kind === "question");
+
+  // How many times the candidate asked to hear the question again. Recorded on the QUESTION turn,
+  // because that is what was repeated — and recorded ONLY there: it is a condition of the
+  // interview, never an input to a score (see models/InterviewSession.js and utils/repeatIntent.js
+  // for why treating it as a signal would be a disparate-impact machine).
+  if (Number.isFinite(opts.repeatCount) && opts.repeatCount > 0 && lastQuestion) {
+    lastQuestion.repeatCount = opts.repeatCount;
+  }
+
+  // Barge-in bookkeeping. `markProbeAsked` runs when a question is GENERATED, which assumed the
+  // question would then be delivered in full — true for typed interviews and for the turn-based
+  // voice path, but not once a candidate can talk over it. A probe the candidate never actually
+  // heard has not been covered, so it goes back to pending and closingAllowed() will not let the
+  // interview end on it. Without this, barge-in would quietly shorten interviews by letting
+  // half-heard questions count as asked.
+  if (lastQuestion && opts.questionDelivery && opts.questionDelivery.deliveredFully === false) {
+    lastQuestion.deliveredFully = false;
+    lastQuestion.interruptedAtChar = opts.questionDelivery.interruptedAtChar;
+    if (probeUncoveredByInterruption(lastQuestion)) {
+      const probe = (ai.probes || []).find((p) => p.claimId === lastQuestion.probeId && p.status === "asked");
+      if (probe) {
+        probe.status = "pending";
+        probe.turnIndex = undefined;
+        probe.askedAt = undefined;
+      }
+    }
+  }
+
   ai.turns.push(answerTurn);
+
+  // Record the interviewer's non-evaluative utterances against this answer. Deliberately NOT a
+  // turn: it is part of the interview's conditions, not part of the instrument.
+  if (Array.isArray(opts.backchannels) && opts.backchannels.length) {
+    const turnIndex = ai.turns.length - 1;
+    for (const b of opts.backchannels) {
+      ai.backchannels.push({ kind: b.kind, phrase: b.phrase, turnIndex, at: b.at || new Date() });
+    }
+  }
 
   const { candidate, job } = await loadRefs(session);
   const settings = await loadSettings(session.company);
@@ -535,5 +604,6 @@ module.exports = {
   closingAllowed,
   // exported for tests (Phase 9 gates)
   scoreUnscoredAnswers,
+  probeUncoveredByInterruption,
   fallbackEvaluation,
 };

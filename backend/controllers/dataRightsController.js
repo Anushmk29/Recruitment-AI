@@ -45,7 +45,14 @@ async function exportCandidateData(req, res) {
     },
     consent: candidate.consent || null,
     resume: { originalName: candidate.resumeOriginalName, extractedText: candidate.resumeText || "" },
+    // Which parts of this application a machine wrote. A data-principal request
+    // that returned the profile without disclosing that an extraction engine
+    // drafted some of it would be answering the wrong question: the person is
+    // entitled to know which of their "own" statements they authored and which
+    // they approved. Each entry's `provenance` carries the résumé span it came from.
+    autofill: candidate.autofill?.used ? candidate.autofill : null,
     skills: candidate.skills,
+    skillProvenance: candidate.skillProvenance,
     experience: candidate.experience,
     education: candidate.education,
     projects: candidate.projects,

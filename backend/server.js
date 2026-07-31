@@ -35,16 +35,20 @@ const candidateDashboardRoutes = require("./routes/candidateDashboardRoutes");
 const dataRightsRoutes = require("./routes/dataRightsRoutes");
 const companySettingsRoutes = require("./routes/companySettingsRoutes");
 const rubricRoutes = require("./routes/rubricRoutes");
+const personaRoutes = require("./routes/personaRoutes");
 const reviewQueueRoutes = require("./routes/reviewQueueRoutes");
 const analyticsRoutes = require("./routes/analyticsRoutes");
 const auditLogRoutes = require("./routes/auditLogRoutes");
 const demoRequestRoutes = require("./routes/demoRequestRoutes");
 const publicCareersRoutes = require("./routes/publicCareersRoutes");
 const platformRoutes = require("./routes/platformRoutes");
+const assessmentRoutes = require("./routes/assessmentRoutes");
+const assessmentPortalRoutes = require("./routes/assessmentPortalRoutes");
 const { webhook } = require("./controllers/paymentController");
 const { initSocket } = require("./config/socket");
 const { startEmailWorker } = require("./workers/emailWorker");
 const { startInterviewReminderJob } = require("./jobs/interviewReminderJob");
+const { startAssessmentReminderJob } = require("./jobs/assessmentReminderJob");
 const { startSubscriptionExpiryJob } = require("./jobs/subscriptionExpiryJob");
 const { startRetentionJob } = require("./jobs/retentionJob");
 const { startCalibrationJob } = require("./jobs/calibrationJob");
@@ -165,11 +169,19 @@ app.use("/api/candidate-dashboard", candidateDashboardRoutes);
 app.use("/api/data-rights", dataRightsRoutes);
 app.use("/api/company-settings", companySettingsRoutes);
 app.use("/api/rubrics", rubricRoutes);
+app.use("/api/personas", personaRoutes);
 app.use("/api/review-queue", reviewQueueRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/demo-requests", demoRequestRoutes);
 app.use("/api/platform", platformRoutes);
+
+// Assessment engine (ASSESSMENT-ENGINE-PLAN) — gate 1 of 4: with the env flag
+// off, neither router is mounted and nothing assessment-related exists.
+if (require("./services/assessmentPaperService").engineEnabled()) {
+  app.use("/api/assessments", assessmentRoutes);
+  app.use("/api/assessment-portal", assessmentPortalRoutes);
+}
 
 // Phase 15.2/15.3 — public, crawler-facing careers pages + job feeds (root
 // paths, not /api: these URLs are submitted to aggregators and indexed).
@@ -248,6 +260,7 @@ connectDB()
       emailWorker = startEmailWorker();
       startPublishWorker();
       startInterviewReminderJob();
+      if (require("./services/assessmentPaperService").engineEnabled()) startAssessmentReminderJob();
       startSubscriptionExpiryJob();
       startRetentionJob();
       startCalibrationJob();

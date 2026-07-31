@@ -31,6 +31,16 @@ const STAGE_NOTIFICATIONS = {
   interview_scheduled: {
     admin: { type: "candidate_stage_changed", title: "Interview scheduled" },
   },
+  // Same shape as interview_scheduled: the assessment invitation email (with the
+  // real magic link) is sent by assessmentService — a generic candidate
+  // notification here would double-notify right next to it.
+  assessment_scheduled: {
+    admin: { type: "candidate_stage_changed", title: "Assessment sent" },
+  },
+  assessment_completed: {
+    candidate: { type: "assessment_completed", title: "Assessment completed" },
+    admin: { type: "assessment_completed", title: "Assessment completed" },
+  },
   ai_interview_completed: {
     candidate: { type: "interview_completed", title: "AI interview completed" },
     admin: { type: "interview_completed", title: "AI interview completed" },
@@ -145,6 +155,8 @@ async function applyTransition(candidate, toStage, { note, actorName, offerMessa
   // showing up as still "needs review" / "awaiting interview" indefinitely.
   await closeSatelliteQueues(candidate, target);
   await ensureInterviewInvite(candidate, target);
+  await ensureAssessmentInvite(candidate, target, actorName);
+  await cancelStaleAssessment(candidate, target, actorName);
 
   // Outcome capture (Phase 10.1): joins this candidate's engine score to what
   // actually happened, feeding the nightly calibration. Fire-and-forget — a
@@ -212,6 +224,42 @@ async function ensureInterviewInvite(candidate, toStage) {
     { upsert: true, new: true }
   );
   await createInterviewSessionIfNeeded(candidate, job);
+}
+
+// A recruiter dragging a candidate INTO assessment_scheduled on the pipeline
+// board is assigning the assessment exactly as much as the "Send assessment"
+// button is (mirrors ensureInterviewInvite's rationale). Without this the board
+// move would leave a stage label with no session, no link, no email. Lazy
+// require: assessmentService itself imports applyTransition from this module.
+async function ensureAssessmentInvite(candidate, toStage, actorName) {
+  if (toStage !== "assessment_scheduled") return;
+  const job = candidate.job;
+  if (!job || !job._id) return;
+  try {
+    const assessmentService = require("./assessmentService");
+    const existing = await assessmentService.liveSessionFor(candidate._id, job._id);
+    if (existing) return;
+    await assessmentService.sendAssessment(candidate, job, { mode: "manual", actorName: actorName || "recruiter (pipeline board)" });
+  } catch (err) {
+    console.error(`[pipeline] assessment invite for candidate ${candidate._id} failed: ${err.message}`);
+  }
+}
+
+// A candidate moved to rejected — or skipped forward to the interview while an
+// assessment invitation was still open — must not keep a live session ghosting
+// in the tracker (and the link must stop working).
+async function cancelStaleAssessment(candidate, toStage, actorName) {
+  if (!["rejected", "interview_scheduled"].includes(toStage)) return;
+  try {
+    const assessmentService = require("./assessmentService");
+    const live = await assessmentService.liveSessionFor(candidate._id, candidate.job?._id || candidate.job);
+    if (!live || live.startedAt) return; // never kill an attempt in progress — expiry/scoring owns that
+    live.status = "cancelled";
+    await live.save();
+    console.log(`[pipeline] cancelled unstarted assessment session for candidate ${candidate._id} (moved to ${toStage} by ${actorName || "system"})`);
+  } catch (err) {
+    console.error(`[pipeline] stale assessment cleanup failed: ${err.message}`);
+  }
 }
 
 async function dispatchStageNotifications(candidate, toStage, note) {

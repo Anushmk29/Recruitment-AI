@@ -6,6 +6,10 @@ const { hashToken } = require("../services/interviewInvitationService");
 const { detectImageType } = require("../utils/verifyFileSignature");
 const aiInterview = require("../services/aiInterviewService");
 const speech = require("../services/speechService");
+const asrVocabulary = require("../services/asrVocabularyService");
+const backchannel = require("../utils/backchannel");
+const speechAuth = require("../utils/speechAuthorization");
+const personaService = require("../services/personaService");
 const proctoring = require("../utils/proctoring");
 const evidenceClipService = require("../services/evidenceClipService");
 const CompanySettings = require("../models/CompanySettings");
@@ -102,9 +106,17 @@ function speedTestFile(req, res) {
   res.send(SPEED_TEST_PAYLOAD);
 }
 
+const ECHO_PATH_VALUES = ["isolated", "bleeding", "inconclusive"];
+
 async function submitChecks(req, res) {
   const { camera, microphone, screenShare, fullscreen, deviceCompatible, browserInfo, downloadMbps } = req.body;
   const session = req.interviewSession;
+
+  // Audio isolation, measured in the browser (the only place it can be). Barge-in eligibility is
+  // decided HERE from the measurement rather than taken from the client, so a client cannot ask for
+  // interruption to be enabled on a device where the interviewer would talk over itself.
+  const echoPath = ECHO_PATH_VALUES.includes(req.body?.echoPath) ? req.body.echoPath : "inconclusive";
+  const audioOutputConfirmed = !!req.body?.audioOutputConfirmed;
 
   session.deviceCheck = {
     camera: !!camera,
@@ -113,6 +125,12 @@ async function submitChecks(req, res) {
     fullscreen: !!fullscreen,
     deviceCompatible: !!deviceCompatible,
     browserInfo,
+    echoPath,
+    echoRatio: clampNum(req.body?.echoRatio, 0, 1000),
+    audioOutputConfirmed,
+    // Fails closed: anything short of a measured isolated path plus a confirmed working output
+    // leaves the interview turn-based, which is exactly what it was before this existed.
+    bargeInEligible: echoPath === "isolated" && audioOutputConfirmed,
     completedAt: new Date(),
   };
   if (typeof downloadMbps === "number") {
@@ -222,6 +240,37 @@ function sanitizeAcoustic(a) {
   return Object.values(out).some((v) => v !== undefined) ? out : undefined;
 }
 
+// The browser reports which non-evaluative interviewer phrases it played during the turn (it is
+// the only side that knows — silence detection is real-time and client-owned). Every entry is
+// checked against the server's approved bank, so an arbitrary string can never be recorded as
+// something the interviewer said, and nothing outside the bank can be stripped from a
+// transcript. The cap bounds a client that decides to report thousands.
+const MAX_REPORTED_BACKCHANNELS = 12;
+
+function sanitizeBackchannels(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const item of list) {
+    if (out.length >= MAX_REPORTED_BACKCHANNELS) break;
+    if (!item || typeof item !== "object") continue;
+    if (!backchannel.KINDS.includes(item.kind)) continue;
+    if (!backchannel.isBankPhrase(item.phrase)) continue;
+    const at = Number(item.at);
+    out.push({ kind: item.kind, phrase: item.phrase, at: Number.isFinite(at) ? new Date(at) : new Date() });
+  }
+  return out;
+}
+
+// Did the candidate talk over the question? Only the browser knows, so only the browser can report
+// it — but note which direction the trust runs: claiming a question WAS interrupted can only make
+// the interview longer (its probe goes back to pending and has to be asked again). There is no
+// version of this a candidate benefits from lying about.
+function sanitizeQuestionDelivery(d) {
+  if (!d || typeof d !== "object") return undefined;
+  if (d.deliveredFully !== false) return undefined; // only an interruption is worth recording
+  return { deliveredFully: false, interruptedAtChar: clampNum(d.interruptedAtChar, 0, 100000) };
+}
+
 // Candidate submits an answer (typed OR the transcript of a spoken answer, with optional voice
 // metadata). Returns the next question or completion.
 async function submitAnswer(req, res) {
@@ -232,6 +281,11 @@ async function submitAnswer(req, res) {
     transcriptConfidence: clampNum(b.transcriptConfidence, 0, 1),
     audioDurationMs: clampNum(b.audioDurationMs, 0, 60 * 60 * 1000),
     acoustic: sanitizeAcoustic(b.acoustic),
+    backchannels: sanitizeBackchannels(b.backchannels),
+    // Client-reported and deliberately trusted: a repeat count feeds no score, so there is nothing
+    // to gain by lying about it. Clamped only so a bad value can't land in the document.
+    repeatCount: clampNum(b.repeatCount, 0, 20),
+    questionDelivery: sanitizeQuestionDelivery(b.questionDelivery),
   };
   const state = await aiInterview.submitAnswer(session, b.text, opts);
 
@@ -376,7 +430,21 @@ async function voiceToken(req, res) {
   if (!req.interviewSession?.voiceConsent?.given) {
     return res.status(403).json({ error: "Voice consent has not been given for this interview", code: "VOICE_CONSENT_REQUIRED" });
   }
-  const cred = await speech.grantStreamingToken();
+  // Bias the transcript toward this role's and this résumé's technical vocabulary, so the words
+  // the evaluator later reads as evidence are the words the candidate actually said. Both calls
+  // degrade to "unbiased but working" rather than failing the mic — see asrVocabularyService.
+  const keyterms = await asrVocabulary.keytermsForSession(req.interviewSession);
+  const cred = await speech.grantStreamingToken({ keyterms });
+  await asrVocabulary.recordKeyterms(req.interviewSession, keyterms, cred.stt?.model);
+
+  // Conversational policy rides along with the credential: the browser owns silence DETECTION
+  // (only it knows in real time), but never the wording or the timings. Those stay server-side so
+  // what the interviewer says, and how patient it is, is one place per tenant — and the persona
+  // that decided the patience is stamped on the session as part of the interview's conditions.
+  const persona = await personaService.resolveForSession(req.interviewSession);
+  await personaService.stampOnSession(req.interviewSession, persona);
+  cred.conversation = personaService.conversationPolicy(persona);
+  cred.persona = { name: persona.name, source: persona.source };
   res.json(cred);
 }
 
@@ -386,10 +454,42 @@ async function voiceSpeak(req, res) {
   if (!speech.isEnabled()) {
     return res.status(503).json({ error: "Voice interview is not configured", code: "VOICE_DISABLED" });
   }
-  const { audio, contentType } = await speech.synthesize(req.body?.text);
-
-  // Phase 9.4 — meter TTS spend (characters synthesized). Best-effort.
   const session = req.interviewSession;
+
+  // The one place the interviewer's voice can come from, and therefore the one place to verify
+  // that what it says was authored by the rubric-bound engine or drawn from the approved
+  // non-evaluative bank. Anything else is recorded verbatim and refused — see
+  // utils/speechAuthorization.js for why this narrow check is the whole audit story.
+  const verdict = speechAuth.authorize(req.body?.text, session);
+  if (!verdict.authorized) {
+    const enforced = speechAuth.isEnforcing();
+    session.aiInterview.speechDivergences = [
+      ...(session.aiInterview.speechDivergences || []),
+      { spoken: verdict.spoken, enforced, at: new Date() },
+    ].slice(-speechAuth.DIVERGENCE_TAIL);
+    session.markModified("aiInterview.speechDivergences");
+    await session.save();
+    console.error(
+      `[voice] refusing to speak text that is neither an authored turn nor an approved phrase ` +
+        `(session ${session._id}, enforced=${enforced}): ${JSON.stringify(verdict.spoken.slice(0, 120))}`
+    );
+    if (enforced) {
+      // Not adverse to the candidate: the question is already on their screen, and typing answers
+      // is always available. The client shows it as text rather than speaking something unverified.
+      return res.status(422).json({
+        error: "That text was not part of this interview and will not be spoken",
+        code: "SPEECH_NOT_AUTHORED",
+      });
+    }
+  }
+
+  // Speak in the session's persona voice, not the deployment default (services/personaService).
+  const persona = await personaService.resolveForSession(session);
+  const { audio, contentType, model } = await speech.synthesize(req.body?.text, { voice: persona.voice.model });
+
+  // Phase 9.4 — meter TTS spend (characters synthesized). Best-effort. `model` is the voice that
+  // actually spoke, which may be the persona's or the configured fallback — record what happened,
+  // not what was requested.
   const chars = String(req.body?.text || "").trim().slice(0, 2000).length;
   const usageService = require("../services/usageService");
   await usageService.recordUsage({
@@ -398,7 +498,7 @@ async function voiceSpeak(req, res) {
     candidate: session.candidate,
     kind: "tts",
     provider: speech.provider(),
-    model: speech.models().ttsModel,
+    model,
     usage: { costCents: speech.ttsCostCents(chars) },
     engine: "ai",
   });

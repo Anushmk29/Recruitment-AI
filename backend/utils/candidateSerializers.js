@@ -24,10 +24,13 @@ function toApplicationView(c) {
 
 // A candidate's view of their interview session: schedule + coarse progress.
 // Never the tokenHash, proctoring state, transcript, or evaluation.
+// `candidate` is the applicant's own application id — already theirs, and needed
+// to line a session up against the right application on the dashboard.
 function toSessionView(s) {
   const ai = s.aiInterview;
   return {
     _id: s._id,
+    candidate: s.candidate,
     job: s.job,
     status: s.status,
     interviewAt: s.interviewAt,
@@ -35,6 +38,42 @@ function toSessionView(s) {
     startedAt: s.startedAt,
     completedAt: s.completedAt,
     aiInterview: ai ? { status: ai.status, questionCount: ai.questionCount } : undefined,
+  };
+}
+
+// A candidate's view of their assessment session: the schedule, the two
+// deadlines that actually decide the outcome, and how far through they are.
+//
+// Withheld on purpose, and not by accident of omission:
+//   - `result` (score, perItem, perCriterion, claimVerdicts, reproducibilityHash)
+//     — an evaluation the recruiter has not released; releasing it here would
+//     also hand a re-taking candidate the answer key.
+//   - `assembledItems` — the questions and their per-candidate option order.
+//   - `proctoring` — risk score, band, events, identity match. Adverse material
+//     that a human must review before it means anything.
+//   - `tokenHash`, `paper`, `assignment` — internal identifiers.
+//
+// Progress is reported as counts of the candidate's OWN sections, which is what
+// "am I nearly done" needs and carries none of the above.
+function toAssessmentSessionView(s) {
+  const sections = s.sectionState || [];
+  return {
+    _id: s._id,
+    candidate: s.candidate,
+    job: s.job,
+    status: s.status,
+    validFrom: s.validFrom,
+    startDeadline: s.startDeadline,
+    expiresAt: s.expiresAt,
+    startedAt: s.startedAt,
+    completedAt: s.completedAt,
+    progress: {
+      totalSections: sections.length,
+      completedSections: sections.filter((x) => x.status === "completed").length,
+      // Answered-count only — never which items, nor whether they were right.
+      answered: (s.responses || []).length,
+      totalItems: (s.assembledItems || []).length,
+    },
   };
 }
 
@@ -48,4 +87,4 @@ function toApplyReceipt(c, job) {
   };
 }
 
-module.exports = { toApplicationView, toSessionView, toApplyReceipt };
+module.exports = { toApplicationView, toSessionView, toAssessmentSessionView, toApplyReceipt };

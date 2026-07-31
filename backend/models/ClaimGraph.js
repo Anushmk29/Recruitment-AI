@@ -23,6 +23,13 @@ const VERIFICATION_STATUSES = [
   "unverified",
   "corroborated_internally",
   "contradicted_internally",
+  // Assessment verdicts (ASSESSMENT-ENGINE-PLAN A3.2) — additive. The evidence
+  // hierarchy is: self-reported < corroborated < verified_in_assessment <
+  // verified_in_interview (an MCQ is real proof, but weaker than a probed live
+  // explanation). Interview verdicts therefore overwrite assessment verdicts,
+  // never the reverse.
+  "verified_in_assessment",
+  "contradicted_in_assessment",
   "verified_in_interview",
   "contradicted_in_interview",
 ];

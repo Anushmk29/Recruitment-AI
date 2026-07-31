@@ -19,6 +19,52 @@ function Section({ title, children }) {
   );
 }
 
+// Where a profile field came from. A recruiter reading "8 years at Zerodha"
+// should be able to tell at a glance whether the candidate typed that or whether
+// a machine read it off their résumé and the candidate approved it — those are
+// different kinds of evidence, and only one of them is independent of the
+// document the engine already scored.
+const PROVENANCE_LABELS = {
+  autofill_accepted: {
+    label: "From résumé",
+    title: "Read from the résumé by the extraction engine and accepted by the candidate without changes. Not independent corroboration of the résumé — it is the résumé restated.",
+    className: "border-amber-200 bg-amber-50 text-amber-800",
+  },
+  autofill_edited: {
+    label: "From résumé · edited",
+    title: "Read from the résumé, then changed by the candidate before submitting. Compare the entry against the quoted source below.",
+    className: "border-violet-200 bg-violet-50 text-violet-800",
+  },
+};
+
+function ProvenanceTag({ provenance }) {
+  const meta = PROVENANCE_LABELS[provenance?.source];
+  if (!meta) return null;
+  return (
+    <span
+      title={meta.title}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${meta.className}`}
+    >
+      <Sparkles className="h-3 w-3" />
+      {meta.label}
+    </span>
+  );
+}
+
+// The cited span behind an autofilled field, quoted verbatim from the résumé.
+function ProvenanceSource({ provenance }) {
+  if (!provenance?.spans?.length) return null;
+  return (
+    <div className="mt-2 space-y-1">
+      {provenance.spans.map((s, i) => (
+        <blockquote key={i} className="border-l-2 border-slate-300 pl-2 text-xs italic text-slate-500">
+          “{s.quote}”
+        </blockquote>
+      ))}
+    </div>
+  );
+}
+
 function formatWhen(value) {
   if (!value) return "—";
   return new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
@@ -96,17 +142,52 @@ export default function CandidateDetail() {
   // The freshly-minted interview link, shown right after resend/reschedule so the
   // recruiter can copy it directly (it can't be re-fetched later — only its hash is stored).
   const [lastLink, setLastLink] = useState("");
+  // Skills assessment (ASSESSMENT-ENGINE-PLAN): { session, decision, paper } or null.
+  const [assessment, setAssessment] = useState(null);
+  const [assessmentBusy, setAssessmentBusy] = useState(false);
+  const [assessmentDifficulty, setAssessmentDifficulty] = useState("");
+
+  async function handleSendAssessment() {
+    setAssessmentBusy(true);
+    try {
+      await api.post(`/assessments/candidate/${id}/send`, {
+        difficultyOverride: assessmentDifficulty || undefined,
+      });
+      toast.success("Assessment sent — invitation email on its way");
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Send failed");
+    } finally {
+      setAssessmentBusy(false);
+    }
+  }
+
+  async function handleSkipAssessment() {
+    setAssessmentBusy(true);
+    try {
+      await api.post(`/assessments/candidate/${id}/skip`);
+      toast.success("Skipped to AI interview — recorded as your decision");
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Skip failed");
+    } finally {
+      setAssessmentBusy(false);
+    }
+  }
 
   const load = useCallback(async () => {
-    const [cRes, tRes, sRes] = await Promise.all([
+    const [cRes, tRes, sRes, aRes] = await Promise.all([
       api.get(`/candidates/${id}`),
       api.get(`/candidates/${id}/timeline`).catch(() => ({ data: null })),
       // 404 = candidate never reached the interview stage — no session yet.
       api.get(`/interview-sessions/candidate/${id}`).catch(() => ({ data: null })),
+      // 404 also covers the assessment engine being disabled — section just hides.
+      api.get(`/assessments/candidate/${id}`).catch(() => ({ data: null })),
     ]);
     setCandidate(cRes.data);
     setTimeline(tRes.data);
     setSession(sRes.data);
+    setAssessment(aRes.data);
   }, [id]);
 
   useEffect(() => {
@@ -197,12 +278,34 @@ export default function CandidateDetail() {
   // Re-scores against whatever rubric is approved NOW — the natural follow-up once
   // a recruiter approves a rubric for a job whose candidates were screened while it
   // was still a draft (they don't get a fair evaluation retroactively otherwise).
+  // The rerun endpoint acks with 202 and scores in the background, because a
+  // rubric-based rescore is minutes of LLM work — longer than the server's
+  // request timeout. So the POST returning is NOT the result: poll until the
+  // score's timestamp actually moves, and say plainly if it's still running
+  // rather than reporting a success the engine hasn't delivered yet.
   async function handleRescore() {
     setRescoring(true);
     try {
-      await api.post(`/candidates/${id}/ats/rerun`);
-      toast.success("Candidate rescored");
-      await load();
+      const { data } = await api.post(`/candidates/${id}/ats/rerun`);
+      const previous = data?.previousScoredAt ?? candidate?.ats?.scoredAt ?? null;
+      toast.success("Rescoring started — evidence scoring takes a minute or two");
+
+      const deadline = Date.now() + 6 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const { data: fresh } = await api.get(`/candidates/${id}`);
+        if ((fresh?.ats?.scoredAt ?? null) !== previous) {
+          setCandidate(fresh);
+          await load();
+          toast.success(
+            fresh?.ats?.engine === "evidence"
+              ? "Rescored against the approved rubric"
+              : "Rescored — evidence engine unavailable, keyword score shown"
+          );
+          return;
+        }
+      }
+      toast.error("Rescore is taking longer than expected — reload the page shortly to see the result");
     } catch (err) {
       toast.error(err.response?.data?.error || "Could not rescore candidate");
     } finally {
@@ -255,7 +358,12 @@ export default function CandidateDetail() {
     );
   }
 
-  const { basicDetails, experience, education, skills, projects, certificates, ats, offer } = candidate;
+  const { basicDetails, experience, education, skills, projects, certificates, ats, offer, autofill } = candidate;
+  // Skills are a flat string array, so their provenance rides in a parallel
+  // array keyed by value (indices shift when a candidate removes one).
+  const skillSources = new Map(
+    (candidate.skillProvenance || []).map((s) => [String(s.value).trim().toLowerCase(), s.source])
+  );
   const nextStages = timeline?.allowedNextStages || [];
   const terminal = isTerminal(candidate.status);
 
@@ -300,7 +408,22 @@ export default function CandidateDetail() {
                 <Scale className="h-4 w-4" /> Why this score
               </Link>
             )}
-            {ats?.overallScore != null && ats.engine !== "evidence" && (
+            {/* Two very different reasons produce a legacy score, and collapsing them
+                into one "approve a rubric" prompt actively misdirects: it told
+                recruiters to approve a rubric that was already approved, while the
+                real fault (the evidence engine erroring out) stayed invisible.
+                engine "legacy" = no approved rubric / legacy mode — approving one is
+                the fix. engine "fallback-legacy" = rubric IS approved and the engine
+                failed — Rescore is the fix, not the rubric editor. */}
+            {ats?.overallScore != null && ats.engine === "fallback-legacy" && (
+              <span
+                title="This job HAS an approved rubric, but the evidence engine failed on this candidate, so the score shown is the legacy keyword match — not rubric-based. Use Rescore to retry; if it keeps failing, check the backend logs and notifications."
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700"
+              >
+                <AlertTriangle className="h-4 w-4" /> Evidence scoring failed — keyword score shown
+              </span>
+            )}
+            {ats?.overallScore != null && ats.engine !== "evidence" && ats.engine !== "fallback-legacy" && (
               <Link
                 to={`/jobs/${candidate.job?._id}/rubric`}
                 title="This job has no approved scoring rubric, so this candidate was scored by the legacy keyword matcher instead of the evidence-based engine."
@@ -430,6 +553,98 @@ export default function CandidateDetail() {
           </div>
         )}
       </Section>
+
+      {/* Skills assessment — the recruiter gate + result (ASSESSMENT-ENGINE-PLAN) */}
+      {(assessment?.session || assessment?.decision || normalizeStage(candidate.status) === "ats_passed") && (
+        <Section title="Skills Assessment">
+          {/* Gate: ATS-passed, no decision yet → Send / Skip inline */}
+          {!assessment?.session && !assessment?.decision && normalizeStage(candidate.status) === "ats_passed" && (
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <Label>Difficulty</Label>
+                <Select value={assessmentDifficulty} onChange={(e) => setAssessmentDifficulty(e.target.value)} className="min-w-[16rem]">
+                  <option value="">Auto (derived from résumé claims)</option>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </Select>
+              </div>
+              <Button onClick={handleSendAssessment} loading={assessmentBusy}>
+                <Send className="h-4 w-4" /> Send assessment
+              </Button>
+              <Button variant="secondary" onClick={handleSkipAssessment} disabled={assessmentBusy}>
+                Skip to AI interview
+              </Button>
+              <p className="w-full text-xs text-slate-400">
+                Both choices are recorded as your decision. A skip goes through today's normal interview invitation — it never reads
+                as missing data and costs nothing.
+              </p>
+            </div>
+          )}
+
+          {/* Honest skip rendering — a decision, never a gap */}
+          {assessment?.decision?.action === "skipped" && (
+            <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+              Assessment: <strong>skipped by recruiter decision</strong> — {assessment.decision.byName},{" "}
+              {new Date(assessment.decision.at).toLocaleString()}. Not required for this candidate; this is not missing data and
+              carries no penalty.
+            </div>
+          )}
+
+          {assessment?.session && (
+            <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xs text-slate-400">Status</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{assessment.session.status}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xs text-slate-400">Assigned by</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {assessment.session.assignment?.assignedByName} ({assessment.session.assignment?.mode})
+                  </p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xs text-slate-400">Difficulty tier</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{assessment.session.difficultyTier?.value || "—"}</p>
+                  <p className="text-xs text-slate-400">{assessment.session.difficultyTier?.basis}</p>
+                </div>
+              </div>
+              {assessment.session.result?.scoredAt && (
+                <div className="rounded-xl border border-slate-200 p-3">
+                  <p className="text-sm font-semibold text-slate-800">
+                    Result: {assessment.session.result.totalCorrect}/{assessment.session.result.totalItems} correct
+                    {assessment.session.result.completedBy === "expiry" && (
+                      <Badge tone="amber">partial — closed by expiry</Badge>
+                    )}
+                  </p>
+                  <div className="mt-2 space-y-1 text-xs text-slate-500">
+                    {(assessment.session.result.perCriterion || []).map((c) => (
+                      <p key={c.criterionId}>
+                        {c.criterionId}: {c.correctCount}/{c.itemCount}
+                      </p>
+                    ))}
+                  </div>
+                  {(assessment.session.result.claimVerdicts || []).length > 0 && (
+                    <div className="mt-2 border-t border-slate-100 pt-2 text-xs text-slate-500">
+                      <p className="font-semibold text-slate-600">Résumé-claim verdicts (targeted items):</p>
+                      {assessment.session.result.claimVerdicts.map((v) => (
+                        <p key={v.claimId}>
+                          {v.claimId}: <strong>{v.verdict}</strong> — {v.correctCount}/{v.itemCount} targeted items correct
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    Scored deterministically (key-match, scorer {assessment.session.result.scorerVersion}); reproducibility{" "}
+                    {String(assessment.session.result.reproducibilityHash || "").slice(0, 12)}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </Section>
+      )}
 
       {/* AI interview link — resend / reschedule */}
       {session && (
@@ -631,18 +846,54 @@ export default function CandidateDetail() {
         </Section>
       )}
 
+      {autofill?.used && (
+        <Section title="How this application was filled in">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="flex items-start gap-2">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                This candidate used résumé autofill. {autofill.accepted} suggestion
+                {autofill.accepted === 1 ? " was" : "s were"} accepted as-is, {autofill.edited} edited, and{" "}
+                {autofill.discarded} discarded, out of {autofill.suggested} offered. They attested that the details are
+                accurate on {formatWhen(autofill.attestedAt)}.
+              </span>
+            </p>
+            <p className="mt-3 border-t border-amber-200 pt-3 text-xs">
+              Fields tagged <strong>From résumé</strong> below were read out of the attached document, so they are{" "}
+              <strong>not independent corroboration of it</strong> — treat them as the résumé restated, not a second
+              source. Fields tagged <strong>edited</strong> differ from what the document says; the quoted source is
+              shown so you can compare.
+            </p>
+            {typeof autofill.scoreDelta === "number" && (
+              <p className="mt-3 border-t border-amber-200 pt-3 text-xs">
+                Screening score attributable to accepted suggestions:{" "}
+                <strong>
+                  {autofill.scoreDelta > 0 ? "+" : ""}
+                  {autofill.scoreDelta} point{Math.abs(autofill.scoreDelta) === 1 ? "" : "s"}
+                </strong>
+                . Recorded for transparency, not subtracted — the candidate attested to these fields.
+              </p>
+            )}
+          </div>
+        </Section>
+      )}
+
       <Section title="Experience">
         {experience.length === 0 && <p className="text-sm text-slate-400">—</p>}
         <div className="space-y-3">
           {experience.map((exp, i) => (
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-4" key={i}>
-              <p className="font-semibold text-slate-800">
-                {exp.role} @ {exp.company}
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-semibold text-slate-800">
+                  {exp.role} @ {exp.company}
+                </p>
+                <ProvenanceTag provenance={exp.provenance} />
+              </div>
               <p className="text-xs text-slate-400">
                 {exp.startDate} — {exp.currentlyWorking ? "Present" : exp.endDate}
               </p>
               {exp.description && <p className="mt-2 text-sm text-slate-600">{exp.description}</p>}
+              <ProvenanceSource provenance={exp.provenance} />
             </div>
           ))}
         </div>
@@ -653,13 +904,17 @@ export default function CandidateDetail() {
         <div className="space-y-3">
           {education.map((edu, i) => (
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-4" key={i}>
-              <p className="font-semibold text-slate-800">
-                {edu.degree}
-                {edu.fieldOfStudy ? ` in ${edu.fieldOfStudy}` : ""} — {edu.institution}
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-semibold text-slate-800">
+                  {edu.degree}
+                  {edu.fieldOfStudy ? ` in ${edu.fieldOfStudy}` : ""} — {edu.institution}
+                </p>
+                <ProvenanceTag provenance={edu.provenance} />
+              </div>
               <p className="text-xs text-slate-400">
                 {edu.startYear} — {edu.endYear} {edu.grade && `· Grade: ${edu.grade}`}
               </p>
+              <ProvenanceSource provenance={edu.provenance} />
             </div>
           ))}
         </div>
@@ -670,9 +925,15 @@ export default function CandidateDetail() {
           <p className="text-sm text-slate-400">—</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">
-            {skills.map((s, i) => (
-              <Badge key={i}>{s}</Badge>
-            ))}
+            {skills.map((s, i) => {
+              const fromResume = skillSources.get(String(s).trim().toLowerCase()) === "autofill_accepted";
+              return (
+                <Badge key={i} tone={fromResume ? "amber" : "slate"}>
+                  {fromResume && <Sparkles className="mr-1 inline h-3 w-3" />}
+                  {s}
+                </Badge>
+              );
+            })}
           </div>
         )}
       </Section>
@@ -682,7 +943,10 @@ export default function CandidateDetail() {
         <div className="space-y-3">
           {projects.map((proj, i) => (
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-4" key={i}>
-              <p className="font-semibold text-slate-800">{proj.title}</p>
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-semibold text-slate-800">{proj.title}</p>
+                <ProvenanceTag provenance={proj.provenance} />
+              </div>
               {proj.techStack && <p className="text-xs text-slate-400">Tech: {proj.techStack}</p>}
               {proj.description && <p className="mt-2 text-sm text-slate-600">{proj.description}</p>}
               {proj.link && (
@@ -690,6 +954,7 @@ export default function CandidateDetail() {
                   {proj.link}
                 </a>
               )}
+              <ProvenanceSource provenance={proj.provenance} />
             </div>
           ))}
         </div>
@@ -700,7 +965,10 @@ export default function CandidateDetail() {
         <div className="space-y-3">
           {certificates.map((cert, i) => (
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-4" key={i}>
-              <p className="font-semibold text-slate-800">{cert.name}</p>
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-semibold text-slate-800">{cert.name}</p>
+                <ProvenanceTag provenance={cert.provenance} />
+              </div>
               <p className="text-xs text-slate-400">
                 {cert.issuer} {cert.issueDate && `· ${cert.issueDate}`}
               </p>
@@ -709,6 +977,7 @@ export default function CandidateDetail() {
                   {cert.credentialUrl}
                 </a>
               )}
+              <ProvenanceSource provenance={cert.provenance} />
             </div>
           ))}
         </div>

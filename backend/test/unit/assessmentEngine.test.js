@@ -1,0 +1,292 @@
+// Assessment engine guardrails (ASSESSMENT-ENGINE-PLAN A1–A3). Everything here
+// runs offline: the scorer/assembly/tiering are pure by design, the frozen guard
+// is an exported checker, and the candidate serializer is a pure function — so
+// the plan's pinned invariants (key never leaves the server, reproducibility,
+// verdict rules, tier identity under counterfactuals, no unassigned sessions)
+// are assertable without a DB.
+
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const mongoose = require("mongoose");
+
+const scorer = require("../../utils/assessmentScorer");
+const assembly = require("../../utils/assessmentAssembly");
+const AssessmentPaper = require("../../models/AssessmentPaper");
+const AssessmentSession = require("../../models/AssessmentSession");
+const { buildSolverPrompt } = require("../../utils/assessmentPrompts");
+const { solverAgreesWithKey } = require("../../services/itemGenService");
+const assessmentService = require("../../services/assessmentService");
+
+function paperFixture() {
+  return {
+    version: 1,
+    difficultyPolicy: { mode: "claim_tiered", fixedTier: "medium" },
+    sections: [
+      { id: "s1", title: "Core", criterionIds: ["c1"], servedItemCount: 2, poolItemCount: 4, timeLimitSec: 300 },
+    ],
+    items: [
+      { id: "i1", sectionId: "s1", criterionId: "c1", type: "mcq_single", status: "active", difficulty: "hard",
+        stem: "Q1", options: [{ id: "a", text: "A" }, { id: "b", text: "B" }, { id: "c", text: "C" }, { id: "d", text: "D" }],
+        key: { optionIds: ["b"] } },
+      { id: "i2", sectionId: "s1", criterionId: "c1", type: "numeric", status: "active", difficulty: "hard",
+        stem: "Q2", options: [], key: { value: 42, tolerance: 0.5 } },
+      { id: "i3", sectionId: "s1", criterionId: "c1", type: "ordering", status: "active", difficulty: "medium",
+        stem: "Q3", options: [{ id: "a", text: "1" }, { id: "b", text: "2" }, { id: "c", text: "3" }, { id: "d", text: "4" }],
+        key: { order: ["c", "a", "d", "b"] } },
+      { id: "i4", sectionId: "s1", criterionId: "c1", type: "mcq_multi", status: "active", difficulty: "easy",
+        stem: "Q4", options: [{ id: "a", text: "A" }, { id: "b", text: "B" }, { id: "c", text: "C" }, { id: "d", text: "D" }],
+        key: { optionIds: ["a", "c"] } },
+    ],
+  };
+}
+
+function assembledAll(paper) {
+  return paper.items.map((it, i) => ({
+    itemId: it.id,
+    sectionId: it.sectionId,
+    order: i,
+    optionOrder: (it.options || []).map((o) => o.id),
+  }));
+}
+
+// --- Scorer (A2.6): pure key-match, all four types ---------------------------
+
+test("scorer: correct answers score correct for every item type", () => {
+  const paper = paperFixture();
+  const result = scorer.scoreSession({
+    paper,
+    assembledItems: assembledAll(paper),
+    responses: [
+      { itemId: "i1", response: ["b"] },
+      { itemId: "i2", response: 42.4 }, // inside tolerance
+      { itemId: "i3", response: ["c", "a", "d", "b"] },
+      { itemId: "i4", response: ["c", "a"] }, // order-independent set
+    ],
+  });
+  assert.equal(result.totalCorrect, 4);
+});
+
+test("scorer: wrong/partial answers never score (no partial credit in v1)", () => {
+  const paper = paperFixture();
+  const result = scorer.scoreSession({
+    paper,
+    assembledItems: assembledAll(paper),
+    responses: [
+      { itemId: "i1", response: ["a"] },
+      { itemId: "i2", response: 43.1 }, // outside tolerance
+      { itemId: "i3", response: ["a", "c", "d", "b"] },
+      { itemId: "i4", response: ["a"] }, // subset of the key set
+    ],
+  });
+  assert.equal(result.totalCorrect, 0);
+});
+
+test("scorer: empty responses hit the floor, never crash", () => {
+  const paper = paperFixture();
+  const result = scorer.scoreSession({ paper, assembledItems: assembledAll(paper), responses: [] });
+  assert.equal(result.totalCorrect, 0);
+  assert.equal(result.totalItems, 4);
+  assert.ok(result.perItem.every((p) => p.answered === false));
+});
+
+test("scorer: reproducibilityHash is stable across runs and response order (A2 gate)", () => {
+  const paper = paperFixture();
+  const responses = [
+    { itemId: "i1", response: ["b"] },
+    { itemId: "i2", response: 42 },
+  ];
+  const a = scorer.scoreSession({ paper, assembledItems: assembledAll(paper), responses });
+  const b = scorer.scoreSession({ paper, assembledItems: assembledAll(paper), responses: [...responses].reverse() });
+  assert.equal(a.reproducibilityHash, b.reproducibilityHash);
+});
+
+test("scorer: monotonicity — an added correct answer never lowers a criterion", () => {
+  const paper = paperFixture();
+  const base = scorer.scoreSession({
+    paper,
+    assembledItems: assembledAll(paper),
+    responses: [{ itemId: "i1", response: ["b"] }],
+  });
+  const more = scorer.scoreSession({
+    paper,
+    assembledItems: assembledAll(paper),
+    responses: [{ itemId: "i1", response: ["b"] }, { itemId: "i2", response: 42 }],
+  });
+  const c1base = base.perCriterion.find((c) => c.criterionId === "c1");
+  const c1more = more.perCriterion.find((c) => c.criterionId === "c1");
+  assert.ok(c1more.correctCount >= c1base.correctCount);
+});
+
+// --- Claim verdicts (A3.2): deterministic rule, contradiction never auto-acts -
+
+test("claim verdicts: all correct → verified; majority incorrect → contradicted; else inconclusive", () => {
+  const paper = paperFixture();
+  const assembled = assembledAll(paper).map((a) => ({ ...a, targetsClaimId: "cl1" }));
+
+  const allRight = scorer.scoreSession({
+    paper, assembledItems: assembled,
+    responses: [
+      { itemId: "i1", response: ["b"] }, { itemId: "i2", response: 42 },
+      { itemId: "i3", response: ["c", "a", "d", "b"] }, { itemId: "i4", response: ["a", "c"] },
+    ],
+  });
+  assert.equal(scorer.claimVerdicts({ paper, assembledItems: assembled, perItem: allRight.perItem })[0].verdict, "verified");
+
+  const allWrong = scorer.scoreSession({ paper, assembledItems: assembled, responses: [] });
+  assert.equal(scorer.claimVerdicts({ paper, assembledItems: assembled, perItem: allWrong.perItem })[0].verdict, "contradicted");
+
+  const half = scorer.scoreSession({
+    paper, assembledItems: assembled,
+    responses: [{ itemId: "i1", response: ["b"] }, { itemId: "i2", response: 42 }],
+  });
+  assert.equal(scorer.claimVerdicts({ paper, assembledItems: assembled, perItem: half.perItem })[0].verdict, "inconclusive");
+});
+
+// --- Tier derivation (A3.0): code over claims, override wins, counterfactual identity
+
+test("tier: senior claims → hard, junior → easy, recruiter override beats both (A3 gate)", () => {
+  const senior = assembly.deriveTierFromClaims([{ normalized: { years: 8, level: "Senior Engineer" } }]);
+  assert.equal(senior.value, "hard");
+  assert.ok(senior.basis.length > 0, "tier carries a human-readable basis");
+
+  const junior = assembly.deriveTierFromClaims([{ normalized: { years: 0 } }]);
+  assert.equal(junior.value, "easy");
+
+  const paper = paperFixture();
+  const overridden = assembly.resolveTier({ paper, claims: [{ normalized: { years: 9 } }], recruiterOverride: "easy" });
+  assert.equal(overridden.value, "easy");
+  assert.equal(overridden.source, "recruiter_override");
+});
+
+test("tier: counterfactual variants tier identically — only years/level matter (release blocker)", () => {
+  const a = assembly.deriveTierFromClaims([
+    { subject: "Priya Sharma", object: "React at Infosys", normalized: { years: 8, level: "senior" } },
+  ]);
+  const b = assembly.deriveTierFromClaims([
+    { subject: "John Smith", object: "React at Google", normalized: { years: 8, level: "senior" } },
+  ]);
+  assert.deepEqual({ value: a.value }, { value: b.value });
+});
+
+test("tier: no claim graph degrades to the paper's fixed tier, labelled (A3 guardrail)", () => {
+  const paper = paperFixture();
+  const tier = assembly.resolveTier({ paper, claims: null });
+  assert.equal(tier.source, "paper_fixed");
+  assert.match(tier.basis, /labelled degradation|fixed/);
+});
+
+// --- Assembly (A2.2/A3.1): seeded, tier-respecting, structure-bounded --------
+
+test("assembly: deterministic per session, varies across sessions, respects the tier", () => {
+  const paper = paperFixture();
+  const args = { paper, sessionId: "sess1", tier: "hard", targetClaims: [{ claimId: "cl1", criterionId: "c1" }] };
+  const a = assembly.assemble(args);
+  const b = assembly.assemble(args);
+  assert.deepEqual(a, b);
+  assert.equal(a.length, 2, "never exceeds the paper's served structure");
+  const difficulties = a.map((x) => paper.items.find((i) => i.id === x.itemId).difficulty);
+  assert.ok(difficulties.every((d) => d === "hard"), "hard tier exhausts the hard pool first");
+  assert.ok(a.every((x) => x.targetsClaimId === "cl1"), "targeting is recorded per item");
+});
+
+test("assembly: retired and flagged items are never served", () => {
+  const paper = paperFixture();
+  paper.items[0].status = "retired";
+  paper.items[1].status = "flagged";
+  const out = assembly.assemble({ paper, sessionId: "s", tier: "hard", targetClaims: [] });
+  const served = new Set(out.map((x) => x.itemId));
+  assert.ok(!served.has("i1") && !served.has("i2"));
+});
+
+// --- The key never leaves the server (A2 gate) -------------------------------
+
+test("serializer: candidate item payload contains no key anywhere", () => {
+  const paper = paperFixture();
+  const session = {
+    assembledItems: assembledAll(paper),
+    responses: [{ itemId: "i1", response: ["b"], markedForReview: false }],
+  };
+  const payload = assessmentService.itemsPayload(session, paper, "s1");
+  assert.ok(payload.length > 0);
+  const json = JSON.stringify(payload);
+  assert.ok(!/"key"/.test(json), "no key field in any candidate item payload");
+  assert.ok(!/"optionIds"/.test(json) && !/"tolerance"/.test(json), "no key fragments either");
+});
+
+test("solver prompt is built from stem+options only and never mentions a key", () => {
+  const prompt = buildSolverPrompt({
+    type: "mcq_single",
+    stem: "What is X?",
+    options: [{ id: "a", text: "one" }, { id: "b", text: "two" }],
+  });
+  assert.ok(!/key/i.test(prompt));
+  assert.ok(prompt.includes("What is X?"));
+});
+
+// --- Blind-solve agreement checks are code, not a model ----------------------
+
+test("solverAgreesWithKey: exact set/sequence/tolerance semantics", () => {
+  assert.ok(solverAgreesWithKey("mcq_single", { optionIds: ["b"] }, { answerOptionIds: ["B"] }), "case-insensitive ids");
+  assert.ok(!solverAgreesWithKey("mcq_single", { optionIds: ["b"] }, { answerOptionIds: ["a"] }));
+  assert.ok(solverAgreesWithKey("mcq_multi", { optionIds: ["a", "c"] }, { answerOptionIds: ["c", "a"] }));
+  assert.ok(!solverAgreesWithKey("mcq_multi", { optionIds: ["a", "c"] }, { answerOptionIds: ["a"] }));
+  assert.ok(solverAgreesWithKey("numeric", { value: 42, tolerance: 0.5 }, { answerValue: 42.3 }));
+  assert.ok(!solverAgreesWithKey("numeric", { value: 42, tolerance: 0.5 }, { answerValue: 43 }));
+  assert.ok(solverAgreesWithKey("ordering", { order: ["c", "a"] }, { answerOptionIds: ["c", "a"] }));
+  assert.ok(!solverAgreesWithKey("ordering", { order: ["c", "a"] }, { answerOptionIds: ["a", "c"] }));
+});
+
+// --- Frozen paper immutability (A1 gate, same law as RoleRubric) -------------
+
+test("frozen paper: content mutations rejected; archive, retire, exposure allowed", () => {
+  const fv = AssessmentPaper.frozenViolation;
+  assert.equal(fv(false, ["items.0.stem"], "draft", []), null, "drafts are freely editable");
+  assert.match(fv(true, ["items.0.stem"], "approved", []) || "", /frozen/);
+  assert.match(fv(true, ["sections"], "approved", []) || "", /frozen/);
+  assert.equal(fv(true, ["status"], "archived", []), null);
+  assert.match(fv(true, ["status"], "draft", []) || "", /archived/);
+  assert.equal(fv(true, ["items", "items.0.status"], "approved", [{ from: "active", to: "retired" }]), null);
+  assert.match(fv(true, ["items", "items.0.status"], "approved", [{ from: "flagged", to: "active" }]) || "", /retired/);
+  assert.equal(fv(true, ["items", "items.0.exposure.serves"], "approved", []), null, "telemetry counters are permitted");
+});
+
+// --- No session without an assignment (A2 guardrail) -------------------------
+
+test("AssessmentSession schema requires the recruiter assignment", () => {
+  const base = {
+    candidate: new mongoose.Types.ObjectId(),
+    job: new mongoose.Types.ObjectId(),
+    company: new mongoose.Types.ObjectId(),
+    paper: new mongoose.Types.ObjectId(),
+    paperVersion: 1,
+    tokenHash: "x".repeat(64),
+    validFrom: new Date(),
+    startDeadline: new Date(),
+    expiresAt: new Date(),
+  };
+  const unassigned = new AssessmentSession(base);
+  assert.ok(unassigned.validateSync(), "a session with no assignment must not validate");
+
+  const assigned = new AssessmentSession({
+    ...base,
+    assignment: { assignedByName: "Recruiter", at: new Date(), mode: "manual" },
+  });
+  assert.equal(assigned.validateSync(), undefined);
+});
+
+// --- Item criterion linkage is schema-required (rule 3) ----------------------
+
+test("an item without a criterionId cannot exist on a paper", () => {
+  const paper = new AssessmentPaper({
+    job: new mongoose.Types.ObjectId(),
+    company: new mongoose.Types.ObjectId(),
+    rubric: new mongoose.Types.ObjectId(),
+    rubricVersion: 1,
+    version: 1,
+    compiledBy: { engine: "ai", at: new Date() },
+    sections: [{ id: "s1", title: "Core", criterionIds: ["c1"], servedItemCount: 2, poolItemCount: 4, timeLimitSec: 300 }],
+    items: [{ id: "i1", sectionId: "s1", type: "mcq_single", stem: "Q", options: [], key: { optionIds: ["a"] }, difficulty: "easy" }],
+  });
+  const err = paper.validateSync();
+  assert.ok(err && /criterionId/.test(String(err)), "criterionId is schema-required on every item");
+});

@@ -12,7 +12,7 @@ const {
   publishBoards,
   withdrawBoard,
 } = require("../controllers/jobController");
-const { applyToJob, listCandidatesForJob } = require("../controllers/candidateController");
+const { applyToJob, autofillFromResume, listCandidatesForJob } = require("../controllers/candidateController");
 const upload = require("../middleware/upload");
 const { createLimiter } = require("../middleware/rateLimit");
 const { requireAuth, optionalAuth, requireRole, requireActiveCompany, requireActiveSubscription } = require("../middleware/auth");
@@ -42,6 +42,22 @@ const applyLimiter = createLimiter({
   message: "Too many applications in a short time — please wait a few minutes and try again.",
 });
 router.post("/:id/apply", requireCandidate, applyLimiter, upload.single("resume"), applyToJob);
+
+// Autofill is an LLM call over a file the CALLER controls, so it is the easiest
+// cost-amplification target on the candidate side: upload, parse, abandon,
+// repeat. Bounded per account and set well above honest use (re-reading a form,
+// swapping résumé versions, applying to several roles in one sitting) — the
+// per-résumé cache means a candidate doing any of those normally spends one
+// call, not one per attempt.
+const autofillLimiter = createLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  prefix: "rl:autofill:",
+  keyGenerator: (req) => String(req.user?._id || req.ip),
+  message: "Too many autofill requests — please wait a little and try again, or fill the form in manually.",
+});
+router.post("/:id/apply/autofill", requireCandidate, autofillLimiter, autofillFromResume);
+
 router.get("/:id/candidates", requireAdmin, listCandidatesForJob);
 
 // Phase 15 — multi-board publishing (mutations gated on an active subscription).

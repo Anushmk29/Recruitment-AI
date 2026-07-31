@@ -115,7 +115,12 @@ async function runSelfConsistency({ rubric, claims, company }) {
     system: MATCH_SYSTEM,
     prompt: matchPrompt({ criteria: rubric.criteria || [], claims }),
     schema: MATCH_SCHEMA,
-    maxTokens: 4096,
+    // Must mirror evidenceMatcher exactly: this re-runs the SAME match call N
+    // times to measure agreement. A tighter cap here would make samples truncate
+    // where the real matcher didn't, turning a config artefact into fake
+    // "disagreement" — and disagreement routes candidates to humans (rule 4).
+    maxTokens: 8192,
+    timeoutMs: llm.heavyTimeoutMs(),
     model: resolved.model,
     temperature: 0,
     promptVersion: MATCH_PROMPT_VERSION,

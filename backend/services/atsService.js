@@ -57,7 +57,40 @@ async function getResumeIngest(candidate) {
 
 // The ATS-pass side effects, shared with the review queue's "advance"
 // resolution so a human decision produces exactly the machine-pass pathway.
+//
+// The recruiter gate (ASSESSMENT-ENGINE-PLAN A2.3): when the job runs
+// `assessmentPolicy: manual`, an ATS pass PARKS the candidate at ats_passed —
+// the recruiter decides "Send assessment" or "Skip to AI interview" from the
+// awaiting-decision queue. `auto` (drives) assigns the assessment immediately.
+// `off` (the default for every existing job) is byte-identical to before.
 async function advanceAfterAtsPass(candidate, job, score) {
+  const assessmentPaperService = require("./assessmentPaperService");
+  const gateActive =
+    assessmentPaperService.engineEnabled() &&
+    ["manual", "auto"].includes(job.assessmentPolicy) &&
+    (await assessmentPaperService.getActivePaper(job._id, job.company));
+
+  if (gateActive) {
+    if (candidate.status === "applied") {
+      appendStageHistory(candidate, "ats_passed");
+      candidate.status = "ats_passed";
+      await candidate.save();
+    }
+    if (job.assessmentPolicy === "auto") {
+      try {
+        await require("./assessmentService").autoAssignAfterAtsPass(candidate, job);
+      } catch (err) {
+        // Fail open to the awaiting-decision queue: a candidate must never be
+        // lost because auto-assignment hiccuped.
+        console.error(`[ats] auto assessment assignment failed for candidate ${candidate._id}: ${err.message}`);
+        await notifyAwaitingDecision(candidate, job);
+      }
+    } else {
+      await notifyAwaitingDecision(candidate, job);
+    }
+    return;
+  }
+
   if (candidate.status === "applied") {
     appendStageHistory(candidate, "ats_passed");
     candidate.status = "interview_scheduled";
@@ -69,6 +102,40 @@ async function advanceAfterAtsPass(candidate, job, score) {
     { upsert: true, new: true }
   );
   await createInterviewSessionIfNeeded(candidate, job);
+}
+
+async function notifyAwaitingDecision(candidate, job) {
+  try {
+    await notifyAdmin({
+      companyId: job.company,
+      type: "assessment_decision_needed",
+      title: "Candidate awaiting your decision",
+      message: `${candidate.basicDetails.name} passed screening for ${job.title}. Send the skills assessment, or skip straight to the AI interview.`,
+      meta: { candidateId: candidate._id, jobId: job._id },
+    });
+  } catch (err) {
+    console.error("[ats] awaiting-decision notification failed:", err.message);
+  }
+}
+
+// A shadow copy of the candidate with every field they accepted VERBATIM from
+// autofill removed, for the counterfactual score. Edited suggestions stay: an
+// edit is the candidate's own act, and the resulting entry is theirs. Only the
+// shape atsEngine reads is rebuilt — this object is never persisted.
+function withoutAcceptedSuggestions(candidate) {
+  const typed = (entry) => entry?.provenance?.source !== "autofill_accepted";
+  const acceptedSkills = new Set(
+    (candidate.skillProvenance || [])
+      .filter((s) => s.source === "autofill_accepted")
+      .map((s) => String(s.value).trim().toLowerCase())
+  );
+  return {
+    experience: (candidate.experience || []).filter(typed),
+    education: (candidate.education || []).filter(typed),
+    projects: (candidate.projects || []).filter(typed),
+    certificates: (candidate.certificates || []).filter(typed),
+    skills: (candidate.skills || []).filter((s) => !acceptedSkills.has(String(s).trim().toLowerCase())),
+  };
 }
 
 async function openReviewItem(candidate, job, assessment, reasons, summary) {
@@ -121,6 +188,26 @@ async function runAtsForCandidate(candidate, job) {
   candidate.hostility = resumeDefenseService.analyze(ingest);
 
   const legacyResult = computeAtsScore(job, candidate, resumeText);
+
+  // How much of this score rests on suggestions the candidate accepted verbatim
+  // rather than wrote. Four of the six deterministic components (experience,
+  // education, projects, certifications) read ONLY the structured form fields —
+  // they do not fall back to the résumé text — so a candidate who used autofill
+  // arrives with those populated where an identical candidate who typed nothing
+  // arrives with zeros. That completeness bias predates autofill and belongs to
+  // the evidence engine to fix properly; what we will not do is let autofill
+  // amplify it INVISIBLY. The delta is recorded, never subtracted: the candidate
+  // attested to the fields, so they are legitimately theirs — but a recruiter
+  // and an auditor can both now see the dependency instead of inferring it.
+  if (candidate.autofill?.used) {
+    try {
+      candidate.autofill.scoreDelta =
+        legacyResult.overallScore - computeAtsScore(job, withoutAcceptedSuggestions(candidate), resumeText).overallScore;
+    } catch (err) {
+      console.warn(`[ats] could not compute autofill score delta for candidate ${candidate._id}: ${err.message}`);
+    }
+  }
+
   const settings = await CompanySettings.findOne({ company: job.company }).select("compliance ai");
   const engineMode = evidenceAtsService.resolveEngineMode(settings);
 
@@ -169,6 +256,23 @@ async function runAtsForCandidate(candidate, job) {
         });
       } else if (err.code !== "NO_APPROVED_RUBRIC" && err.code !== "CLAIM_ENGINE_DISABLED") {
         console.warn(`[ats] evidence engine unavailable for candidate ${candidate._id} (${err.code || err.message}); using legacy`);
+        // Rule 5: a degraded path must be visible where it surfaces. In LIVE mode
+        // this is a tenant who bought evidence scoring, approved a rubric, and is
+        // silently being served keyword scores — previously only a console.warn,
+        // which is how it ran unnoticed on every application. The recruiter is
+        // told, and told that Rescore is the retry.
+        if (engineMode === "live") {
+          await notifyAdmin({
+            companyId: job.company,
+            type: "system_alert",
+            title: "Evidence scoring failed — keyword fallback used",
+            message:
+              `${candidate.basicDetails.name}'s screening for ${job.title} could not run the evidence engine ` +
+              `(${err.code || err.message}), so the score shown is the legacy keyword match, NOT rubric-based. ` +
+              `Use "Rescore" on the candidate to retry once the cause is cleared.`,
+            meta: { candidateId: candidate._id, jobId: job._id, reason: err.code || err.message },
+          }).catch((e) => console.error("Could not send evidence-fallback alert:", e.message));
+        }
       }
       if (engineMode === "live") effective = { ...legacyResult, engine: "fallback-legacy" };
     }

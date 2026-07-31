@@ -36,6 +36,15 @@ function baseUrl() {
 function timeoutMs() {
   return Number(process.env.LLM_TIMEOUT_MS) || 30000;
 }
+// Extraction-class calls (whole-résumé ClaimGraph, rubric × claim matching) emit
+// thousands of JSON tokens and legitimately run past a minute — measured ~75s for
+// a 9k-char résumé at 16k max_tokens. They must NOT share the interactive default:
+// a 30s ceiling made every one of them abort mid-stream, so the evidence engine
+// silently degraded to the legacy keyword scorer on every single application.
+// Call sites opt in explicitly via generateJSON({ timeoutMs: heavyTimeoutMs() }).
+function heavyTimeoutMs() {
+  return Number(process.env.LLM_TIMEOUT_HEAVY_MS) || 180000;
+}
 function maxRetries() {
   // `|| 2` would swallow an explicit 0 — zero retries is a legitimate setting.
   const raw = process.env.LLM_MAX_RETRIES;
@@ -178,7 +187,8 @@ function parseJson(content) {
 }
 
 // One attempt. Throws with `.retryable` set so the retry loop knows what to do.
-async function attempt({ system, prompt, schema, maxTokens, model, temperature }) {
+async function attempt({ system, prompt, schema, maxTokens, model, temperature, timeoutMs: callTimeoutMs }) {
+  const budget = callTimeoutMs || timeoutMs();
   const body = {
     model: model || MODEL,
     max_tokens: maxTokens,
@@ -197,17 +207,28 @@ async function attempt({ system, prompt, schema, maxTokens, model, temperature }
   }
 
   let res;
+  let data;
   try {
     res = await fetch(`${baseUrl()}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey()}`, "Content-Type": "application/json", ...extraHeaders() },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs()),
+      signal: AbortSignal.timeout(budget),
     });
+    // The abort covers the WHOLE exchange, not just the headers. A long
+    // generation returns headers in ~2s and then streams the body for another
+    // minute, so the timeout almost always fires inside the body read — which
+    // must therefore sit INSIDE this try. When it didn't, the raw DOMException
+    // ("The operation was aborted due to timeout", code 23) escaped without
+    // `.retryable`, so the retry loop skipped it, the breaker never counted it,
+    // and callers saw an unclassifiable error instead of a timeout.
+    if (res.ok) data = await res.json();
   } catch (err) {
-    // Network error or timeout (AbortError) — always retryable.
-    const e = new Error(err.name === "TimeoutError" ? `LLM request timed out after ${timeoutMs()}ms` : `LLM request failed: ${err.message}`);
+    // Network error or timeout (Timeout/AbortError) — always retryable.
+    const timedOut = err.name === "TimeoutError" || err.name === "AbortError";
+    const e = new Error(timedOut ? `LLM request timed out after ${budget}ms` : `LLM request failed: ${err.message}`);
     e.retryable = true;
+    if (timedOut) e.code = "LLM_TIMEOUT";
     throw e;
   }
 
@@ -220,14 +241,26 @@ async function attempt({ system, prompt, schema, maxTokens, model, temperature }
     throw e;
   }
 
-  const data = await res.json();
   if (data.error) {
     const e = new Error(`OpenRouter error: ${data.error.message || JSON.stringify(data.error)}`);
     e.retryable = false;
     throw e;
   }
-  const content = data.choices?.[0]?.message?.content;
+  const choice = data.choices?.[0];
+  const content = choice?.message?.content;
   if (!content) throw Object.assign(new Error("LLM returned no content"), { retryable: false });
+
+  // Truncation is a CONFIGURATION fault (maxTokens too low for this input), not a
+  // model defect. Left undetected it reaches parseJson as a half-written object
+  // and reports "LLM response was not valid JSON", which sends debugging after
+  // the wrong thing entirely. Name it precisely instead. Not retryable: an
+  // identical retry truncates at exactly the same place.
+  if (choice.finish_reason === "length" || choice.native_finish_reason === "length") {
+    throw Object.assign(
+      new Error(`LLM output hit the ${maxTokens}-token cap and was truncated before the JSON closed — raise maxTokens for this call site`),
+      { retryable: false, code: "LLM_TRUNCATED" }
+    );
+  }
 
   const u = data.usage || {};
   const usage = {
@@ -254,7 +287,10 @@ function countRequest(outcome, model) {
  * `promptVersion` is part of the cache AND record/replay key — bump it whenever
  * the prompt template changes so stale decisions can never be served (Phase 2.6).
  */
-async function generateJSON({ system, prompt, schema, maxTokens = 768, model, temperature, promptVersion }) {
+async function generateJSON({ system, prompt, schema, maxTokens = 768, model, temperature, promptVersion, timeoutMs: callTimeoutMs }) {
+  // NOTE: `timeoutMs` is deliberately absent from reqShape. It is a transport
+  // deadline, not part of the request's meaning — including it would fragment
+  // the cache and the replay fixtures across pure ops tuning.
   const reqShape = {
     model: model || MODEL,
     system,
@@ -316,7 +352,7 @@ async function generateJSON({ system, prompt, schema, maxTokens = 768, model, te
   let lastErr;
   for (let i = 0; i <= maxRetries(); i++) {
     try {
-      const result = await attempt({ system, prompt, schema, maxTokens, model, temperature });
+      const result = await attempt({ system, prompt, schema, maxTokens, model, temperature, timeoutMs: callTimeoutMs });
       breakerRecordSuccess();
       countRequest("success", reqShape.model);
       metrics.observeHistogram("llm_request_duration_ms", { model: reqShape.model }, Date.now() - t0);
@@ -380,14 +416,14 @@ function defaultPerturb(prompt, i) {
  * Low `agreement` means the INPUT is ambiguous — route it to a human (rule 4),
  * never average conflicting readings into a falsely confident number.
  */
-async function generateJSONEnsemble({ n = 1, system, prompt, schema, maxTokens, model, temperature, promptVersion, perturb }) {
+async function generateJSONEnsemble({ n = 1, system, prompt, schema, maxTokens, model, temperature, promptVersion, perturb, timeoutMs: callTimeoutMs }) {
   const requested = Math.max(1, Math.floor(n));
   const count = ensembleEnabled() ? Math.min(requested, ensembleMaxN()) : 1;
 
   const settled = await Promise.allSettled(
     Array.from({ length: count }, (_, i) => {
       const p = i === 0 ? prompt : (perturb || defaultPerturb)(prompt, i);
-      return generateJSON({ system, prompt: p, schema, maxTokens, model, temperature, promptVersion });
+      return generateJSON({ system, prompt: p, schema, maxTokens, model, temperature, promptVersion, timeoutMs: callTimeoutMs });
     })
   );
 
@@ -422,6 +458,7 @@ module.exports = {
   isEnabled,
   generateJSON,
   generateJSONEnsemble,
+  heavyTimeoutMs,
   breakerState,
   MODEL,
   requestKey,

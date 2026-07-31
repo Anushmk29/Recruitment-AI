@@ -8,6 +8,23 @@ const deviceCheckSchema = new mongoose.Schema(
     fullscreen: { type: Boolean, default: false },
     deviceCompatible: { type: Boolean, default: false },
     browserInfo: { type: String, trim: true },
+
+    // Audio isolation (barge-in prerequisite). Measured, not guessed from device labels: the
+    // browser plays a test tone while listening on the microphone, so what gets recorded is the
+    // echo path that actually exists AFTER the browser's echo cancellation — the only thing that
+    // determines whether the interviewer can safely keep listening while it speaks.
+    //   isolated     — the mic does not hear the output. Interruption is safe.
+    //   bleeding     — the mic clearly hears the output (laptop speakers). Interruption would make
+    //                  the interviewer interrupt ITSELF, so it stays off for this session.
+    //   inconclusive — could not measure. Fails closed to "off".
+    // NEVER a blocker: a candidate with no headphones simply gets the turn-based interview, which
+    // is the same interview everyone got before this existed. Blocking them would be a fairness
+    // problem dressed up as a quality bar.
+    echoPath: { type: String, enum: ["isolated", "bleeding", "inconclusive"], default: "inconclusive" },
+    echoRatio: { type: Number }, // measured tone-to-baseline mic level, for diagnosing complaints
+    audioOutputConfirmed: { type: Boolean, default: false }, // the candidate said they heard the tone
+    bargeInEligible: { type: Boolean, default: false },
+
     completedAt: { type: Date },
   },
   { _id: false }
@@ -119,6 +136,22 @@ const interviewTurnSchema = new mongoose.Schema(
     answerScore: { type: Number },
     // Which claim-probe this question addresses (Phase 8), when any.
     probeId: { type: String },
+    // How many times the candidate asked to hear THIS question again (set on the question turn).
+    //
+    // RECORDED, NEVER SCORED — and that exclusion is deliberate, not an oversight. Repeat requests
+    // correlate with accent, hearing, whether English is a first language, and connection quality;
+    // they correlate weakly at best with ability to do the job. Feeding this into any score would
+    // build a disparate-impact machine. It exists so a human reviewing the interview can see the
+    // conditions it ran under, and so "the audio was bad" is evidenced rather than argued.
+    // The repeat replays the same authored text — the same audio bytes — so a candidate who asks
+    // twice hears exactly what everyone else heard once.
+    repeatCount: { type: Number },
+    // Was this question actually finished before the candidate started answering? On devices where
+    // barge-in is enabled they can talk over it, and a question the candidate talked over was not
+    // fully asked — so it must not silently count as having covered its claim-probe. Absent on
+    // typed interviews and on the turn-based voice path, where delivery is complete by definition.
+    deliveredFully: { type: Boolean },
+    interruptedAtChar: { type: Number }, // approximate character offset where they cut in
     // Voice metadata — present on spoken candidate answers (inputMode "voice").
     // (A dead `audioPath` field used to sit here — declared, never written. Removed
     // in Phase 9.6: answer audio is not retained; only the transcript is.)
@@ -126,6 +159,11 @@ const interviewTurnSchema = new mongoose.Schema(
     audioDurationMs: { type: Number },
     transcriptConfidence: { type: Number }, // STT confidence 0-1
     acoustic: { type: acousticSchema },
+    // How many of the interviewer's own backchannel phrases had to be stripped out of this
+    // transcript (utils/backchannel.stripEcho). Normally 0 — the client pauses capture around
+    // playback. A non-zero count means echo suppression is not holding on that device, which
+    // is worth knowing BEFORE it shows up as a strange-looking answer.
+    backchannelEchoRemoved: { type: Number },
     // Per-turn provenance so a mixed AI/fallback interview is auditable turn-by-turn.
     engine: { type: String, enum: ["ai", "fallback"] },
     model: { type: String, trim: true },
@@ -200,6 +238,21 @@ const interviewEvaluationSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// One non-evaluative interviewer utterance: "take your time — I'm here", an acknowledgement, a
+// repeat preamble. Drawn from a fixed human-approved bank (utils/backchannel.js) and recorded
+// here — deliberately OUTSIDE `turns` — because a backchannel is not part of the test
+// instrument. Recorded so the real conditions of the interview are reconstructible; never
+// scored, never counted as a question, never shown to a reviewer as one.
+const backchannelSchema = new mongoose.Schema(
+  {
+    kind: { type: String, enum: ["reassure", "repeat", "acknowledge"], required: true },
+    phrase: { type: String, required: true },
+    turnIndex: { type: Number }, // index in `turns` of the answer this happened during
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 // The text-first AI interview state embedded on the session (1:1 with the
 // candidate). See services/aiInterviewService.js for the orchestration.
 const aiInterviewSchema = new mongoose.Schema(
@@ -217,6 +270,42 @@ const aiInterviewSchema = new mongoose.Schema(
     // are covered AND minQuestions is reached; maxQuestions is the hard ceiling.
     minQuestions: { type: Number, default: 5 },
     maxQuestions: { type: Number, default: 8 },
+    // Non-evaluative interviewer speech, kept out of `turns` on purpose. See backchannelSchema.
+    backchannels: { type: [backchannelSchema], default: () => [] },
+    // Every attempt to make the interviewer say something that was NOT authored by the
+    // rubric-bound engine and was NOT in the approved phrase bank (utils/speechAuthorization.js).
+    // Normally empty, permanently: the allowed set is exactly what this server produced, so an
+    // entry here means a bug or tampering. It is recorded verbatim rather than counted, because
+    // "what did the interviewer say to this candidate?" is the question a discrimination claim
+    // turns on, and a count cannot answer it.
+    speechDivergences: {
+      type: [
+        new mongoose.Schema(
+          {
+            spoken: { type: String, required: true },
+            enforced: { type: Boolean, default: true }, // was it refused, or only recorded?
+            at: { type: Date, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: () => [],
+    },
+    // Which interviewer persona this session ran under (models/PersonaProfile.js). Interviewer
+    // warmth, voice and patience change how candidly candidates answer, so they are part of the
+    // test conditions: comparing two candidates is only legitimate if both were interviewed under
+    // the same ones, and defending a decision means being able to say what they were.
+    // `source: "default"` means the tenant had approved no persona and the deployment fallback
+    // was used — surfaced as such, never passed off as a tenant choice.
+    persona: {
+      key: { type: String, trim: true },
+      version: { type: Number },
+      name: { type: String, trim: true },
+      voiceProvider: { type: String, trim: true },
+      voiceModel: { type: String, trim: true },
+      source: { type: String, enum: ["tenant", "default"] },
+      at: { type: Date },
+    },
     // Claim-probes this interview must cover (Phase 8.2 — required coverage).
     probes: { type: [interviewProbeSchema], default: () => [] },
     probeEngine: { type: String, enum: ["ai", "none"], default: "none" },
@@ -255,6 +344,16 @@ const interviewSessionSchema = new mongoose.Schema(
     voiceConsent: {
       given: { type: Boolean, default: false },
       declined: { type: Boolean, default: false },
+      at: { type: Date },
+    },
+
+    // The exact speech-to-text keyterm vocabulary this session's transcripts were biased with
+    // (utils/keyterms.js). Recorded, NEVER scored: it exists so a candidate who disputes a
+    // transcript can have it reconstructed instead of argued about, and so a bias audit can
+    // confirm every candidate for a role was given the same role-derived vocabulary.
+    voiceAsr: {
+      keyterms: { type: [String], default: [] },
+      model: { type: String, trim: true },
       at: { type: Date },
     },
 

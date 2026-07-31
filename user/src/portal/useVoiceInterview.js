@@ -1,27 +1,90 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import api from "../api/client.js";
 import { authHeader } from "./portalAuth.js";
+import { MIC_CONSTRAINTS } from "./audioIsolation.js";
 
 // Real-time voice pipeline for the AI interview.
 //
-//  - TTS (spoken questions): POST /interview-portal/voice/speak → MP3 (Deepgram Aura, proxied by
-//    our backend so the key stays server-side). Falls back to the browser's SpeechSynthesis if
-//    the proxy is unavailable, so a question is always spoken.
+//  - TTS (spoken questions + the interviewer's backchannels): POST /interview-portal/voice/speak
+//    → MP3 (proxied by our backend so the key stays server-side). Falls back to the browser's
+//    SpeechSynthesis if the proxy is unavailable, so a question is always spoken.
 //  - STT (spoken answers): stream mic audio to Deepgram's WebSocket using a short-lived token
 //    from GET /interview-portal/voice/token. We accumulate the final transcript + confidence and
 //    a couple of cheap delivery measurements (words/min, filler rate); richer prosody is added
-//    server-side later. Turn-end is hands-free: Deepgram's UtteranceEnd (silence for
-//    utterance_end_ms after speech) ends the turn automatically, with a manual "Done" override.
+//    server-side later.
+//  - Turn-taking is hands-free AND conversational: silence no longer ends the turn on a timer.
+//    It first buys the candidate reassurance out loud ("take your time — I'm here") and a much
+//    longer window, and only becomes the end of the turn once that patience is spent. A manual
+//    "Done" override is always available.
+//
+// What the interviewer may SAY is never decided here. The phrases and the timings arrive from
+// the server (backend/utils/backchannel.js — a fixed, human-approved bank); this file owns only
+// the real-time detection of when to use them, because that is the only thing the browser knows.
 //
 // Everything degrades gracefully: if the mic or socket fails, the caller can fall back to typing.
 
 const FILLERS = ["um", "uh", "erm", "hmm", "like", "you know", "sort of", "kind of", "basically", "actually"];
 
-// Visible grace window between "you've gone quiet" and actually ending the turn. Deepgram's
-// utterance_end_ms already waited once (see speechService.js); this is a second, client-owned
-// wait so a candidate who pauses to think has a real chance to keep talking before the answer
-// is treated as final. Cancelled the instant new speech arrives.
+// Final visible window between "you've gone quiet and I've run out of reassurance to offer" and
+// actually ending the turn. Cancelled the instant new speech arrives.
 const ENDING_GRACE_MS = 4000;
+
+// How much transcribed speech during question playback counts as "the candidate is talking to me"
+// rather than a cough, a keyboard click, or a scrap of echo. Low enough to feel instant, high
+// enough that the interviewer doesn't stop mid-word over a noise.
+const BARGE_IN_MIN_CHARS = 4;
+
+// Used only if the server sends no conversational policy (older backend). Reassurance is then
+// OFF rather than improvised locally: the approved phrase bank lives server-side and is the only
+// source of what the interviewer is allowed to say, so the client never invents a phrase.
+function normalizePolicy(c) {
+  const reassurances = Array.isArray(c?.reassurances) ? c.reassurances.filter(Boolean) : [];
+  const acknowledgements = Array.isArray(c?.acknowledgements) ? c.acknowledgements.filter(Boolean) : [];
+  const repeatTriggers = Array.isArray(c?.repeatTriggers) ? c.repeatTriggers.filter(Boolean) : [];
+  const repeatPreambles = Array.isArray(c?.repeatPreambles) ? c.repeatPreambles.filter(Boolean) : [];
+  const num = (v, fallback) => (Number(v) > 0 ? Number(v) : fallback);
+  return {
+    reassurances,
+    acknowledgements,
+    repeatTriggers,
+    repeatPreambles,
+    maxReassurancesPerTurn: reassurances.length ? Math.max(0, Number(c?.maxReassurancesPerTurn ?? 2)) : 0,
+    postReassuranceGraceMs: num(c?.postReassuranceGraceMs, 9000),
+    initialSilenceMs: num(c?.initialSilenceMs, 6000),
+    // No triggers from the server ⇒ repeat-on-request is off. What counts as "please repeat" is
+    // server-owned, exactly like the phrase bank; the client never invents the rule.
+    maxRepeatsPerQuestion: repeatTriggers.length ? Math.max(0, Number(c?.maxRepeatsPerQuestion ?? 3)) : 0,
+    repeatMaxCarryWords: Math.max(0, Number(c?.repeatMaxCarryWords ?? 6)),
+  };
+}
+
+// Mirror of backend/utils/repeatIntent.js — word-sequence matching, not substrings, so "repeat
+// that" doesn't fire on "we had to repeat that migration". The TRIGGERS themselves come from the
+// server; only the matching runs here, because detection has to be instant.
+function detectRepeat(transcript, triggers) {
+  let text = String(transcript || "");
+  let matched = null;
+  // Longest trigger first, matching the server: each match is removed before the next is tried, so
+  // taking a short phrase first would leave a fragment of the request in the candidate's answer.
+  for (const trigger of [...triggers].sort((a, b) => String(b).length - String(a).length)) {
+    const words = String(trigger).toLowerCase().match(/[a-z0-9']+/g) || [];
+    if (!words.length) continue;
+    const re = new RegExp(`\\b${words.map((w) => w.replace(/'/g, "'?")).join("[^a-z0-9]+")}\\b[.,;:!?…]*`, "gi");
+    const next = text.replace(re, " ");
+    if (next !== text) {
+      if (!matched || trigger.length > matched.length) matched = trigger;
+      text = next;
+    }
+  }
+  const remainder = text.replace(/\s+/g, " ").replace(/\s+([,.;:!?])/g, "$1").trim();
+  return {
+    matched: Boolean(matched),
+    remainder,
+    remainderWords: (remainder.match(/[A-Za-z0-9']+/g) || []).length,
+  };
+}
+
+const NO_POLICY = normalizePolicy(null);
 
 function pickMimeType() {
   const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
@@ -61,14 +124,20 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
   const [phase, setPhase] = useState("idle"); // idle | speaking | listening | processing
   const [interim, setInterim] = useState("");
   const [error, setError] = useState("");
-  const [endingSoon, setEndingSoon] = useState(false); // in the grace window, about to auto-submit
+  const [endingSoon, setEndingSoon] = useState(false); // out of reassurance, about to auto-submit
+  // The non-evaluative phrase the interviewer is saying right now, for the UI to show. Never a
+  // question and never part of the transcript — see backend/utils/backchannel.js.
+  const [backchannel, setBackchannel] = useState("");
+  // The interviewer's name for this session, from the tenant's approved persona (or the
+  // deployment default). Arrives with the streaming credential; blank until the mic first opens.
+  const [personaName, setPersonaName] = useState("");
 
   // Latest end-of-turn callback (the caller submits the answer + advances). Kept in a ref so the
   // live WebSocket message handler always calls the current one without reopening the socket.
   const autoEndRef = useRef(onAutoEndOfTurn);
   useEffect(() => { autoEndRef.current = onAutoEndOfTurn; }, [onAutoEndOfTurn]);
   const endedRef = useRef(false); // guards a single auto end-of-turn per answer
-  const graceTimerRef = useRef(null); // pending "ending soon" -> real auto-submit timer
+  const graceTimerRef = useRef(null); // pending silence timer (reassure, or really end the turn)
 
   const wsRef = useRef(null);
   const recorderRef = useRef(null);
@@ -79,11 +148,40 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
   const samplerRef = useRef(null);
   const sessionRef = useRef(null); // accumulator for the in-progress answer
 
+  const policyRef = useRef(NO_POLICY);
+  const reassureRef = useRef(0); // reassurances spent on THIS turn
+  const bcEventsRef = useRef([]); // backchannels played during this turn, reported on submit
+  const turnCounterRef = useRef(0); // rotates phrasing across questions so it isn't robotic
+  const bcCacheRef = useRef(new Map()); // phrase -> Promise<objectURL>, one synthesis per session
+  const bcBusyRef = useRef(false); // one interviewer utterance at a time, never two overlapping
+  const handleSilenceRef = useRef(null); // breaks the armSilence <-> handleSilence cycle
+  const questionRef = useRef(""); // the question currently being answered, for verbatim repeats
+  const questionAudioRef = useRef(null); // its audio, kept so a repeat replays the SAME bytes
+  const repeatsRef = useRef(0); // repeats of the current question — recorded, never scored
+  const repeatBusyRef = useRef(false);
+  const repeatQuestionRef = useRef(null);
+  // Barge-in: armed only while a question is playing AND only on a device where the pre-check
+  // measured that the mic does not hear the speakers. Otherwise the interviewer interrupts itself.
+  const bargeInArmedRef = useRef(false);
+  const onBargeInRef = useRef(null);
+  // How completely the current question was actually spoken. An interrupted question was not
+  // fully asked, and the server must not count it as having covered its claim-probe.
+  const deliveryRef = useRef({ deliveredFully: true, interruptedAtChar: null });
+
   const supported =
     typeof navigator !== "undefined" &&
     !!navigator.mediaDevices?.getUserMedia &&
     typeof WebSocket !== "undefined" &&
     typeof MediaRecorder !== "undefined";
+
+  const stopSpeaking = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    setBackchannel("");
+  }, []);
 
   const cleanupAnswer = useCallback(() => {
     if (keepAliveRef.current) clearInterval(keepAliveRef.current);
@@ -91,6 +189,8 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
     graceTimerRef.current = null;
     setEndingSoon(false);
+    // A reassurance may still be playing if the candidate tapped "Done" over it.
+    stopSpeaking();
     if (samplerRef.current) clearInterval(samplerRef.current);
     samplerRef.current = null;
     try {
@@ -107,44 +207,7 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     wsRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-  }, []);
-
-  const stopSpeaking = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
-  }, []);
-
-  // Speak a question. Resolves when playback finishes (or fails over to browser TTS).
-  const speak = useCallback(
-    async (text) => {
-      if (!text) return;
-      setPhase("speaking");
-      try {
-        const res = await api.post(
-          "/interview-portal/voice/speak",
-          { text },
-          { headers: authHeader(), responseType: "blob" }
-        );
-        const url = URL.createObjectURL(res.data);
-        await new Promise((resolve) => {
-          const audio = new Audio(url);
-          audioRef.current = audio;
-          audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
-          audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
-          audio.play().catch(() => resolve());
-        });
-        audioRef.current = null;
-      } catch {
-        await browserSpeak(text);
-      } finally {
-        setPhase((p) => (p === "speaking" ? "idle" : p));
-      }
-    },
-    []
-  );
+  }, [stopSpeaking]);
 
   function browserSpeak(text) {
     return new Promise((resolve) => {
@@ -157,22 +220,278 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     });
   }
 
-  // Begin capturing a spoken answer. Streams mic audio to Deepgram and updates `interim` live.
-  const startListening = useCallback(async () => {
+  // One path to the speech proxy for everything the interviewer says. That single path is what
+  // lets the server verify every utterance against the authored questions and the approved phrase
+  // bank (backend/utils/speechAuthorization.js).
+  const fetchAudioUrl = useCallback(async (text) => {
+    const res = await api.post(
+      "/interview-portal/voice/speak",
+      { text },
+      { headers: authHeader(), responseType: "blob" }
+    );
+    return URL.createObjectURL(res.data);
+  }, []);
+
+  // The server refused to speak this text because it was not an authored turn or an approved
+  // phrase. The browser must NOT then read it aloud itself — routing around the check with local
+  // speech synthesis would defeat the entire point of having it.
+  async function isNotAuthored(err) {
+    if (err?.response?.status !== 422) return false;
+    const data = err.response.data;
+    if (data?.code === "SPEECH_NOT_AUTHORED") return true;
+    // responseType is "blob", so an error body arrives as a Blob rather than parsed JSON.
+    if (typeof data?.text === "function") {
+      try {
+        return JSON.parse(await data.text())?.code === "SPEECH_NOT_AUTHORED";
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  const playUrl = useCallback(
+    (url) =>
+      new Promise((resolve) => {
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        audio.onended = () => resolve();
+        audio.onerror = () => resolve();
+        audio.play().catch(() => resolve());
+      }),
+    []
+  );
+
+  // Synthesize the backchannel phrases up front so a reassurance can land promptly when the
+  // candidate actually falls silent — waiting on a TTS round-trip to say "take your time" would
+  // arrive after the moment it was meant for. Cached per phrase, so the whole interview pays for
+  // each phrase once.
+  const primeBackchannels = useCallback(
+    (phrases) => {
+      for (const phrase of phrases || []) {
+        if (!phrase || bcCacheRef.current.has(phrase)) continue;
+        bcCacheRef.current.set(phrase, fetchAudioUrl(phrase).catch(() => null));
+      }
+    },
+    [fetchAudioUrl]
+  );
+
+  // Say something non-evaluative. If the microphone is open, capture is paused around playback so
+  // the interviewer's own voice cannot be transcribed into the candidate's answer (the server
+  // strips any echo that still slips through, and records that it had to).
+  //
+  // Known trade-off, deliberately taken: while capture is paused, a candidate who starts talking
+  // over the reassurance loses that fragment. It is a narrow window — the phrases are ~1.5s and
+  // the candidate is by definition silent at the moment one starts — and the alternative is
+  // worse: an open mic during playback feeds our own voice into both the transcript and the
+  // provider's end-of-speech detection. Proper simultaneous capture needs acoustic echo
+  // cancellation and enforced headphones; that is the barge-in work, not this phase.
+  const playBackchannel = useCallback(
+    async (phrase) => {
+      if (!phrase || bcBusyRef.current) return;
+      bcBusyRef.current = true;
+      const rec = recorderRef.current;
+      try {
+        if (rec && rec.state === "recording") rec.pause();
+      } catch { /* ignore */ }
+      setBackchannel(phrase);
+      try {
+        let pending = bcCacheRef.current.get(phrase);
+        if (!pending) {
+          pending = fetchAudioUrl(phrase).catch(() => null);
+          bcCacheRef.current.set(phrase, pending);
+        }
+        const url = await pending;
+        if (url) await playUrl(url);
+        else await browserSpeak(phrase);
+      } finally {
+        setBackchannel("");
+        audioRef.current = null;
+        try {
+          if (recorderRef.current && recorderRef.current.state === "paused") recorderRef.current.resume();
+        } catch { /* ignore */ }
+        bcBusyRef.current = false;
+      }
+    },
+    [fetchAudioUrl, playUrl]
+  );
+
+  const armSilence = useCallback((ms) => {
+    if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
+    graceTimerRef.current = setTimeout(() => {
+      graceTimerRef.current = null;
+      handleSilenceRef.current?.();
+    }, ms);
+  }, []);
+
+  // Silence, handled as a conversation rather than a deadline.
+  //
+  // The old behaviour was: provider reports silence -> 4s grace -> submit. A candidate pausing to
+  // find a word had their turn ended mid-thought, and a candidate who hadn't started speaking at
+  // all got nothing whatsoever — just an open mic and no acknowledgement they existed. Now
+  // silence first buys reassurance and a much longer window, and only becomes the end of the turn
+  // once the reassurance budget for this turn is spent.
+  //
+  // The budget is per TURN, not per pause: speaking again does not refill it. Otherwise a
+  // candidate who pauses often would be reassured indefinitely and the turn could never end.
+  const handleSilence = useCallback(async () => {
+    const acc = sessionRef.current;
+    if (!acc || endedRef.current) return;
+    // A reassurance is already mid-playback. Don't stack another on top of it — the in-flight
+    // call re-arms the timer itself when it finishes.
+    if (bcBusyRef.current) return;
+    const policy = policyRef.current;
+    const spokeSomething = Boolean((acc.finalText || "").trim());
+
+    if (reassureRef.current < policy.maxReassurancesPerTurn) {
+      const index = reassureRef.current;
+      reassureRef.current += 1;
+      setEndingSoon(false);
+      const phrase = policy.reassurances[(turnCounterRef.current + index) % policy.reassurances.length];
+      await playBackchannel(phrase);
+      bcEventsRef.current.push({ kind: "reassure", phrase, at: Date.now() });
+      if (endedRef.current || !sessionRef.current) return;
+      // Having just told the candidate to take their time, wait long enough to mean it.
+      armSilence(spokeSomething ? policy.postReassuranceGraceMs : policy.initialSilenceMs * 2);
+      return;
+    }
+
+    // Out of reassurance. An answer that exists can now be treated as finished — but an answer
+    // that was never started must NOT be auto-submitted as empty. That candidate keeps the mic
+    // and the visible "Done" button for as long as they need, and is not nagged further.
+    if (!spokeSomething) return;
+    setEndingSoon(true);
+    if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
+    graceTimerRef.current = setTimeout(() => {
+      graceTimerRef.current = null;
+      if (!endedRef.current) {
+        endedRef.current = true;
+        autoEndRef.current?.();
+      }
+    }, ENDING_GRACE_MS);
+  }, [armSilence, playBackchannel]);
+
+  useEffect(() => { handleSilenceRef.current = handleSilence; }, [handleSilence]);
+
+  // Speak a question. Resolves when playback finishes (or fails over to browser TTS).
+  //
+  // The audio is KEPT (not revoked) until the next question replaces it, so a candidate who asks
+  // "sorry, could you repeat that?" hears the identical bytes rather than a fresh synthesis. That
+  // is both free and the stronger guarantee: a repeat cannot drift from what was first asked.
+  const speak = useCallback(
+    async (text) => {
+      if (!text) return;
+      stopSpeaking(); // never let an acknowledgement still playing overlap the next question
+      setPhase("speaking");
+      if (questionAudioRef.current) {
+        URL.revokeObjectURL(questionAudioRef.current);
+        questionAudioRef.current = null;
+      }
+      questionRef.current = text;
+      repeatsRef.current = 0;
+      try {
+        const url = await fetchAudioUrl(text);
+        questionAudioRef.current = url;
+        await playUrl(url);
+        audioRef.current = null;
+      } catch (err) {
+        // Any ordinary failure (offline, provider down) falls back to the browser's own voice so a
+        // question is always heard. A refusal is different: the text was not verified as part of
+        // this interview, so it is shown on screen and NOT read aloud by any route.
+        if (await isNotAuthored(err)) {
+          setError("The interviewer couldn't read that question aloud — please read it on screen and answer as normal.");
+        } else {
+          await browserSpeak(text);
+        }
+      } finally {
+        setPhase((p) => (p === "speaking" ? "idle" : p));
+      }
+    },
+    [fetchAudioUrl, playUrl, stopSpeaking]
+  );
+
+  // Re-ask the current question, verbatim. Nothing is re-generated: the same authored text and,
+  // when it is still held, the same audio. Repeating a *different* question would quietly hand
+  // this candidate a different test from everyone else's.
+  const repeatQuestion = useCallback(async () => {
+    const text = questionRef.current;
+    if (!text || repeatBusyRef.current) return;
+    repeatBusyRef.current = true;
+    const rec = recorderRef.current;
+    try {
+      if (rec && rec.state === "recording") rec.pause();
+    } catch { /* ignore */ }
+    try {
+      const preambles = policyRef.current.repeatPreambles;
+      if (preambles.length) {
+        const preamble = preambles[(repeatsRef.current - 1 + preambles.length) % preambles.length];
+        setBackchannel(preamble);
+        const cached = bcCacheRef.current.get(preamble);
+        const url = cached ? await cached : null;
+        if (url) await playUrl(url);
+        else await browserSpeak(preamble);
+      }
+      setBackchannel(text);
+      if (questionAudioRef.current) await playUrl(questionAudioRef.current);
+      else await browserSpeak(text);
+    } finally {
+      setBackchannel("");
+      audioRef.current = null;
+      try {
+        if (recorderRef.current && recorderRef.current.state === "paused") recorderRef.current.resume();
+      } catch { /* ignore */ }
+      repeatBusyRef.current = false;
+    }
+  }, [playUrl]);
+
+  // Called from the live socket handler, so it has to be a ref (the handler is installed once).
+  useEffect(() => { repeatQuestionRef.current = repeatQuestion; }, [repeatQuestion]);
+
+  // Acknowledge out loud that an answer landed, filling the dead air while the next question is
+  // prepared. Called with the microphone already closed, so there is nothing to pause.
+  // Fire-and-forget playback; returns the event so the CALLER can attribute it to the answer it
+  // belongs to (this runs after finishListening has already handed back that turn's list).
+  const acknowledge = useCallback(() => {
+    const list = policyRef.current.acknowledgements;
+    if (!list.length) return null;
+    const phrase = list[turnCounterRef.current % list.length];
+    void playBackchannel(phrase);
+    return { kind: "acknowledge", phrase, at: Date.now() };
+  }, [playBackchannel]);
+
+  // Open the mic and the transcription socket.
+  //
+  // `armTurnClock: false` opens everything WITHOUT starting the turn's silence handling — used by
+  // barge-in, where the mic goes live before the question is spoken. Arming the clock then would
+  // have the interviewer reassuring the candidate for not answering a question it is still asking.
+  const openMic = useCallback(async ({ armTurnClock = true } = {}) => {
     if (!supported) throw new Error("unsupported");
     setError("");
     setInterim("");
     setEndingSoon(false);
     endedRef.current = false;
-    // Defensive cleanup, NOT barge-in: InterviewRoom awaits speak() before calling
-    // startListening(), so the mic is never open during question playback — the
-    // candidate cannot interrupt the voice mid-sentence. True barge-in would need
-    // the mic open during TTS with echo cancellation; until that exists, this line
-    // only clears any stray audio before the mic opens.
+    reassureRef.current = 0;
+    bcEventsRef.current = [];
+    turnCounterRef.current += 1;
+    // Clears any interviewer audio still playing before the mic opens. On the barge-in path the
+    // mic deliberately opens BEFORE the question is spoken (see askAndListen), so this runs first
+    // and there is nothing to cut off; on the turn-based path the question has already finished.
     stopSpeaking();
 
     const { data: cred } = await api.get("/interview-portal/voice/token", { headers: authHeader() });
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    policyRef.current = normalizePolicy(cred.conversation);
+    if (cred.persona?.name) setPersonaName(cred.persona.name);
+    // Kick off (don't await) synthesis of what we might need to say during this turn.
+    primeBackchannels([
+      ...policyRef.current.reassurances,
+      ...policyRef.current.acknowledgements,
+      ...policyRef.current.repeatPreambles,
+    ]);
+
+    // Echo cancellation requested explicitly, not left to the browser default. It is the reason
+    // the microphone can be open while the interviewer talks at all, and "usually on by default"
+    // is not a basis for that decision. Measured for real at pre-check (portal/audioIsolation.js).
+    const stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
     streamRef.current = stream;
 
     const p = cred.stt || {};
@@ -184,6 +503,11 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       punctuate: "true",
       smart_format: "true",
     });
+    // Vocabulary biasing so technical nouns survive transcription ("Kubernetes" not "cooper
+    // netties"). The server decides both the terms (backend/utils/keyterms.js) and the param
+    // name the provider expects, so this stays provider-agnostic and the client never has to
+    // know which speech vendor or model generation is behind it.
+    for (const term of p.keyterms || []) params.append(p.keytermParam || "keyterm", term);
     // Browsers can't set WS headers, but Deepgram accepts the short-lived token as a WebSocket
     // subprotocol (Sec-WebSocket-Protocol: "bearer, <token>"). Passing it as an ?access_token=
     // query param is NOT accepted and silently fails the handshake — verified against the live
@@ -220,38 +544,69 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       let msg;
       try { msg = JSON.parse(evt.data); } catch { return; }
       if (msg.type === "UtteranceEnd") {
-        // Hands-free turn-taking: Deepgram has seen utterance_end_ms of silence after speech.
-        // Don't submit yet — open a further visible grace window so a candidate who paused to
-        // think can keep talking and cancel it. Only the grace timer actually ends the turn.
-        if ((acc.finalText || "").trim() && !endedRef.current) {
-          setEndingSoon(true);
-          if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
-          graceTimerRef.current = setTimeout(() => {
-            graceTimerRef.current = null;
-            if (!endedRef.current) {
-              endedRef.current = true;
-              autoEndRef.current?.();
-            }
-          }, ENDING_GRACE_MS);
-        }
+        // The provider has seen utterance_end_ms of silence after speech. Don't submit — hand it
+        // to the conversational silence handler, which offers time first and only ends the turn
+        // once it has run out of patience to offer.
+        if (!endedRef.current) handleSilenceRef.current?.();
         return;
       }
       if (msg.type !== "Results") return;
       const alt = msg.channel?.alternatives?.[0];
       const t = alt?.transcript || "";
       if (!t) return;
-      // Real speech arrived — if a grace timer was counting down to auto-submit, the candidate
-      // just answered it by talking again. Cancel it and resume normal listening.
+
+      // Barge-in: the candidate started talking while the question was still being read. Stop
+      // reading and listen — which is what a person would do. Fires on interim results so the
+      // reaction is immediate, and only when armed (a measured-isolated mic, question in flight).
+      if (bargeInArmedRef.current && t.trim().length >= BARGE_IN_MIN_CHARS) {
+        bargeInArmedRef.current = false;
+        onBargeInRef.current?.();
+      }
+
+      // Real speech arrived — cancel any pending silence timer (a reassurance about to fire, or a
+      // countdown to auto-submit). The candidate answered it by talking again.
       if (graceTimerRef.current) {
         clearTimeout(graceTimerRef.current);
         graceTimerRef.current = null;
-        setEndingSoon(false);
       }
+      setEndingSoon(false);
       if (msg.is_final) {
         acc.finalText = `${acc.finalText} ${t}`.trim();
         acc.lastInterim = "";
         if (alt.confidence) acc.confidence = Math.max(acc.confidence, alt.confidence);
         setInterim(acc.finalText);
+
+        // "Sorry, could you repeat that?" — checked on FINAL transcripts only, never interim: a
+        // partial can be revised, and acting on one risks discarding an answer that was never a
+        // request. Only honoured while the candidate has said nothing substantive yet; past that
+        // they are mid-answer and we leave their words alone.
+        const policy = policyRef.current;
+        if (
+          policy.maxRepeatsPerQuestion > 0 &&
+          repeatsRef.current < policy.maxRepeatsPerQuestion &&
+          !repeatBusyRef.current &&
+          !endedRef.current
+        ) {
+          const hit = detectRepeat(acc.finalText, policy.repeatTriggers);
+          if (hit.matched && hit.remainderWords <= policy.repeatMaxCarryWords) {
+            // The request itself must not become part of the answer — keep only what wasn't it.
+            acc.finalText = hit.remainder;
+            setInterim(hit.remainder);
+            repeatsRef.current += 1;
+            if (graceTimerRef.current) {
+              clearTimeout(graceTimerRef.current);
+              graceTimerRef.current = null;
+            }
+            setEndingSoon(false);
+            void (async () => {
+              await repeatQuestionRef.current?.();
+              if (endedRef.current || !sessionRef.current) return;
+              // Back to a fresh listening window, as if the question had just been asked.
+              armSilence(policyRef.current.initialSilenceMs);
+            })();
+            return;
+          }
+        }
       } else {
         acc.lastInterim = t;
         setInterim(`${acc.finalText} ${t}`.trim());
@@ -276,12 +631,72 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "KeepAlive" }));
     }, 8000);
 
-    setPhase("listening");
-  }, [supported, stopSpeaking]);
+    if (armTurnClock) {
+      setPhase("listening");
+      // The question has been asked and the candidate hasn't started. UtteranceEnd only fires
+      // AFTER speech, so nothing used to happen here at all — the candidate sat in silence with an
+      // open mic. Arm the same conversational handler so the interviewer offers time out loud.
+      armSilence(policyRef.current.initialSilenceMs);
+    }
+  }, [supported, stopSpeaking, primeBackchannels, armSilence]);
+
+  // Ask the question and then listen — the single entry point the interview room uses.
+  //
+  // Two shapes, chosen by what the pre-check actually measured about this device:
+  //   isolated mic  → the mic opens FIRST and stays open while the question is read, so the
+  //                   candidate can cut in. Interrupting a person mid-sentence is normal; being
+  //                   unable to is one of the things that makes an AI interview feel like a form.
+  //   anything else → the old order (speak, then listen). On a device whose mic hears its own
+  //                   speakers, an open mic during playback means the interviewer hears itself
+  //                   start talking and stops mid-question, every question.
+  const askAndListen = useCallback(
+    async (text, { bargeIn = false } = {}) => {
+      deliveryRef.current = { deliveredFully: true, interruptedAtChar: null };
+      if (!bargeIn) {
+        await speak(text);
+        await openMic({ armTurnClock: true });
+        return;
+      }
+
+      await openMic({ armTurnClock: false });
+      setPhase("speaking");
+      onBargeInRef.current = () => {
+        const audio = audioRef.current;
+        // Where in the question they cut in, estimated from playback position. Approximate on
+        // purpose — it exists to answer "did they actually hear the question?", not to be exact.
+        if (audio && audio.duration > 0) {
+          const fraction = Math.min(1, Math.max(0, audio.currentTime / audio.duration));
+          deliveryRef.current = {
+            deliveredFully: false,
+            interruptedAtChar: Math.round(String(text || "").length * fraction),
+          };
+        } else {
+          deliveryRef.current = { deliveredFully: false, interruptedAtChar: 0 };
+        }
+        stopSpeaking();
+      };
+      bargeInArmedRef.current = true;
+      try {
+        await speak(text);
+      } finally {
+        bargeInArmedRef.current = false;
+        onBargeInRef.current = null;
+      }
+      setPhase("listening");
+      armSilence(policyRef.current.initialSilenceMs);
+    },
+    [speak, openMic, armSilence, stopSpeaking]
+  );
+
+  // Kept for callers that manage speaking themselves (and for re-opening the mic after a failed
+  // transcription without re-asking the question).
+  const startListening = useCallback(() => openMic({ armTurnClock: true }), [openMic]);
 
   // Finish the current answer: flush Deepgram, tear down, and return the transcript + metadata.
   const finishListening = useCallback(async () => {
     const acc = sessionRef.current;
+    const backchannels = bcEventsRef.current;
+    bcEventsRef.current = [];
     setPhase("processing");
     if (keepAliveRef.current) clearInterval(keepAliveRef.current);
     keepAliveRef.current = null;
@@ -308,21 +723,42 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       durationMs,
       confidence: acc.confidence || undefined,
       acoustic: measureDelivery(transcript, durationMs, acc.energy),
+      // Reported on submit so the server can strip any of our own words that the mic picked up,
+      // and record the interview's real conversational conditions.
+      backchannels,
+      // A condition of the interview, not a signal about the candidate — the server records it on
+      // the question turn and no scorer ever reads it.
+      repeatCount: repeatsRef.current,
+      // Whether the question was actually finished before the candidate started answering. The
+      // server uses this to decide whether the question really covered its claim-probe.
+      questionDelivery: { ...deliveryRef.current },
     };
   }, [cleanupAnswer]);
 
   const cancelListening = useCallback(() => {
     cleanupAnswer();
     sessionRef.current = null;
+    bcEventsRef.current = [];
     setInterim("");
     setPhase("idle");
   }, [cleanupAnswer]);
 
   // Tear everything down on unmount.
   useEffect(() => {
+    const cache = bcCacheRef.current;
     return () => {
       stopSpeaking();
       cleanupAnswer();
+      // Release the pre-synthesized backchannel audio held for the whole session, and the current
+      // question's audio (held so a repeat can replay the same bytes).
+      for (const pending of cache.values()) {
+        Promise.resolve(pending).then((url) => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+      }
+      cache.clear();
+      if (questionAudioRef.current) {
+        URL.revokeObjectURL(questionAudioRef.current);
+        questionAudioRef.current = null;
+      }
     };
   }, [stopSpeaking, cleanupAnswer]);
 
@@ -332,7 +768,11 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     interim,
     error,
     endingSoon,
+    backchannel,
+    personaName,
     speak,
+    askAndListen,
+    acknowledge,
     stopSpeaking,
     startListening,
     finishListening,

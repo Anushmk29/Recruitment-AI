@@ -123,18 +123,33 @@ function requestTts(apiKey, model, text) {
   });
 }
 
-// Synthesize a spoken question. Returns { audio: Buffer, contentType }.
-async function synthesize(text) {
+// Synthesize a spoken question. Returns { audio: Buffer, contentType, model }.
+// `voice` optionally overrides the deployment TTS voice with the session's persona voice
+// (services/personaService) — an unknown/empty value falls back to the configured default rather
+// than failing, so a bad persona voice id can never cost a candidate their interview.
+async function synthesize(text, { voice } = {}) {
   const c = cfg();
   if (!c.apiKey) throw Object.assign(new Error("Voice interview is not configured"), { status: 503 });
   const clean = String(text || "").trim().slice(0, 2000);
   if (!clean) throw Object.assign(new Error("text is required"), { status: 400 });
-  const audio = await requestTts(c.apiKey, c.ttsModel, clean);
-  return { audio, contentType: "audio/mpeg" };
+  const model = String(voice || "").trim() || c.ttsModel;
+  const audio = await requestTts(c.apiKey, model, clean);
+  return { audio, contentType: "audio/mpeg", model };
+}
+
+// Deepgram spells vocabulary biasing differently per model generation: nova-3 takes repeated
+// `keyterm=` params (keyterm prompting), earlier models take `keywords=`. Sending the wrong one
+// is silently ignored rather than rejected, so the mapping lives here — the one file that knows
+// which provider and model are in play — and the browser is told the param NAME alongside the
+// terms. A provider swap then changes this file only.
+function keytermParamFor(sttModel) {
+  return /^nova-3/i.test(String(sttModel || "")) ? "keyterm" : "keywords";
 }
 
 // Mint a short-lived streaming credential + the client-side STT/TTS config the browser needs.
-async function grantStreamingToken() {
+// `keyterms` is the deterministic technical vocabulary for this candidate/role pairing (see
+// utils/keyterms.js); passing none is always valid and just means an unbiased transcript.
+async function grantStreamingToken({ keyterms = [] } = {}) {
   const c = cfg();
   if (!c.apiKey) throw Object.assign(new Error("Voice interview is not configured"), { status: 503 });
 
@@ -156,6 +171,8 @@ async function grantStreamingToken() {
       utteranceEndMs: c.utteranceEndMs,
       punctuate: true,
       smartFormat: true,
+      keyterms: Array.isArray(keyterms) ? keyterms : [],
+      keytermParam: keytermParamFor(c.sttModel),
     },
     tts: { model: c.ttsModel },
   };
@@ -181,4 +198,13 @@ function models() {
   return { sttModel: c.sttModel, ttsModel: c.ttsModel };
 }
 
-module.exports = { isEnabled, provider, grantStreamingToken, synthesize, ttsCostCents, sttCostCents, models };
+module.exports = {
+  isEnabled,
+  provider,
+  grantStreamingToken,
+  synthesize,
+  ttsCostCents,
+  sttCostCents,
+  models,
+  keytermParamFor,
+};
