@@ -8,6 +8,15 @@ const AssessmentPaper = require("../models/AssessmentPaper");
 const paperService = require("../services/assessmentPaperService");
 const itemGenService = require("../services/itemGenService");
 
+// `generationRun.status: "running"` on its own cannot tell the editor whether a
+// run is working or was orphaned by a dead process, and the editor uses it to
+// disable the Resume button. Compute liveness with the SERVER's clock (client-side
+// staleness would be at the mercy of clock skew) and ship it alongside.
+function withRunHealth(paper) {
+  const doc = typeof paper.toObject === "function" ? paper.toObject() : paper;
+  return { ...doc, generationStalled: itemGenService.isRunStale(doc.generationRun) };
+}
+
 async function loadJob(req) {
   const job = await Job.findOne({ _id: req.params.jobId, company: req.user.company });
   if (!job) {
@@ -21,24 +30,24 @@ async function loadJob(req) {
 async function compileForJob(req, res) {
   const job = await loadJob(req);
   const paper = await paperService.compileBlueprint(job);
-  res.status(201).json(paper);
+  res.status(201).json(withRunHealth(paper));
 }
 
 async function getForJob(req, res) {
   const job = await loadJob(req);
   const papers = await paperService.listForJob(job._id, req.user.company);
-  res.json(papers);
+  res.json(papers.map(withRunHealth));
 }
 
 async function getPaper(req, res) {
   const paper = await AssessmentPaper.findOne({ _id: req.params.id, company: req.user.company });
   if (!paper) return res.status(404).json({ error: "Assessment paper not found" });
-  res.json(paper);
+  res.json(withRunHealth(paper));
 }
 
 async function updatePaper(req, res) {
   const paper = await paperService.updateDraft(req.params.id, req.user.company, req.body || {});
-  res.json(paper);
+  res.json(withRunHealth(paper));
 }
 
 // Long-running (N items × 1 gen + 3 blind solves). Fires the run and returns
@@ -47,7 +56,7 @@ async function generateItems(req, res) {
   const paper = await AssessmentPaper.findOne({ _id: req.params.id, company: req.user.company });
   if (!paper) return res.status(404).json({ error: "Assessment paper not found" });
   if (paper.status !== "draft") return res.status(409).json({ error: "Items can only be generated on a draft paper" });
-  if (paper.generationRun?.status === "running") return res.status(409).json({ error: "Generation is already running" });
+  if (itemGenService.isRunActive(paper.generationRun)) return res.status(409).json({ error: "Generation is already running" });
 
   const companyId = req.user.company;
   const paperId = paper._id;
@@ -61,7 +70,7 @@ async function generateItems(req, res) {
 
 async function regenerateItem(req, res) {
   const paper = await itemGenService.regenerateItem(req.params.id, req.user.company, req.params.itemId);
-  res.json(paper);
+  res.json(withRunHealth(paper));
 }
 
 // A5.2 — retire an item (the one item mutation a FROZEN paper permits; excluded
@@ -71,16 +80,16 @@ async function retireItem(req, res) {
   if (!paper) return res.status(404).json({ error: "Assessment paper not found" });
   const item = paper.items.find((i) => i.id === req.params.itemId);
   if (!item) return res.status(404).json({ error: "Item not found" });
-  if (item.status === "retired") return res.json(paper);
+  if (item.status === "retired") return res.json(withRunHealth(paper));
   item.status = "retired";
   paper.markModified("items");
   await paper.save();
-  res.json(paper);
+  res.json(withRunHealth(paper));
 }
 
 async function approvePaper(req, res) {
   const paper = await paperService.approve(req.params.id, req.user.company, req.user);
-  res.json(paper);
+  res.json(withRunHealth(paper));
 }
 
 module.exports = { compileForJob, getForJob, getPaper, updatePaper, generateItems, regenerateItem, retireItem, approvePaper };

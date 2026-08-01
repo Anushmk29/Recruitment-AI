@@ -146,6 +146,13 @@ const assessmentPaperSchema = new mongoose.Schema(
       status: { type: String, enum: ["idle", "running", "completed", "failed"], default: "idle" },
       startedAt: { type: Date },
       finishedAt: { type: Date },
+      // Liveness proof. The run loop exists only in the memory of the process that
+      // started it, so `status: "running"` alone cannot distinguish "working" from
+      // "the process died". The loop re-stamps this after every item it persists;
+      // itemGenService.isRunStale() reads it to decide whether a run may be taken
+      // over. Without it a killed process wedges the paper forever — Resume and
+      // Approve both refuse, and the UI spins on a run that will never finish.
+      heartbeatAt: { type: Date },
       generated: { type: Number, default: 0 },
       flagged: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },

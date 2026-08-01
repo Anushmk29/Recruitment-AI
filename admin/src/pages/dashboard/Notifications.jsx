@@ -16,6 +16,9 @@ const TYPE_OPTIONS = [
   { value: "subscription_renewal", label: "Subscription Renewal" },
   { value: "new_candidate_applied", label: "New Candidate Applied" },
   { value: "ats_completed", label: "ATS Completed" },
+  { value: "assessment_decision_needed", label: "Assessment Decision Needed" },
+  { value: "assessment_contradiction", label: "Assessment Contradiction" },
+  { value: "assessment_softlock", label: "Assessment Paused (Integrity)" },
   { value: "candidate_shortlisted", label: "Candidate Shortlisted" },
   { value: "candidate_rejected", label: "Candidate Rejected" },
   { value: "password_changed", label: "Password Changed" },
@@ -25,6 +28,11 @@ const TYPE_OPTIONS = [
 const TONE_BY_TYPE = {
   payment_failed: "red",
   candidate_rejected: "red",
+  // Both are "a human must look at this" signals, never an automatic action —
+  // they must not read as routine status noise in the list.
+  assessment_contradiction: "amber",
+  assessment_softlock: "amber",
+  assessment_decision_needed: "brand",
   candidate_shortlisted: "green",
   payment_success: "green",
   workspace_ready: "green",

@@ -228,7 +228,11 @@ async function resendOwnSessionLink(req, res) {
   } catch (err) {
     // Guard rejections are conflicts, not server faults: the session is already
     // completed, or live on a valid link. Surface the service's own wording.
-    return res.status(err.status || 409).json({ error: err.message });
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    // Anything without an explicit status is a fault, not a conflict. Blanket-
+    // 409ing it labelled server bugs as "already in progress" and printed raw
+    // internals (e.g. a Mongoose ValidationError) onto the candidate's screen.
+    throw err;
   }
 
   res.json({

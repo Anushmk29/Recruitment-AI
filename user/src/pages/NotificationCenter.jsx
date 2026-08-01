@@ -11,6 +11,8 @@ const TYPE_OPTIONS = [
   { value: "", label: "All types" },
   { value: "welcome", label: "Welcome" },
   { value: "application_submitted", label: "Application Submitted" },
+  { value: "assessment_invite", label: "Assessment Invite" },
+  { value: "assessment_reminder", label: "Assessment Reminder" },
   { value: "interview_invite", label: "Interview Invite" },
   { value: "interview_reminder", label: "Interview Reminder" },
   { value: "next_round_scheduled", label: "Next Round" },
@@ -22,6 +24,10 @@ const TYPE_OPTIONS = [
 const TONE_BY_TYPE = {
   rejection: "red",
   interview_invite: "brand",
+  assessment_invite: "brand",
+  // A reminder is a deadline the candidate is still blocking, so it reads as
+  // "act now" rather than as another neutral status line.
+  assessment_reminder: "amber",
   next_round_scheduled: "green",
 };
 

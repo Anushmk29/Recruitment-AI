@@ -42,6 +42,215 @@ function ScoreBar({ label, value }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Evidence coverage
+// ---------------------------------------------------------------------------
+// proven ↔ failed is a POLARITY, so the two groups take opposed hues with a
+// neutral gray for "too little evidence" — which is genuinely the middle: the
+// absence of a finding, not a middling one.
+//
+// Palette validated with the dataviz validator (light, all checks pass).
+// emerald↔red CVD separation is ΔE 8.6 — above the 8 floor but not generous — so
+// each group's glyph and its written title are load-bearing, not decorative.
+// Never reduce a group to colour alone.
+//
+// The headline artefact, grouped by what we can actually SAY rather than by which
+// system produced the data. A recruiter's question is "what do I know and what do
+// I still need to ask" — so the three groups answer exactly that, and the third
+// one doubles as the next round's question list.
+const BUCKET_META = {
+  proven: {
+    title: "Proven",
+    blurb: "Demonstrated under test.",
+    head: "border-emerald-200 bg-emerald-50/70",
+    dot: "bg-emerald-600",
+    glyph: "✓",
+  },
+  failed: {
+    title: "Failed",
+    blurb: "The candidate could not support this.",
+    head: "border-red-200 bg-red-50/70",
+    dot: "bg-red-600",
+    glyph: "✗",
+  },
+  insufficient: {
+    title: "Too little evidence",
+    blurb: "Our test was too thin to call this either way — not a mark against the candidate.",
+    head: "border-slate-200 bg-slate-50",
+    dot: "bg-slate-400",
+    glyph: "?",
+  },
+};
+
+function BucketGroup({ bucket, group, showNextSteps }) {
+  if (!group?.rows?.length) return null;
+  const meta = BUCKET_META[bucket];
+  const pct = (w) => `${Math.round(w * 100)}%`;
+  return (
+    <div className={`rounded-xl border ${meta.head} p-3`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h4 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+          <span className={`inline-flex h-4 w-4 items-center justify-center rounded-sm text-[10px] font-bold text-white ${meta.dot}`}>
+            {meta.glyph}
+          </span>
+          {meta.title}
+        </h4>
+        <span className="text-xs font-semibold tabular-nums text-slate-500">{pct(group.weight)} of role</span>
+      </div>
+      <p className="mt-0.5 text-[11px] text-slate-500">{meta.blurb}</p>
+
+      <div className="mt-2.5 space-y-2">
+        {group.rows.map((r) => (
+          <div key={r.criterionId} className="rounded-lg bg-white/80 p-2.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-sm font-medium text-slate-800">{r.label}</span>
+              <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-500">{pct(r.weight)}</span>
+            </div>
+            <p className="mt-0.5 text-xs text-slate-500">{r.evidence}</p>
+            {/* A verdict the recruiter can't read for themselves isn't evidence. */}
+            {r.decidingProbe?.answerQuote && (
+              <p className="mt-1 text-xs italic text-slate-500">&ldquo;{r.decidingProbe.answerQuote}&rdquo;</p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {showNextSteps && (
+        <p className="mt-2.5 border-t border-slate-200 pt-2 text-[11px] font-medium text-slate-600">
+          These are the questions for the next round.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CoverageMatrix({ coverage }) {
+  if (!coverage?.buckets) return null;
+  const { buckets, totals } = coverage;
+  const pct = (w) => `${Math.round(w * 100)}%`;
+
+  return (
+    <Card>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+            <ShieldCheck className="h-4 w-4 text-brand-600" /> What we actually know
+          </h3>
+          <p className="mt-1 text-xs text-slate-400">
+            Every requirement for this role{coverage.rubricVersion != null ? ` (rubric v${coverage.rubricVersion})` : ""}, grouped by how
+            strong the evidence is. Percentages are each requirement&apos;s weight in the rubric.
+          </p>
+        </div>
+        {totals.insufficientWeight >= 0.3 && (
+          <Badge tone="amber">{pct(totals.insufficientWeight)} of the role is untested</Badge>
+        )}
+      </div>
+
+      <div className="mt-4 space-y-3">
+        <BucketGroup bucket="failed" group={buckets.failed} />
+        <BucketGroup bucket="proven" group={buckets.proven} />
+        <BucketGroup bucket="insufficient" group={buckets.insufficient} showNextSteps />
+      </div>
+
+      {/* The gap is a statement about OUR test, not about the candidate. */}
+      {totals.underpoweredCriteria > 0 && (
+        <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
+          {totals.underpoweredCriteria} of {totals.criteria} requirements were tested with fewer than {totals.minItemsForCall} items and
+          never probed in the interview. That is too little to score either way — on a handful of multiple-choice items a wrong answer
+          is indistinguishable from a guess. Widen the paper or probe these live before treating them as weaknesses.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+// §3 rule 5 — a degraded session is labelled wherever it surfaces, and the
+// hire/no-hire call is withheld rather than printed over a broken signal.
+function SessionQualityBanner({ quality }) {
+  if (!quality?.degraded) return null;
+  return (
+    <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-5">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+        <div>
+          <h2 className="text-base font-bold text-amber-900">Degraded session — recommendation withheld</h2>
+          <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-sm text-amber-800">
+            {quality.reasons.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs font-medium text-amber-700">
+            On a broken audio signal an unanswered question cannot be told apart from an unheard one. Scores below are shown for
+            transparency and should not be read as a measure of this candidate.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One cell per answer, in order. Height = answer score; a marked cell is a turn
+// whose audio signature was degraded. This is the view that makes "eight
+// near-silent answers in a row" visible at a glance instead of averaged away.
+const TURN_FLAG_LABEL = {
+  stalled: "long recording, almost no words",
+  mostly_silence: "mostly silence",
+  low_delivery: "very low delivery",
+  asked_to_repeat: "asked for the question again",
+};
+
+function TurnQualityStrip({ quality }) {
+  if (!quality?.perTurn?.length) return null;
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+          <Mic className="h-4 w-4 text-brand-600" /> Answer-by-answer quality
+        </h3>
+        <span className="text-xs text-slate-400">
+          {quality.degradedCount} of {quality.total} answers flagged
+        </span>
+      </div>
+      <div className="mt-4 flex items-end gap-1 overflow-x-auto pb-1">
+        {quality.perTurn.map((t) => {
+          const score = t.answerScore ?? 0;
+          const tip = [
+            `Answer ${t.index + 1}: ${t.answerScore != null ? `${t.answerScore}/100` : "unscored"}`,
+            `${t.words} words`,
+            t.audioMs ? `${Math.round(t.audioMs / 1000)}s audio` : null,
+            ...t.flags.map((f) => TURN_FLAG_LABEL[f] || f),
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <div key={t.index} title={tip} className="flex w-5 shrink-0 flex-col items-center gap-1">
+              <div className="flex h-16 w-full items-end rounded-sm bg-slate-100">
+                <div
+                  className={`w-full rounded-sm ${t.degraded ? "bg-red-600" : "bg-brand-500"}`}
+                  style={{ height: `${Math.max(4, Math.min(100, score))}%` }}
+                />
+              </div>
+              {/* Secondary encoding — the flag is never colour-alone. */}
+              <span className={`text-[10px] leading-none ${t.degraded ? "text-red-600" : "text-transparent"}`} aria-hidden>
+                !
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-brand-500" /> Answer score
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-600" /> ! Degraded audio signature
+        </span>
+        <span className="text-slate-400">Hover any bar for the reason.</span>
+      </div>
+    </Card>
+  );
+}
+
 const RISK_BAND = {
   low: { label: "Low risk", tone: "green", ring: "text-emerald-600", bg: "bg-emerald-500" },
   medium: { label: "Medium risk", tone: "amber", ring: "text-amber-600", bg: "bg-amber-500" },
@@ -169,9 +378,106 @@ function ClaimVerificationCard({ cv }) {
   );
 }
 
+// A3.5 — the skills-assessment leg of the pipeline, in the same report as the
+// interview it fed. Mirrors the PDF section: a skip renders as a recorded human
+// decision, a live session as its status, and a result with full provenance.
+const ASSESSMENT_VERDICT_META = {
+  verified: { label: "Verified by assessment", tone: "green" },
+  contradicted: { label: "Contradicted by assessment", tone: "red" },
+  inconclusive: { label: "Inconclusive", tone: "amber" },
+};
+const ASSESSMENT_TIER_SOURCE = {
+  claim_derived: "derived from résumé claims",
+  recruiter_override: "set by the recruiter",
+  paper_fixed: "fixed for this paper",
+};
+
+function AssessmentCard({ assessment, criterionLabels }) {
+  if (!assessment) return null;
+  const { decision, session } = assessment;
+  const result = session?.result;
+  // A recruiter must never be shown "c5: 1/3". The rubric has real labels; use them.
+  const labelFor = (id) => criterionLabels?.[id] || id;
+  return (
+    <Card>
+      <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+        <ShieldCheck className="h-4 w-4 text-brand-600" /> Skills assessment
+      </h3>
+      {decision?.action === "skipped" ? (
+        <p className="mt-2 text-sm text-slate-600">
+          Skipped by <strong>{decision.byName || "a recruiter"}</strong> on {formatWhen(decision.at)} — sent directly to the AI
+          interview. A recorded human decision, not missing data.
+        </p>
+      ) : !session ? (
+        <p className="mt-2 text-sm text-slate-400">An assessment decision was recorded but no session exists yet.</p>
+      ) : (
+        <>
+          {session.difficultyTier && (
+            <p className="mt-2 text-xs text-slate-500">
+              Difficulty <strong className="uppercase">{session.difficultyTier.value}</strong> —{" "}
+              {ASSESSMENT_TIER_SOURCE[session.difficultyTier.source] || session.difficultyTier.source}
+              {session.difficultyTier.basis ? ` (${session.difficultyTier.basis})` : ""}
+            </p>
+          )}
+          {!result ? (
+            <p className="mt-2 text-sm text-slate-400">Status: {session.status}. No scored result yet.</p>
+          ) : (
+            <>
+              <p className="mt-2 text-lg font-bold text-slate-900">
+                {result.totalCorrect}/{result.totalItems} items correct{" "}
+                {result.completedBy === "expiry" && <Badge tone="amber">partial — closed by expiry</Badge>}
+              </p>
+              <div className="mt-3 space-y-1.5">
+                {(result.perCriterion || []).map((c) => (
+                  <div key={c.criterionId} className="flex items-baseline justify-between gap-3 text-xs">
+                    <span className="text-slate-600">{labelFor(c.criterionId)}</span>
+                    <span className="shrink-0 font-semibold tabular-nums text-slate-800">
+                      {c.correctCount}/{c.itemCount}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {(result.claimVerdicts || []).length > 0 && (
+                <div className="mt-3 space-y-1.5 border-t border-slate-100 pt-3">
+                  {result.claimVerdicts.map((v) => {
+                    const meta = ASSESSMENT_VERDICT_META[v.verdict] || ASSESSMENT_VERDICT_META.inconclusive;
+                    return (
+                      <p key={v.claimId} className="text-xs text-slate-500">
+                        <Badge tone={meta.tone}>{meta.label}</Badge>{" "}
+                        <span className="text-slate-600">{labelFor(v.criterionId)}</span> — {v.correctCount}/{v.itemCount} targeted
+                        items
+                      </p>
+                    );
+                  })}
+                </div>
+              )}
+              <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
+                Scored {formatWhen(result.scoredAt)} · scorer {result.scorerVersion || "—"} · reproducibility{" "}
+                {(result.reproducibilityHash || "").slice(0, 16)}… — computed deterministically by code from the frozen key; no AI in
+                the scoring path.
+              </p>
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 // §5: explicit action verb + one-line justification — the report's final word.
 function RecommendedActionCard({ action }) {
   if (!action) return null;
+  // A withheld recommendation must not wear the same confident styling as a real
+  // one — the point is that the signal was too poor to make the call.
+  if (action.suppressed) {
+    return (
+      <Card className="border-2 border-dashed border-amber-400 bg-amber-50">
+        <p className="text-xs font-medium uppercase tracking-wide text-amber-700">Recommendation withheld</p>
+        <p className="mt-1 text-lg font-bold text-amber-900">{action.action}</p>
+        <p className="mt-1 text-sm text-amber-800">{action.justification}</p>
+      </Card>
+    );
+  }
   return (
     <Card className="border-2 border-slate-800 bg-slate-900 text-white">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-300">Recommended action</p>
@@ -426,9 +732,13 @@ export default function InterviewReport() {
     );
   }
 
-  const { candidate, job, interview, allowedNextStages = [], stage, decisionTrail } = report;
+  const { candidate, job, interview, allowedNextStages = [], stage, decisionTrail, coverage } = report;
   const ev = interview?.evaluation;
   const rec = ev?.recommendation ? RECOMMENDATION[ev.recommendation] : null;
+  const quality = interview?.sessionQuality;
+  // One source of criterion labels for every card on the page, so nothing renders
+  // a bare "c5" at the recruiter.
+  const criterionLabels = Object.fromEntries((coverage?.rows || []).map((r) => [r.criterionId, r.label]));
 
   return (
     <div className="space-y-6">
@@ -436,6 +746,9 @@ export default function InterviewReport() {
         <ArrowLeft className="h-4 w-4" /> Back to candidate
       </Link>
 
+      {/* Ordered by what a recruiter must not miss: a broken session invalidates
+          everything below it, so it sits above the verdict. */}
+      <SessionQualityBanner quality={quality} />
       <VerdictBanner verdict={interview?.verdict} />
 
       <Card>
@@ -488,14 +801,21 @@ export default function InterviewReport() {
         )}
       </Card>
 
+      {/* Spans all three evidence legs, so it renders with or without an
+          interview — a report with no interview still shows what was tested. */}
+      <CoverageMatrix coverage={coverage} />
+
       {!report.hasInterview ? (
-        <Card>
-          <EmptyState
-            icon={Bot}
-            title="No AI interview yet"
-            description="This candidate hasn't completed the AI interview. The report appears here once the interview is finished."
-          />
-        </Card>
+        <>
+          <AssessmentCard assessment={report.assessment} criterionLabels={criterionLabels} />
+          <Card>
+            <EmptyState
+              icon={Bot}
+              title="No AI interview yet"
+              description="This candidate hasn't completed the AI interview. The report appears here once the interview is finished."
+            />
+          </Card>
+        </>
       ) : (
         <>
           {/* Evaluation */}
@@ -604,7 +924,11 @@ export default function InterviewReport() {
             )}
           </Card>
 
+          <TurnQualityStrip quality={quality} />
+
           <ClaimVerificationCard cv={report.claimVerification} />
+
+          <AssessmentCard assessment={report.assessment} criterionLabels={criterionLabels} />
 
           <CompetencyTable rows={interview.competencyTable} />
 

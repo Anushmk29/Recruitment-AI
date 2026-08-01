@@ -1,7 +1,7 @@
 // Renders an AI interview report (the same shape controllers/candidateController.buildInterviewReport
 // returns) into a downloadable PDF, using the zero-dep utils/pdf.js builder.
 
-const { PdfDoc } = require("../utils/pdf");
+const { PdfDoc, sanitize } = require("../utils/pdf");
 
 const INK = [0.09, 0.11, 0.15];
 const MUTED = [0.42, 0.45, 0.5];
@@ -129,15 +129,25 @@ function buildReportPdf(report) {
     );
   }
 
+  // One label map for the whole document, so no section prints a bare "c5".
+  const criterionLabels = Object.fromEntries((report.coverage?.rows || []).map((r) => [r.criterionId, r.label]));
+
   if (!report.hasInterview) {
     heading(doc, "Interview status");
     doc.text(
       "This candidate has not completed the AI interview yet. The full evaluation and transcript will appear here once the interview is finished.",
       { size: 11, color: MUTED }
     );
+    // Coverage spans résumé + assessment, so it is meaningful with no interview.
+    coverageSection(doc, report.coverage);
+    // The assessment often completes before the interview — show what exists.
+    assessmentSection(doc, report.assessment, criterionLabels);
     footer(doc, report);
     return doc.render();
   }
+
+  // Above everything else: a degraded session invalidates what follows it.
+  sessionQualitySection(doc, iv.sessionQuality);
 
   // §4: identity + duration flags surfaced immediately, not buried in Integrity.
   labelValue(doc, "Identity check", identityStatusLabel(report.proctoring?.identityMatch));
@@ -210,8 +220,18 @@ function buildReportPdf(report) {
     doc.text("Evaluation not available yet.", { size: 11, color: MUTED });
   }
 
+  // --- Evidence coverage: what the role required vs what was actually tested ---
+  coverageSection(doc, report.coverage);
+
+  // --- Answer-by-answer quality (makes a run of dead turns visible) ---
+  turnQualitySection(doc, iv.sessionQuality);
+
   // --- Claim Verification (Phase 8) — "is this résumé true?", at a glance ---
   claimVerificationSection(doc, report.claimVerification);
+
+  // --- Skills Assessment (A3.5) — the pre-interview assessment leg, with the
+  // provenance that makes its number defensible ---
+  assessmentSection(doc, report.assessment, criterionLabels);
 
   // --- Competency breakdown (§9) ---
   competencyTable(doc, iv.competencyTable);
@@ -316,11 +336,233 @@ function claimVerificationSection(doc, cv) {
   );
 }
 
+// A3.5 — Skills Assessment: the pre-interview assessment result, or the
+// recruiter's explicit skip. Hidden entirely when the engine never touched this
+// candidate. Every number ships with its provenance: the difficulty tier and the
+// exact basis it was derived from, per-criterion counts against the frozen
+// rubric, targeted résumé-claim verdicts, and the scorer version +
+// reproducibility hash that let anyone re-derive the score.
+// ---------------------------------------------------------------------------
+// Evidence coverage matrix (screen parity: admin/src/pages/InterviewReport.jsx)
+// ---------------------------------------------------------------------------
+// Same diverging scale as the screen — emerald/red poles, neutral gray midpoint,
+// unfilled for "not tested" — and the same glyphs, because print and CVD readers
+// need the mark, not the hue. Built from rectangles so one design serves both.
+const BUCKET_PDF = {
+  failed: { title: "FAILED", blurb: "The candidate could not support this.", accent: [0.86, 0.15, 0.15] },
+  proven: { title: "PROVEN", blurb: "Demonstrated under test.", accent: [0.02, 0.59, 0.41] },
+  insufficient: {
+    title: "TOO LITTLE EVIDENCE",
+    blurb: "Our test was too thin to call this either way — not a mark against the candidate.",
+    accent: [0.55, 0.58, 0.63],
+  },
+};
+
+function bucketBlock(doc, key, group, footNote) {
+  if (!group?.rows?.length) return;
+  const meta = BUCKET_PDF[key];
+  doc.ensure(46);
+  doc.moveDown(4);
+  // A colour bar carries the group; the written title carries it in greyscale.
+  doc._fill(doc.left, doc.y, 3, 11, meta.accent);
+  doc._line(doc.left + 8, doc.y - 9, meta.title, 10, true, meta.accent);
+  doc._line(doc.left, doc.y - 9, `${Math.round(group.weight * 100)}% of role`, 9, true, MUTED, "right", doc.contentWidth);
+  doc.y -= 14;
+  doc.text(meta.blurb, { size: 8, color: MUTED, gap: 3 });
+
+  for (const r of group.rows) {
+    doc.ensure(26);
+    doc.text(`${Math.round(r.weight * 100)}%   ${r.label}`, { size: 10, bold: true, color: INK, indent: 8, lineGap: 1 });
+    doc.text(r.evidence, { size: 9, color: MUTED, indent: 8, lineGap: 1 });
+    if (r.decidingProbe?.answerQuote) {
+      doc.text(`"${r.decidingProbe.answerQuote}"`, { size: 8, color: MUTED, indent: 14, lineGap: 1 });
+    }
+    doc.moveDown(3);
+  }
+  if (footNote) doc.text(footNote, { size: 8, bold: true, color: MUTED, gap: 2 });
+}
+
+function coverageSection(doc, coverage) {
+  if (!coverage?.buckets) return;
+  heading(doc, "What We Actually Know");
+  doc.text(
+    `Every requirement for this role${coverage.rubricVersion != null ? ` (rubric v${coverage.rubricVersion})` : ""}, grouped by how strong the evidence is. Percentages are each requirement's weight in the rubric.`,
+    { size: 9, color: MUTED, gap: 4 }
+  );
+
+  bucketBlock(doc, "failed", coverage.buckets.failed);
+  bucketBlock(doc, "proven", coverage.buckets.proven);
+  bucketBlock(doc, "insufficient", coverage.buckets.insufficient, "These are the questions for the next round.");
+
+  const t = coverage.totals;
+  if (t.underpoweredCriteria > 0) {
+    doc.moveDown(4);
+    doc.text(
+      `${t.underpoweredCriteria} of ${t.criteria} requirements were tested with fewer than ${t.minItemsForCall} items and never probed in the interview. That is too little to score either way — on a handful of multiple-choice items a wrong answer is indistinguishable from a guess. Widen the paper or probe these live before treating them as weaknesses.`,
+      { size: 8, color: MUTED }
+    );
+  }
+}
+
+// §3 rule 5 — the degraded-session label travels with the report into print.
+function sessionQualitySection(doc, quality) {
+  if (!quality?.degraded) return;
+  doc.ensure(50);
+  doc.moveDown(6);
+  const top = doc.y;
+  doc._fill(doc.left, top, doc.contentWidth, 3, [0.85, 0.55, 0.06]);
+  doc.y -= 8;
+  doc.text("DEGRADED SESSION — RECOMMENDATION WITHHELD", { size: 11, bold: true, color: [0.7, 0.45, 0.05], gap: 3 });
+  for (const r of quality.reasons) {
+    doc.text(`•  ${sanitize(r)}`, { size: 10, color: INK, indent: 4, lineGap: 2 });
+  }
+  doc.text(
+    "On a broken audio signal an unanswered question cannot be told apart from an unheard one. Scores in this report are shown for transparency and are not a measure of this candidate.",
+    { size: 9, color: MUTED, gap: 4 }
+  );
+  doc._fill(doc.left, doc.y + 2, doc.contentWidth, 1, [0.9, 0.91, 0.93]);
+  doc.moveDown(6);
+}
+
+// Answer-by-answer quality strip — the view that makes a run of near-silent
+// answers visible instead of averaging it into one number.
+function turnQualitySection(doc, quality) {
+  if (!quality?.perTurn?.length) return;
+  heading(doc, "Answer-by-Answer Quality");
+  doc.text(`${quality.degradedCount} of ${quality.total} answers show a degraded audio signature.`, {
+    size: 9,
+    color: MUTED,
+    gap: 6,
+  });
+
+  const barW = 9;
+  const gap = 3;
+  const maxH = 42;
+  const perRow = Math.floor(doc.contentWidth / (barW + gap));
+  const rows = [];
+  for (let i = 0; i < quality.perTurn.length; i += perRow) rows.push(quality.perTurn.slice(i, i + perRow));
+
+  for (const group of rows) {
+    doc.ensure(maxH + 16);
+    const baseline = doc.y - maxH;
+    group.forEach((t, i) => {
+      const x = doc.left + i * (barW + gap);
+      doc._fill(x, doc.y, barW, maxH, [0.94, 0.95, 0.96]);
+      const h = Math.max(2, Math.min(maxH, ((t.answerScore ?? 0) / 100) * maxH));
+      doc._fill(x, baseline + h, barW, h, t.degraded ? [0.86, 0.15, 0.15] : BRAND);
+      // Secondary encoding, so the flag survives greyscale printing.
+      if (t.degraded) doc._line(x, baseline - 9, "!", 7, true, [0.86, 0.15, 0.15], "center", barW);
+    });
+    doc.y -= maxH + 14;
+  }
+  doc.text("Bar height = answer score.  ! = degraded audio signature.", { size: 8, color: MUTED });
+}
+
+const ASSESSMENT_VERDICT = {
+  verified: { label: "VERIFIED by assessment", color: [0.11, 0.6, 0.4] },
+  contradicted: { label: "CONTRADICTED by assessment", color: [0.86, 0.15, 0.15] },
+  inconclusive: { label: "INCONCLUSIVE", color: [0.85, 0.55, 0.06] },
+};
+const TIER_SOURCE = {
+  claim_derived: "derived from résumé claims",
+  recruiter_override: "set by the recruiter",
+  paper_fixed: "fixed for this paper",
+};
+const SESSION_STATUS = {
+  scheduled: "Invitation sent — not started yet",
+  in_progress: "In progress",
+  paused: "Paused (integrity soft-lock — awaiting human review)",
+  completed: "Completed",
+  expired: "Window expired",
+  cancelled: "Cancelled by the recruiter",
+};
+
+function assessmentSection(doc, a, criterionLabels = {}) {
+  if (!a) return;
+  const labelFor = (id) => criterionLabels[id] || id;
+  heading(doc, "Skills Assessment");
+
+  // An explicit skip is a recorded human decision, not a missing assessment.
+  if (a.decision?.action === "skipped") {
+    doc.text(
+      `Skipped by ${a.decision.byName || "a recruiter"} on ${fmtWhen(a.decision.at)} — this candidate was sent directly to the AI interview. This is a recorded human decision, not a gap in the data.`,
+      { size: 11, color: INK }
+    );
+    return;
+  }
+
+  if (!a.session) {
+    doc.text("An assessment decision was recorded but no session exists yet.", { size: 11, color: MUTED });
+    return;
+  }
+
+  const t = a.session.difficultyTier;
+  if (t) {
+    doc.text(
+      `Difficulty: ${t.value.toUpperCase()} — ${TIER_SOURCE[t.source] || t.source}${t.basis ? ` (${t.basis})` : ""}`,
+      { size: 10, bold: true, color: INK, gap: 6 }
+    );
+  }
+
+  const r = a.session.result;
+  if (!r) {
+    // Live-but-unscored renders as its status — never as a placeholder score.
+    doc.text(`Status: ${SESSION_STATUS[a.session.status] || a.session.status}. No scored result yet.`, { size: 11, color: MUTED });
+    return;
+  }
+
+  doc.text(`Score: ${r.totalCorrect}/${r.totalItems} items correct`, { size: 14, bold: true, color: INK, gap: 4 });
+  if (r.completedBy === "expiry") {
+    warningLine(doc, "PARTIAL — the window closed before the candidate submitted; only the work completed by then is scored. Treat as incomplete evidence.");
+  }
+
+  if (Array.isArray(r.perCriterion) && r.perCriterion.length > 0) {
+    doc.moveDown(2);
+    doc.text("By rubric criterion", { size: 10, bold: true, color: MUTED, gap: 3 });
+    for (const c of r.perCriterion) {
+      doc.text(`•  ${sanitize(labelFor(c.criterionId))} — ${c.correctCount}/${c.itemCount}`, { size: 11, color: INK, indent: 4, lineGap: 3 });
+    }
+  }
+
+  if (Array.isArray(r.claimVerdicts) && r.claimVerdicts.length > 0) {
+    doc.moveDown(4);
+    doc.text("Résumé-claim verdicts (items targeted at unproven claims)", { size: 10, bold: true, color: MUTED, gap: 3 });
+    for (const v of r.claimVerdicts) {
+      doc.ensure(24);
+      const badge = ASSESSMENT_VERDICT[v.verdict] || ASSESSMENT_VERDICT.inconclusive;
+      doc.text(badge.label, { size: 10, bold: true, color: badge.color, gap: 1 });
+      doc.text(`${sanitize(labelFor(v.criterionId))} — ${v.correctCount}/${v.itemCount} targeted items correct`, {
+        size: 9,
+        color: MUTED,
+        indent: 4,
+        gap: 4,
+      });
+    }
+    doc.text(
+      "A contradicted claim is evidence for a human reviewer, never an automatic rejection.",
+      { size: 8, color: MUTED, gap: 4 }
+    );
+  }
+
+  doc.moveDown(4);
+  doc.text(
+    `Scored ${fmtWhen(r.scoredAt)} · scorer ${r.scorerVersion || "—"} · reproducibility ${String(r.reproducibilityHash || "").slice(0, 16) || "—"}…  ` +
+      "The score was computed deterministically by code from the frozen answer key — no AI in the scoring path. The hash lets an auditor re-derive this exact score from the archived paper and responses.",
+    { size: 8, color: MUTED }
+  );
+}
+
 // §5: explicit action verb + one-line justification, the last thing before the footer.
 function recommendedActionLine(doc, action) {
   if (!action) return;
   doc.moveDown(6);
   doc.hr({ gapAfter: 6 });
+  // A withheld recommendation is labelled as withheld, not printed as a decision.
+  if (action.suppressed) {
+    doc.text(`Recommendation withheld — ${action.action}`, { size: 12, bold: true, color: WARN, gap: 2 });
+    doc.text(action.justification, { size: 10, color: MUTED });
+    return;
+  }
   doc.text(`Recommended action: ${action.action}`, { size: 12, bold: true, color: INK, gap: 2 });
   doc.text(action.justification, { size: 10, color: MUTED });
 }

@@ -313,4 +313,7 @@ function emitStageUpdate(candidate) {
     .catch(() => {});
 }
 
-module.exports = { applyTransition, emitStageUpdate, ROUND_STAGES };
+// STAGE_NOTIFICATIONS/DEFAULT_NOTIFICATION are exported for the enum-coverage
+// test: these are the only notify* call sites whose `type` is not a literal, so
+// the static scan cannot see them (test/unit/notificationTypes.test.js).
+module.exports = { applyTransition, emitStageUpdate, ROUND_STAGES, STAGE_NOTIFICATIONS, DEFAULT_NOTIFICATION };

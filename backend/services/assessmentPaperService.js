@@ -10,6 +10,7 @@
 const AssessmentPaper = require("../models/AssessmentPaper");
 const CompanySettings = require("../models/CompanySettings");
 const rubricService = require("./rubricService");
+const itemGenService = require("./itemGenService");
 const llm = require("./llmService");
 const usageService = require("./usageService");
 const { resolveRole } = require("../config/models");
@@ -283,7 +284,12 @@ async function approve(paperId, companyId, user) {
   if (!paper) throw httpError(404, "Assessment paper not found");
   if (paper.status === "approved") throw httpError(409, "Paper is already approved");
   if (paper.status === "archived") throw httpError(409, "Archived papers cannot be approved — generate a new version");
-  if (paper.generationRun?.status === "running") throw httpError(409, "Item generation is still running — approve once it finishes");
+  // Only a LIVE run blocks approval. A run whose process died must not hold the
+  // paper hostage — the pool it left behind is still valid, and the section
+  // coverage check below is the real gate on whether it is enough to approve.
+  if (itemGenService.isRunActive(paper.generationRun)) {
+    throw httpError(409, "Item generation is still running — approve once it finishes");
+  }
 
   // Every section must actually be servable from its ACTIVE pool. Flagged items
   // don't count — an item the blind solvers disagreed on is not test-ready.

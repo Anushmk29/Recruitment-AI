@@ -290,3 +290,65 @@ test("an item without a criterionId cannot exist on a paper", () => {
   const err = paper.validateSync();
   assert.ok(err && /criterionId/.test(String(err)), "criterionId is schema-required on every item");
 });
+
+// --- Run liveness: an orphaned generation run must not wedge the paper --------
+// A run exists only in the memory of the process that started it. When that
+// process dies mid-run nothing writes the terminal status, so the paper stays at
+// `status: "running"` forever — and BOTH recovery paths (Resume, Approve) gate on
+// that flag, leaving the paper unrecoverable from the UI. Liveness is therefore
+// proven by heartbeat, not claimed by status.
+
+const { isRunStale, isRunActive } = require("../../services/itemGenService");
+
+const MIN = 60 * 1000;
+
+test("a run beating recently is active and not stale", () => {
+  const run = { status: "running", startedAt: new Date(0), heartbeatAt: new Date(100 * MIN) };
+  const now = 101 * MIN;
+  assert.equal(isRunStale(run, now), false);
+  assert.equal(isRunActive(run, now), true);
+});
+
+test("a run whose heartbeat went quiet past the window is stale and takeable", () => {
+  const run = { status: "running", startedAt: new Date(0), heartbeatAt: new Date(100 * MIN) };
+  const now = 100 * MIN + 16 * MIN; // default window is 15 min
+  assert.equal(isRunStale(run, now), true);
+  assert.equal(isRunActive(run, now), false, "a dead run must never block Resume or Approve");
+});
+
+test("a legacy run with no heartbeat falls back to startedAt", () => {
+  const fresh = { status: "running", startedAt: new Date(100 * MIN) };
+  assert.equal(isRunStale(fresh, 101 * MIN), false, "recently started, just hasn't finished item 1 yet");
+  assert.equal(isRunStale(fresh, 120 * MIN), true, "started 20 min ago and never beat — the process is gone");
+});
+
+test("a run with neither heartbeat nor startedAt is stale, never permanently blocking", () => {
+  assert.equal(isRunStale({ status: "running" }, 0), true);
+});
+
+test("only a running run can be stale — terminal states are never 'stale'", () => {
+  for (const status of ["idle", "completed", "failed"]) {
+    const run = { status, startedAt: new Date(0), heartbeatAt: new Date(0) };
+    assert.equal(isRunStale(run, 999 * MIN), false, `${status} is a terminal state, not a stalled run`);
+    assert.equal(isRunActive(run, 999 * MIN), false, `${status} must not read as an active run`);
+  }
+});
+
+test("a missing generationRun blocks nothing", () => {
+  assert.equal(isRunStale(undefined, 0), false);
+  assert.equal(isRunActive(undefined, 0), false);
+});
+
+test("heartbeatAt is a real schema path, so the loop's stamp persists", () => {
+  const paper = new AssessmentPaper({
+    job: new mongoose.Types.ObjectId(),
+    company: new mongoose.Types.ObjectId(),
+    rubric: new mongoose.Types.ObjectId(),
+    rubricVersion: 1,
+    version: 1,
+    compiledBy: { engine: "ai", at: new Date() },
+    generationRun: { status: "running", startedAt: new Date(), heartbeatAt: new Date(100 * MIN) },
+  });
+  assert.equal(paper.validateSync(), undefined);
+  assert.equal(paper.generationRun.heartbeatAt.getTime(), 100 * MIN);
+});

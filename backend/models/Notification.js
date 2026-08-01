@@ -12,6 +12,13 @@ const notificationSchema = new mongoose.Schema(
         "application_submitted",
         "ats_result_pass",
         "ats_result_fail",
+        // Assessment stage sits between ATS and interview (assessmentService,
+        // assessmentReminderJob). Omitting these made every invite/resend throw
+        // in notifyCandidate *before* the email dispatch, so the candidate got
+        // no link at all — see test/unit/notificationTypes.test.js.
+        "assessment_invite",
+        "assessment_reminder",
+        "assessment_completed",
         "interview_reminder",
         "interview_completed",
         "next_round_scheduled",

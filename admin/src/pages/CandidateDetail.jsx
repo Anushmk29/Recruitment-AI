@@ -9,6 +9,7 @@ import { Select, Input, Textarea, Label, FormGroup } from "../components/ui/Fiel
 import Button from "../components/ui/Button.jsx";
 import { useToast } from "../components/ui/Toast.jsx";
 import { STAGES, stageLabel, stageTone, normalizeStage, isTerminal } from "../lib/pipeline.js";
+import ScorecardPanel from "../components/dashboard/ScorecardPanel.jsx";
 
 function Section({ title, children }) {
   return (
@@ -560,6 +561,17 @@ export default function CandidateDetail() {
           {/* Gate: ATS-passed, no decision yet → Send / Skip inline */}
           {!assessment?.session && !assessment?.decision && normalizeStage(candidate.status) === "ats_passed" && (
             <div className="flex flex-wrap items-end gap-3">
+              {/* Paper not approved yet: Send is disabled with the reason, Skip
+                  always works — the candidate parks here until YOU decide. */}
+              {!assessment?.paperReady && (
+                <p className="w-full rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  No approved assessment paper for this job yet — the candidate waits for your decision either way.{" "}
+                  <Link to={`/jobs/${candidate.job?._id || candidate.job}/assessment`} className="font-semibold underline">
+                    Generate &amp; approve a paper
+                  </Link>{" "}
+                  to enable Send, or skip straight to the AI interview.
+                </p>
+              )}
               <div>
                 <Label>Difficulty</Label>
                 <Select value={assessmentDifficulty} onChange={(e) => setAssessmentDifficulty(e.target.value)} className="min-w-[16rem]">
@@ -569,7 +581,7 @@ export default function CandidateDetail() {
                   <option value="hard">Hard</option>
                 </Select>
               </div>
-              <Button onClick={handleSendAssessment} loading={assessmentBusy}>
+              <Button onClick={handleSendAssessment} loading={assessmentBusy} disabled={!assessment?.paperReady}>
                 <Send className="h-4 w-4" /> Send assessment
               </Button>
               <Button variant="secondary" onClick={handleSkipAssessment} disabled={assessmentBusy}>
@@ -730,6 +742,11 @@ export default function CandidateDetail() {
           )}
         </Section>
       )}
+
+      {/* Human interview rounds. Self-hides when the SCORECARD_ENGINE_ENABLED
+          flag is off server-side (the routes 404), so tenants without the
+          feature see this page exactly as before. */}
+      <ScorecardPanel candidateId={id} />
 
       {/* Timeline */}
       <Section title="Application Timeline">

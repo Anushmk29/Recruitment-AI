@@ -32,6 +32,13 @@ const VERIFICATION_STATUSES = [
   "contradicted_in_assessment",
   "verified_in_interview",
   "contradicted_in_interview",
+  // Human-round verdicts (RoundScorecard). Top of the hierarchy: a person who
+  // probed the claim live and cited what they heard is the strongest evidence
+  // the system holds, so these overwrite machine verdicts and are never
+  // overwritten by them (precedence is enforced in utils/scorecardEngine
+  // `outranks`, the single place the ordering is declared).
+  "verified_by_human",
+  "contradicted_by_human",
 ];
 
 const spanSchema = new mongoose.Schema(

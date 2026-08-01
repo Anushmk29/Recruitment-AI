@@ -19,6 +19,8 @@ const {
   computeVerdict,
   recommendedAction,
   competencyTripletOrNull,
+  buildCoverageMatrix,
+  computeSessionQuality,
 } = require("../utils/interviewReportEngine");
 const { toApplyReceipt } = require("../utils/candidateSerializers");
 
@@ -534,7 +536,7 @@ async function rerunAts(req, res) {
 // and the PDF export so both render identical data.
 async function buildInterviewReport(candidateId, companyId) {
   const candidate = await Candidate.findOne({ _id: candidateId, company: companyId })
-    .select("basicDetails status job stageHistory")
+    .select("basicDetails status job stageHistory assessmentDecision")
     .populate("job", "title department");
   if (!candidate) return null;
 
@@ -557,12 +559,22 @@ async function buildInterviewReport(candidateId, companyId) {
     decisionTrail: lastDecision
       ? { stage: lastDecision.stage, stageLabel: stageLabel(lastDecision.stage), by: lastDecision.by, at: lastDecision.at, note: lastDecision.note }
       : null,
+    // A3.5 — the skills-assessment leg of the pipeline, in the same report as the
+    // interview it fed. Null when the assessment engine never touched this
+    // candidate, so pre-existing reports render unchanged.
+    assessment: await buildAssessmentSummary(candidate, companyId),
   };
 
   const session = await InterviewSession.findOne({ candidate: candidate._id, company: companyId });
   const ai = session && session.aiInterview;
+
+  // Coverage spans all three evidence legs, so it is built whether or not the
+  // interview ran — a report with no interview still has to show what the role
+  // required, what the résumé claimed, and what the assessment actually tested.
+  const coverage = await buildCoverage(candidate._id, companyId, ai, base.assessment);
+
   if (!ai || ai.status === "not_started") {
-    return { ...base, hasInterview: false };
+    return { ...base, coverage, hasInterview: false };
   }
 
   const substance = computeAnswerSubstance(ai.turns);
@@ -574,9 +586,14 @@ async function buildInterviewReport(candidateId, companyId) {
     engineRan,
     overallScore: ai.evaluation?.overallScore,
   });
+  // §3 rule 5/6: when the audio path was broken we cannot distinguish "could not
+  // answer" from "could not hear", so the report states that and withholds the
+  // recommendation instead of printing a confident call over a broken signal.
+  const sessionQuality = computeSessionQuality(ai.turns);
 
   return {
     ...base,
+    coverage,
     hasInterview: true,
     interview: {
       status: ai.status,
@@ -593,8 +610,18 @@ async function buildInterviewReport(candidateId, companyId) {
       competencyTable: buildCompetencyTable(ai.turns),
       substance: { responsiveCount: substance.responsiveCount, totalAnswers: substance.totalAnswers },
       durationFlag,
+      sessionQuality,
       verdict,
-      recommendedAction: recommendedAction(verdict, durationFlag),
+      recommendedAction: sessionQuality.suppressRecommendation
+        ? {
+            action: "Re-interview",
+            justification:
+              "The recommendation is withheld: " +
+              sessionQuality.reasons.join("; ") +
+              ". On a degraded audio signal a non-answer cannot be told apart from an unheard question.",
+            suppressed: true,
+          }
+        : recommendedAction(verdict, durationFlag),
     },
     proctoring: buildProctoringSummary(session.proctoring),
     // Phase 14.5 — evidence clips captured for high-severity flags. Metadata
@@ -605,6 +632,46 @@ async function buildInterviewReport(candidateId, companyId) {
       .select("-clipKey -__v")
       .lean(),
     claimVerification: await buildClaimVerification(session, candidate._id, companyId),
+  };
+}
+
+// A3.5 — the pre-interview skills assessment (or the recruiter's explicit skip)
+// summarised for the report. A skip is a recorded human decision and renders as
+// one — never as a missing assessment. Only scored results carry numbers; a
+// live-but-unscored session surfaces as its status, not a placeholder.
+async function buildAssessmentSummary(candidate, companyId) {
+  const decision = candidate.assessmentDecision?.action ? candidate.assessmentDecision : null;
+  const session = await require("../models/AssessmentSession")
+    .findOne({ candidate: candidate._id, company: companyId })
+    .sort({ createdAt: -1 })
+    .select("status difficultyTier assignment startedAt completedAt result");
+  if (!decision && !session) return null;
+
+  return {
+    decision: decision ? { action: decision.action, mode: decision.mode, byName: decision.byName, at: decision.at } : null,
+    session: session
+      ? {
+          status: session.status,
+          difficultyTier: session.difficultyTier?.value
+            ? { value: session.difficultyTier.value, source: session.difficultyTier.source, basis: session.difficultyTier.basis }
+            : null,
+          assignedAt: session.assignment?.at || null,
+          startedAt: session.startedAt || null,
+          completedAt: session.completedAt || null,
+          result: session.result?.scoredAt
+            ? {
+                scoredAt: session.result.scoredAt,
+                scorerVersion: session.result.scorerVersion,
+                reproducibilityHash: session.result.reproducibilityHash,
+                totalItems: session.result.totalItems,
+                totalCorrect: session.result.totalCorrect,
+                perCriterion: session.result.perCriterion,
+                claimVerdicts: session.result.claimVerdicts,
+                completedBy: session.result.completedBy,
+              }
+            : null,
+        }
+      : null,
   };
 }
 
@@ -649,6 +716,25 @@ async function buildClaimVerification(session, candidateId, companyId) {
   };
 }
 
+// The evidence coverage matrix. The criterion labels and weights come from the
+// pre-interview assessment's own criterionFindings, so the report shows the rubric
+// exactly as it was scored against (frozen version), not as it reads today.
+async function buildCoverage(candidateId, companyId, ai, assessmentSummary) {
+  const pre = await AtsAssessment.findOne({ candidate: candidateId, company: companyId, stage: "pre_interview" })
+    .sort({ createdAt: -1 })
+    .select("criterionFindings rubricVersion scoredAt")
+    .lean();
+  if (!pre) return null;
+
+  const matrix = buildCoverageMatrix({
+    criterionFindings: pre.criterionFindings,
+    perCriterion: assessmentSummary?.session?.result?.perCriterion || [],
+    probes: ai?.probes || [],
+  });
+  if (!matrix) return null;
+  return { ...matrix, rubricVersion: pre.rubricVersion, screenedAt: pre.scoredAt };
+}
+
 // §2: merges each candidate turn with its precomputed substance stats (word count /
 // duration / responsive tag). `answers` is indexed over candidate turns only (see
 // interviewReportEngine.computeAnswerSubstance), so a running counter maps one to the other.
@@ -664,6 +750,10 @@ function buildTranscript(turns, answers) {
       answerScore: t.answerScore,
       inputMode: t.inputMode,
       deliveryScore: t.acoustic?.deliveryScore,
+      // Surfaced so the turn-quality strip can show WHY a turn is flagged rather
+      // than just that it is — a silent turn and a rushed one look different.
+      pauseRatio: t.acoustic?.pauseRatio,
+      wordsPerMinute: t.acoustic?.wordsPerMinute,
       at: t.at,
     };
     if (t.role === "candidate") {

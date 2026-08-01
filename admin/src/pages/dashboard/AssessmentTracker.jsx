@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Send, SkipForward, RefreshCw, PauseCircle, PlayCircle, StopCircle, ClipboardList } from "lucide-react";
+import { ArrowLeft, Send, SkipForward, RefreshCw, PauseCircle, PlayCircle, StopCircle, ClipboardList, Download } from "lucide-react";
 import api from "../../api/client.js";
 import { getSocket } from "../../lib/socket.js";
 import { useToast } from "../../components/ui/Toast.jsx";
@@ -35,6 +35,7 @@ export default function AssessmentTracker() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [difficulty, setDifficulty] = useState({}); // candidateId → override
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -92,6 +93,25 @@ export default function AssessmentTracker() {
     }
   }
 
+  // Who sent vs skipped, per decider, pivot-ready — the raw material of a bias
+  // audit over the assignment decision itself.
+  async function downloadAudit() {
+    setExporting(true);
+    try {
+      const res = await api.get(`/assessments/job/${jobId}/decision-audit?format=csv`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([res.data], { type: "text/csv" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `assessment-decision-audit-${jobId}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function sessionAction(sessionId, action) {
     let body = {};
     if (action === "resume" || action === "end") {
@@ -142,9 +162,14 @@ export default function AssessmentTracker() {
             </p>
           </div>
         </div>
-        <Button as={Link} to={`/jobs/${jobId}/assessment`} variant="secondary">
-          <ClipboardList className="h-4 w-4" /> Assessment paper
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" loading={exporting} onClick={downloadAudit}>
+            <Download className="h-4 w-4" /> Decision audit (CSV)
+          </Button>
+          <Button as={Link} to={`/jobs/${jobId}/assessment`} variant="secondary">
+            <ClipboardList className="h-4 w-4" /> Assessment paper
+          </Button>
+        </div>
       </div>
 
       {/* Status tile */}
@@ -159,14 +184,24 @@ export default function AssessmentTracker() {
         ))}
       </div>
 
-      {/* Awaiting decision — the recruiter gate */}
-      {data.job.assessmentPolicy === "manual" && (
+      {/* Awaiting decision — the recruiter gate. Auto-policy jobs surface it too:
+          candidates park here when no paper is approved or auto-assign failed. */}
+      {(data.job.assessmentPolicy === "manual" || data.awaitingDecision.length > 0) && (
         <Card>
           <h2 className="text-base font-semibold text-slate-800">Awaiting your decision</h2>
           <p className="mt-1 text-sm text-slate-500">
             These candidates passed screening. Send the assessment — or skip a candidate (a senior hire, say) straight to the AI
             interview. Either way it's recorded as your decision; a skip never reads as missing data and costs nothing.
           </p>
+          {!data.paperReady && data.awaitingDecision.length > 0 && (
+            <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              No approved assessment paper yet — candidates wait for your decision either way.{" "}
+              <Link to={`/jobs/${jobId}/assessment`} className="font-semibold underline">
+                Generate &amp; approve a paper
+              </Link>{" "}
+              to enable Send, or skip candidates straight to the AI interview.
+            </p>
+          )}
           <div className="mt-4 space-y-2">
             {data.awaitingDecision.length === 0 && <p className="text-sm text-slate-400">Nobody waiting — all decided.</p>}
             {data.awaitingDecision.map((c) => (
@@ -192,7 +227,7 @@ export default function AssessmentTracker() {
                     <option value="hard">Hard</option>
                   </Select>
                 </div>
-                <Button onClick={() => send(c._id)} disabled={busyId === c._id}>
+                <Button onClick={() => send(c._id)} disabled={busyId === c._id || !data.paperReady}>
                   <Send className="h-4 w-4" /> Send assessment
                 </Button>
                 <Button variant="secondary" onClick={() => skip(c._id)} disabled={busyId === c._id}>

@@ -473,16 +473,49 @@ _Last updated: 2026-07-31._
     reminder cron (24h/1h before start deadline, atomic claim-before-send) + expiry sweep,
     invitation/reminder email templates, resend-with-rotation, stale-session cancellation on
     reject/skip.
+  - ✅ **A3.5 — report section** _(2026-07-31)_. The interview report (JSON endpoint, admin
+    review screen, and PDF) now carries a **Skills Assessment** section:
+    `buildAssessmentSummary` in `candidateController` (null when the engine never touched the
+    candidate → old reports render byte-identical), `assessmentSection` in
+    `interviewReportPdf.js`, `AssessmentCard` in `InterviewReport.jsx`. Honest-rendering rules
+    hold everywhere: a skip renders as a *recorded human decision* (by whom, when), a
+    live-but-unscored session renders as its status never a placeholder, expiry-scored results
+    are badged PARTIAL, and every scored result ships its provenance — difficulty tier + the
+    basis string it was derived from, per-criterion counts, claim verdicts, scorer version, and
+    the reproducibility-hash prefix with a plain-language note that code (not AI) computed it.
+  - ✅ **Assignment-decision bias-audit export** _(2026-07-31)_. `GET
+    /api/assessments/job/:jobId/decision-audit` (`?format=csv` downloads; JSON adds a summary) —
+    who sent vs skipped each ATS-passed candidate, flat and pivot-ready:
+    `utils/assessmentAudit.js` (pure: `auditRows`/`auditSummary`/`toCsv`, RFC 4180 escaping,
+    frozen column order). Undecided candidates appear as `pending` rows so the denominator is
+    everyone the gate applied to; per-decider sent-rates suppress below 5 decisions (a rate over
+    2 decisions is noise); every export writes an `assessment.decision_audit.export` AuditLog
+    row. "Decision audit (CSV)" button on the AssessmentTracker header.
   - ⬜ Remaining from the plan: A4.4 shareable-link drives UI (backend `auto` mode exists), A4.5
     SMS invites (owner: provider contract), evidence clips + phone cam mounted on the assessment
-    shell, A3.5 PDF report section, A5 telemetry surfacing/calibration/analytics joins (exposure
-    counters already recorded), assignment/skip-rate bias audit export.
+    shell, A5 telemetry surfacing/calibration/analytics joins (exposure counters already
+    recorded).
   - **Verified (2026-07-30):** 283/283 unit tests (17 new in `assessmentEngine.test.js`: key
     never in candidate payloads, frozen guard incl. flagged→active ban, tier counterfactual
     identity, scorer reproducibility/monotonicity/floor, verdict rules, solver-prompt key
     isolation, unassigned-session schema rejection); `node --check` + module-load green across
     all 28 touched backend files; admin + user builds green. Funnel analytics fixed to convert
     past untouched opt-in stages.
+  - ✅ **Gate fix — policy, not readiness** _(2026-07-31)_. The recruiter gate previously
+    required an approved paper to engage, so an ATS pass with the paper not yet approved fell
+    through to an instant interview link — a race deciding what the recruiter reserved for
+    themselves. `assessmentGateEngages(engineOn, policy)` (exported, arity-pinned in tests) now
+    engages on policy alone: with `manual`/`auto` set, candidates park at `ats_passed` awaiting
+    the human decision; Skip always works, Send enables the moment a paper is approved
+    (`paperReady` from `getActivePaper` — a fresh v2 draft doesn't disable Send while approved
+    v1 is active). `auto` with no paper degrades to the same queue (the recruiter delegated the
+    send, not a bypass), and the awaiting-decision queue is now queried + rendered for `auto`
+    jobs too (auto-assign failures were previously invisible in the tracker). Amber
+    approve-a-paper hints in CandidateDetail + AssessmentTracker.
+  - **Verified (2026-07-31):** 339/339 unit tests (9 new in `assessmentAudit.test.js`: gate
+    predicate policy-only + arity pin, column contract, pending-row honesty, unscored-session
+    numberlessness, per-decider rate floor, CSV escaping, PDF smoke for skip / partial-result /
+    no-assessment paths); admin build green.
 
 - [x] **Cited application autofill** _(2026-07-31)_. The candidate uploads a PDF/DOCX and the
       experience / education / projects / certificates / skills sections are proposed from it — but as

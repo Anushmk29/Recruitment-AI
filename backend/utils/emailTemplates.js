@@ -127,6 +127,56 @@ function assessmentReminderEmailTemplate(candidate, job, session) {
   return { subject, text, html };
 }
 
+// Panelist scorecard invite (RoundScorecard). Written for someone who may have
+// never seen this platform and will not create an account: it says what the form
+// is, how long it takes, and — deliberately — that it carries the questions
+// worth asking. That last part is why it gets opened.
+function scorecardInviteEmailTemplate({ interviewerName, candidateName, jobTitle, stageLabel, scorecardUrl, expiresAt, targetCount }) {
+  const deadline = formatDateTime(new Date(expiresAt));
+  const probeLine = targetCount
+    ? `It already lists the ${targetCount} thing${targetCount === 1 ? "" : "s"} still worth probing for this candidate, so you can open it before the call and use it as your question list.`
+    : `It lists this role's approved criteria so you can use it as your question list.`;
+
+  const subject = `Scorecard: ${candidateName} — ${stageLabel} (${jobTitle})`;
+  const text =
+    `Hi ${interviewerName},\n\n` +
+    `You're down to run the ${stageLabel.toLowerCase()} for ${candidateName} (${jobTitle}).\n\n` +
+    `Your scorecard: ${scorecardUrl}\n\n` +
+    `${probeLine}\n\n` +
+    `No login needed — the link is yours. It takes about two minutes to fill in, and it's easiest to keep open during the interview. ` +
+    `Anything you didn't get to, leave as "not assessed" — a blank is more useful to us than a guess.\n\n` +
+    `The link works until ${deadline}.\n\n` +
+    `Regards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(interviewerName)},</p>` +
+    `<p>You're down to run the <strong>${escapeHtml(stageLabel.toLowerCase())}</strong> for <strong>${escapeHtml(candidateName)}</strong> (${escapeHtml(jobTitle)}).</p>` +
+    `<p><a href="${escapeHtml(scorecardUrl)}" style="display:inline-block;padding:10px 18px;background:#2a5f4f;color:#fff;text-decoration:none;border-radius:6px;">Open your scorecard</a></p>` +
+    `<p>Or open this link: <a href="${escapeHtml(scorecardUrl)}">${escapeHtml(scorecardUrl)}</a></p>` +
+    `<p>${escapeHtml(probeLine)}</p>` +
+    `<p>No login needed — the link is yours. It takes about two minutes to fill in, and it's easiest to keep open during the interview. ` +
+    `Anything you didn't get to, leave as <em>not assessed</em> — a blank is more useful to us than a guess.</p>` +
+    `<p>The link works until <strong>${escapeHtml(deadline)}</strong>.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+
+  return { subject, text, html };
+}
+
+function scorecardReminderEmailTemplate({ interviewerName, candidateName, stageLabel, scorecardUrl, expiresAt }) {
+  const deadline = formatDateTime(new Date(expiresAt));
+  const subject = `Reminder: scorecard for ${candidateName} (${stageLabel})`;
+  const text =
+    `Hi ${interviewerName},\n\n` +
+    `Your ${stageLabel.toLowerCase()} scorecard for ${candidateName} is still open. It takes about two minutes: ${scorecardUrl}\n\n` +
+    `It expires ${deadline}.\n\nRegards,\nRecruitment Team`;
+  const html =
+    `<p>Hi ${escapeHtml(interviewerName)},</p>` +
+    `<p>Your ${escapeHtml(stageLabel.toLowerCase())} scorecard for <strong>${escapeHtml(candidateName)}</strong> is still open. It takes about two minutes.</p>` +
+    `<p><a href="${escapeHtml(scorecardUrl)}">Open your scorecard</a></p>` +
+    `<p>It expires <strong>${escapeHtml(deadline)}</strong>.</p>` +
+    `<p>Regards,<br/>Recruitment Team</p>`;
+  return { subject, text, html };
+}
+
 function verificationEmailTemplate(user, verifyUrl) {
   const subject = "Verify your email address";
   const text =
@@ -399,6 +449,8 @@ module.exports = {
   interviewInvitationEmailTemplate,
   assessmentInvitationEmailTemplate,
   assessmentReminderEmailTemplate,
+  scorecardInviteEmailTemplate,
+  scorecardReminderEmailTemplate,
   verificationEmailTemplate,
   passwordResetEmailTemplate,
   otpEmailTemplate,

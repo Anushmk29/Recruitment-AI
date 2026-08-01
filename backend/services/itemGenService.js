@@ -16,6 +16,7 @@ const CompanySettings = require("../models/CompanySettings");
 const RoleRubric = require("../models/RoleRubric");
 const llm = require("./llmService");
 const usageService = require("./usageService");
+const tenantContext = require("../utils/tenantContext");
 const { resolveRole } = require("../config/models");
 const {
   ITEM_GEN_PROMPT_VERSION,
@@ -42,6 +43,47 @@ function maxLlmCallsPerPaper() {
 }
 function poolCapPerTier() {
   return Number(process.env.ASSESSMENT_POOL_CAP_PER_TIER) || 8; // per section per tier
+}
+
+// --- Run liveness ------------------------------------------------------------
+// A run lives only in the memory of the process that started it. If that process
+// goes away mid-run (deploy, crash, nodemon restart, `docker compose restart`),
+// nothing ever writes the terminal status, so the paper is left pinned at
+// `generationRun.status: "running"` forever. Both guards then fire against a run
+// that no longer exists: Resume refuses with 409 "already running" and Approve
+// refuses with 409 "still running" — the paper is unrecoverable from the UI.
+//
+// So a run has to prove it is alive rather than merely claim it. The loop stamps
+// `heartbeatAt` every time it persists an item; a run whose heartbeat has gone
+// quiet for longer than the window is treated as dead and may be taken over.
+//
+// Taking over is safe because the run is already resumable by design: items
+// persist as they pass the gate, and runGeneration skips specs already covered by
+// existing items — a takeover continues the pool instead of duplicating it. The
+// window is deliberately generous, because one item can legitimately take minutes
+// (1 gen + 3 blind solves, doubled when a disagreement triggers the revision
+// cycle) and a false-positive takeover would put two loops on the same document.
+function runStaleMs() {
+  return Number(process.env.ASSESSMENT_GEN_STALE_MS) || 15 * 60 * 1000;
+}
+
+/**
+ * Pure: has this run's heartbeat gone quiet long enough to declare its process
+ * dead? Exported for unit tests and reused by every caller that gates on
+ * "is generation running", so the three call sites cannot drift apart.
+ */
+function isRunStale(generationRun, now = Date.now()) {
+  if (!generationRun || generationRun.status !== "running") return false;
+  // Runs that predate heartbeats — or that died before finishing their first
+  // item — have no heartbeat to read, so fall back to when the run started.
+  const last = generationRun.heartbeatAt || generationRun.startedAt;
+  if (!last) return true;
+  return now - new Date(last).getTime() > runStaleMs();
+}
+
+/** True only when a run is genuinely alive — the predicate the 409 guards want. */
+function isRunActive(generationRun, now = Date.now()) {
+  return generationRun?.status === "running" && !isRunStale(generationRun, now);
 }
 
 function httpError(status, message, code) {
@@ -333,7 +375,14 @@ async function runGeneration(paperId, companyId) {
   const paper = await AssessmentPaper.findOne({ _id: paperId, company: companyId });
   if (!paper) throw httpError(404, "Assessment paper not found");
   if (paper.status !== "draft") throw httpError(409, "Items can only be generated on a draft paper");
-  if (paper.generationRun?.status === "running") throw httpError(409, "Generation is already running for this paper");
+  if (isRunActive(paper.generationRun)) throw httpError(409, "Generation is already running for this paper");
+  if (paper.generationRun?.status === "running") {
+    // Stale — the process that owned this run is gone. Take it over rather than
+    // refusing forever; the pool built so far is kept and resumed.
+    console.warn(
+      `[itemGen] taking over a stale run on paper ${paper._id} (last heartbeat ${paper.generationRun.heartbeatAt || paper.generationRun.startedAt})`
+    );
+  }
   if (!llm.isEnabled()) {
     throw httpError(503, "Assessment generation needs the AI engine (no LLM key configured) — there is no template fallback", "ASSESSMENT_LLM_UNAVAILABLE");
   }
@@ -366,6 +415,7 @@ async function runGeneration(paperId, companyId) {
   paper.generationRun = {
     status: "running",
     startedAt: new Date(),
+    heartbeatAt: new Date(),
     generated: paper.items.filter((i) => i.status === "active").length,
     flagged: paper.items.filter((i) => i.status === "flagged").length,
     failed: 0,
@@ -376,6 +426,14 @@ async function runGeneration(paperId, companyId) {
 
   const budget = makeBudget();
   let itemSeq = paper.items.length;
+
+  // Stamp liveness and persist. Called on EVERY iteration, including the ones
+  // that produce no item — a run grinding through failures is still alive, and
+  // without this its heartbeat would go quiet and invite a takeover.
+  const beat = async () => {
+    paper.generationRun.heartbeatAt = new Date();
+    await paper.save();
+  };
 
   try {
     for (const spec of pending) {
@@ -395,17 +453,19 @@ async function runGeneration(paperId, companyId) {
         }
         console.warn(`[itemGen] item generation failed (${spec.sectionId}/${spec.criterionId}): ${err.code || err.message}`);
         paper.generationRun.failed += 1;
+        await beat();
         continue;
       }
       if (!item) {
         paper.generationRun.failed += 1;
+        await beat();
         continue;
       }
       paper.items.push(item);
       if (item.status === "active") paper.generationRun.generated += 1;
       else paper.generationRun.flagged += 1;
       paper.markModified("items");
-      await paper.save(); // persist as we go — the run is resumable by design
+      await beat(); // persist as we go — the run is resumable by design
     }
     paper.generationRun.status = "completed";
   } catch (err) {
@@ -457,4 +517,44 @@ async function regenerateItem(paperId, companyId, itemId) {
   return paper;
 }
 
-module.exports = { runGeneration, regenerateItem, buildSpecs, normaliseGenerated, solverAgreesWithKey };
+/**
+ * Boot-time cleanup (called from server.js after the DB connects). A run whose
+ * heartbeat went quiet belongs to a process that no longer exists, so nothing
+ * will ever write its terminal status. Flip it to `failed` with an honest,
+ * actionable message instead of leaving the paper pinned at `running` — rule 5:
+ * a degraded state must be labelled, never rendered as if it were still working.
+ *
+ * Heartbeat-gated rather than reclaiming every `running` run on sight, because
+ * with more than one API instance a peer's genuinely LIVE run must not be killed
+ * just because this instance restarted.
+ */
+async function reconcileInterruptedRuns() {
+  return tenantContext.runAsSystem(async () => {
+    const papers = await AssessmentPaper.find({ "generationRun.status": "running" });
+    let reclaimed = 0;
+    for (const paper of papers) {
+      if (!isRunStale(paper.generationRun)) continue; // a live run elsewhere — leave it alone
+      const done = paper.items.filter((i) => i.status !== "retired").length;
+      paper.generationRun.status = "failed";
+      paper.generationRun.finishedAt = new Date();
+      paper.generationRun.message =
+        `Generation was interrupted before it finished (the server restarted or the run was killed). ` +
+        `The ${done} item(s) already through the blind-solve gate were kept — click "Resume / top-up generation" to continue from there.`;
+      await paper.save();
+      reclaimed += 1;
+    }
+    if (reclaimed) console.warn(`[itemGen] reconciled ${reclaimed} interrupted generation run(s) on startup`);
+    return reclaimed;
+  });
+}
+
+module.exports = {
+  runGeneration,
+  regenerateItem,
+  buildSpecs,
+  normaliseGenerated,
+  solverAgreesWithKey,
+  isRunStale,
+  isRunActive,
+  reconcileInterruptedRuns,
+};

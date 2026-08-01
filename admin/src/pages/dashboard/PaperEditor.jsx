@@ -58,7 +58,12 @@ export default function PaperEditor() {
 
   const selected = useMemo(() => papers.find((p) => p._id === selectedId) || null, [papers, selectedId]);
   const isDraft = selected?.status === "draft";
-  const generating = selected?.generationRun?.status === "running";
+  // `generationStalled` is computed server-side: the run says "running" but its
+  // heartbeat died with the process that owned it. Treating that as "generating"
+  // is what wedges this screen — it spins forever AND disables the one button that
+  // would fix it. A stalled run is not generating; it is waiting to be resumed.
+  const stalled = Boolean(selected?.generationStalled);
+  const generating = selected?.generationRun?.status === "running" && !stalled;
 
   const load = useCallback(async () => {
     try {
@@ -382,6 +387,19 @@ export default function PaperEditor() {
                 <p className="mt-1 text-xs">
                   Each item is answered by 3 independent solvers who never see the key. Anything they disagree on is revised once, then
                   flagged for you — disagreement means the question is ambiguous, and ambiguity is routed to a human, not shipped.
+                </p>
+              </div>
+            )}
+            {stalled && (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                <div className="flex items-center gap-2 font-medium">
+                  <AlertTriangle className="h-4 w-4" /> Generation stopped before it finished
+                </div>
+                <p className="mt-1 text-xs">
+                  The run was interrupted (usually a server restart) at{" "}
+                  {selected.generationRun.generated + selected.generationRun.flagged} of {selected.generationRun.target} items. Everything
+                  that already passed the blind-solve gate was kept — use <strong>Resume / top-up generation</strong> to carry on from
+                  there. Nothing is regenerated twice.
                 </p>
               </div>
             )}

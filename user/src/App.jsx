@@ -12,6 +12,8 @@ import PhoneCam from "./pages/PhoneCam.jsx";
 import AssessmentLogin from "./pages/AssessmentLogin.jsx";
 import AssessmentHub from "./pages/AssessmentHub.jsx";
 import AssessmentRoom from "./pages/AssessmentRoom.jsx";
+import ScorecardLogin from "./pages/ScorecardLogin.jsx";
+import ScorecardForm from "./pages/ScorecardForm.jsx";
 import Register from "./pages/Register.jsx";
 import Login from "./pages/Login.jsx";
 import VerifyEmail from "./pages/VerifyEmail.jsx";
@@ -56,6 +58,12 @@ export default function App() {
       {/* Phase 14.6 — phone companion camera, opened by scanning the pre-check QR.
           Deliberately outside AppShell: it's a single-purpose kiosk page. */}
       <Route path="/phone-cam/:token" element={<PhoneCam />} />
+      {/* Interviewer scorecard (RoundScorecard). Outside AppShell on purpose: the
+          person opening this is a hiring manager or external panelist, not a
+          candidate — the careers navbar would be confusing chrome, and they have
+          no account to navigate to. */}
+      <Route path="/scorecard/:token" element={<ScorecardLogin />} />
+      <Route path="/scorecard-portal/form" element={<ScorecardForm />} />
 
       <Route
         path="/*"

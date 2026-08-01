@@ -44,6 +44,8 @@ const publicCareersRoutes = require("./routes/publicCareersRoutes");
 const platformRoutes = require("./routes/platformRoutes");
 const assessmentRoutes = require("./routes/assessmentRoutes");
 const assessmentPortalRoutes = require("./routes/assessmentPortalRoutes");
+const scorecardRoutes = require("./routes/scorecardRoutes");
+const scorecardPortalRoutes = require("./routes/scorecardPortalRoutes");
 const { webhook } = require("./controllers/paymentController");
 const { initSocket } = require("./config/socket");
 const { startEmailWorker } = require("./workers/emailWorker");
@@ -183,6 +185,15 @@ if (require("./services/assessmentPaperService").engineEnabled()) {
   app.use("/api/assessment-portal", assessmentPortalRoutes);
 }
 
+// Human-round scorecards (RoundScorecard). Independently flagged: the three
+// interview rounds exist whether or not the assessment engine is on, so this
+// must not ride on that flag. Default OFF — with it unset the platform behaves
+// exactly as it did before.
+if (process.env.SCORECARD_ENGINE_ENABLED === "true") {
+  app.use("/api/scorecards", scorecardRoutes);
+  app.use("/api/scorecard-portal", scorecardPortalRoutes);
+}
+
 // Phase 15.2/15.3 — public, crawler-facing careers pages + job feeds (root
 // paths, not /api: these URLs are submitted to aggregators and indexed).
 app.use("/", publicCareersRoutes);
@@ -256,6 +267,14 @@ let emailWorker = null;
 connectDB()
   .then(() => {
     initSocket(httpServer);
+    // Item-generation runs live in process memory, so any that were mid-flight when
+    // this process's predecessor died are never going to finish. Release them (only
+    // the ones whose heartbeat has gone quiet — a peer instance's live run is left
+    // alone) so the paper reports the interruption and the recruiter can resume,
+    // instead of the editor spinning on a run that no longer exists.
+    require("./services/itemGenService")
+      .reconcileInterruptedRuns()
+      .catch((err) => logger.error("failed to reconcile interrupted item-generation runs", { err: { message: err.message } }));
     if (runWorkersInApi) {
       emailWorker = startEmailWorker();
       startPublishWorker();

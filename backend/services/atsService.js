@@ -63,30 +63,44 @@ async function getResumeIngest(candidate) {
 // the recruiter decides "Send assessment" or "Skip to AI interview" from the
 // awaiting-decision queue. `auto` (drives) assigns the assessment immediately.
 // `off` (the default for every existing job) is byte-identical to before.
+// The gate predicate, exported for tests. Deliberately a function of policy
+// alone: paper readiness, quota, or any other system state must never appear
+// here — "not ready" degrades the recruiter's options inside the gate, it never
+// bypasses the recruiter.
+function assessmentGateEngages(engineOn, assessmentPolicy) {
+  return Boolean(engineOn) && ["manual", "auto"].includes(assessmentPolicy);
+}
+
 async function advanceAfterAtsPass(candidate, job, score) {
   const assessmentPaperService = require("./assessmentPaperService");
-  const gateActive =
-    assessmentPaperService.engineEnabled() &&
-    ["manual", "auto"].includes(job.assessmentPolicy) &&
-    (await assessmentPaperService.getActivePaper(job._id, job.company));
+  // The gate engages on POLICY, never on system readiness. Requiring an
+  // approved paper here let candidates fall through to an instant interview
+  // link whenever the paper wasn't ready yet — a race deciding what the
+  // recruiter explicitly reserved for themselves. With no paper approved the
+  // candidate parks in the awaiting-decision queue: Skip works immediately,
+  // Send starts working the moment a paper is approved.
+  const gateActive = assessmentGateEngages(assessmentPaperService.engineEnabled(), job.assessmentPolicy);
 
   if (gateActive) {
+    const paperReady = !!(await assessmentPaperService.getActivePaper(job._id, job.company));
     if (candidate.status === "applied") {
       appendStageHistory(candidate, "ats_passed");
       candidate.status = "ats_passed";
       await candidate.save();
     }
-    if (job.assessmentPolicy === "auto") {
+    if (job.assessmentPolicy === "auto" && paperReady) {
       try {
         await require("./assessmentService").autoAssignAfterAtsPass(candidate, job);
       } catch (err) {
         // Fail open to the awaiting-decision queue: a candidate must never be
         // lost because auto-assignment hiccuped.
         console.error(`[ats] auto assessment assignment failed for candidate ${candidate._id}: ${err.message}`);
-        await notifyAwaitingDecision(candidate, job);
+        await notifyAwaitingDecision(candidate, job, { paperReady });
       }
     } else {
-      await notifyAwaitingDecision(candidate, job);
+      // `auto` with no approved paper degrades to the same queue: the recruiter
+      // delegated the send, not the decision to bypass the assessment.
+      await notifyAwaitingDecision(candidate, job, { paperReady });
     }
     return;
   }
@@ -104,13 +118,15 @@ async function advanceAfterAtsPass(candidate, job, score) {
   await createInterviewSessionIfNeeded(candidate, job);
 }
 
-async function notifyAwaitingDecision(candidate, job) {
+async function notifyAwaitingDecision(candidate, job, { paperReady = true } = {}) {
   try {
     await notifyAdmin({
       companyId: job.company,
       type: "assessment_decision_needed",
       title: "Candidate awaiting your decision",
-      message: `${candidate.basicDetails.name} passed screening for ${job.title}. Send the skills assessment, or skip straight to the AI interview.`,
+      message: paperReady
+        ? `${candidate.basicDetails.name} passed screening for ${job.title}. Send the skills assessment, or skip straight to the AI interview.`
+        : `${candidate.basicDetails.name} passed screening for ${job.title}. No approved assessment paper exists yet — approve one to send the assessment, or skip straight to the AI interview.`,
       meta: { candidateId: candidate._id, jobId: job._id },
     });
   } catch (err) {
@@ -363,4 +379,4 @@ async function runAtsForCandidate(candidate, job) {
   return candidate;
 }
 
-module.exports = { runAtsForCandidate, advanceAfterAtsPass };
+module.exports = { runAtsForCandidate, advanceAfterAtsPass, assessmentGateEngages };

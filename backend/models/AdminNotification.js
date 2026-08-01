@@ -14,6 +14,24 @@ const adminNotificationSchema = new mongoose.Schema(
         "subscription_renewal",
         "new_candidate_applied",
         "ats_completed",
+        // Assessment stage. `assessment_contradiction` and `assessment_softlock`
+        // are the §3 rule 4/6 human-routing signals and are dispatched with
+        // `.catch(() => {})`, so an enum miss silently swallowed the one alert
+        // that is supposed to pull a human in.
+        "assessment_decision_needed",
+        "assessment_contradiction",
+        "assessment_softlock",
+        // Dispatched from the STAGE_NOTIFICATIONS table, where the throw is NOT
+        // caught — a missing entry aborted applyTransition("assessment_completed")
+        // itself, so submitting an assessment failed outright.
+        "assessment_completed",
+        // Human interview rounds (RoundScorecard). `scorecard_contradiction` and
+        // `scorecard_disagreement` are the rule 4 routing signals: a person
+        // disproved a claim, or a person and the engine reached materially
+        // different conclusions. Neither is ever resolved by averaging.
+        "scorecard_submitted",
+        "scorecard_contradiction",
+        "scorecard_disagreement",
         "candidate_shortlisted",
         "candidate_rejected",
         "candidate_stage_changed",

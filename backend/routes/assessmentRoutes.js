@@ -19,6 +19,7 @@ const {
   skipForCandidate,
   getForCandidate,
   jobOverview,
+  decisionAudit,
   resend,
   cancel,
   resumeSession,
@@ -41,6 +42,7 @@ router.post("/papers/:id/approve", requireAdmin, approvePaper);
 
 // The recruiter gate + tracker (A2)
 router.get("/job/:jobId/overview", requireAdmin, jobOverview);
+router.get("/job/:jobId/decision-audit", requireAdmin, decisionAudit);
 router.post("/candidate/:candidateId/send", requireAdmin, sendToCandidate);
 router.post("/candidate/:candidateId/skip", requireAdmin, skipForCandidate);
 router.get("/candidate/:candidateId", requireAdmin, getForCandidate);

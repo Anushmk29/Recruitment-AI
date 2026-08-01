@@ -33,6 +33,8 @@ const VERIFICATION_MULT = {
   contradicted_in_assessment: 0,  // targeted items majority-failed — surfaced to a human, never auto-rejects
   verified_in_interview: 1,       // proven live (Phase 8 writes this back)
   contradicted_in_interview: 0,   // proven false live
+  verified_by_human: 1,           // a human interviewer probed it live and cited what they heard (RoundScorecard)
+  contradicted_by_human: 0,       // disproven live by a person — routed to a human, never an auto-reject
 };
 
 // Claims supporting a criterion whose weight is at or above this share of the

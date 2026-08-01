@@ -52,16 +52,23 @@ async function skipForCandidate(req, res) {
 async function getForCandidate(req, res) {
   const candidate = await loadCandidate(req);
   const session = await AssessmentSession.findOne({ candidate: candidate._id, company: req.user.company }).sort({ createdAt: -1 });
+  // Paper readiness rides along so the gate UI can say WHY Send is unavailable
+  // ("approve a paper first") instead of failing on click. `getActivePaper`
+  // (latest APPROVED), not latestStatusForJob — a fresh v2 draft must not
+  // disable Send while an approved v1 is still active.
+  const paperReady = candidate.job ? !!(await paperService.getActivePaper(candidate.job._id, req.user.company)) : false;
   if (!session) {
     return res.json({
       session: null,
       decision: candidate.assessmentDecision?.action ? candidate.assessmentDecision : null,
+      paperReady,
     });
   }
   const paper = await AssessmentPaper.findById(session.paper).select("sections version difficultyPolicy items.id items.criterionId items.stem items.status");
   res.json({
     session,
     decision: candidate.assessmentDecision?.action ? candidate.assessmentDecision : null,
+    paperReady,
     paper: paper
       ? {
           version: paper.version,
@@ -80,13 +87,17 @@ async function jobOverview(req, res) {
   const job = await Job.findOne({ _id: req.params.jobId, company: req.user.company });
   if (!job) return res.status(404).json({ error: "Job not found" });
 
-  const [paperStatus, sessions, awaiting] = await Promise.all([
+  const [paperStatus, paperReady, sessions, awaiting] = await Promise.all([
     paperService.latestStatusForJob(job._id, req.user.company),
+    paperService.getActivePaper(job._id, req.user.company).then((p) => !!p),
     AssessmentSession.find({ job: job._id, company: req.user.company })
       .sort({ createdAt: -1 })
       .populate("candidate", "basicDetails.name basicDetails.email status assessmentDecision"),
     // The gate is a queue, not a hunt: ATS-passed, no decision recorded yet.
-    job.assessmentPolicy === "manual"
+    // Queried for `auto` too — candidates park here when no paper is approved
+    // yet or when auto-assignment failed (the fail-open path), and a parked
+    // candidate must be visible wherever decisions are made.
+    ["manual", "auto"].includes(job.assessmentPolicy)
       ? Candidate.find({
           job: job._id,
           company: req.user.company,
@@ -102,6 +113,7 @@ async function jobOverview(req, res) {
   res.json({
     job: { id: job._id, title: job.title, assessmentPolicy: job.assessmentPolicy },
     paperStatus,
+    paperReady,
     engineEnabled: paperService.engineEnabled(),
     counts,
     awaitingDecision: awaiting,
@@ -131,6 +143,51 @@ async function jobOverview(req, res) {
       proctoring: { riskScore: s.proctoring?.riskScore || 0, riskBand: s.proctoring?.riskBand || "low", totalEvents: s.proctoring?.totalEvents || 0 },
     })),
   });
+}
+
+// --- Assignment-decision audit export ----------------------------------------
+
+// Who decided which ATS-passed candidates got the assessment vs a skip, flat and
+// pivot-ready. `?format=csv` streams the download; the JSON form adds per-decider
+// sent/skip rates. Every AuditLog row makes the export itself accountable.
+async function decisionAudit(req, res) {
+  const { auditRows, auditSummary, toCsv } = require("../utils/assessmentAudit");
+  const job = await Job.findOne({ _id: req.params.jobId, company: req.user.company });
+  if (!job) return res.status(404).json({ error: "Job not found" });
+
+  const [candidates, sessions] = await Promise.all([
+    // Denominator = everyone the gate applied to: a recorded decision, or still
+    // parked at ats_passed awaiting one.
+    Candidate.find({
+      job: job._id,
+      company: req.user.company,
+      $or: [{ "assessmentDecision.action": { $exists: true } }, { status: "ats_passed" }],
+    }).select("basicDetails.name basicDetails.email status assessmentDecision ats.overallScore"),
+    AssessmentSession.find({ job: job._id, company: req.user.company })
+      .sort({ createdAt: 1 })
+      .select("candidate status difficultyTier result.scoredAt result.totalItems result.totalCorrect result.completedBy"),
+  ]);
+
+  // createdAt-ascending insert → the latest session per candidate wins.
+  const sessionsByCandidate = new Map(sessions.map((s) => [String(s.candidate), s]));
+  const rows = auditRows({ candidates, sessionsByCandidate, job });
+
+  await AuditLog.create({
+    company: req.user.company,
+    actorUserId: req.user._id,
+    actorEmail: req.user.email,
+    action: "assessment.decision_audit.export",
+    resourceType: "job",
+    resourceId: String(job._id),
+    meta: { format: req.query.format === "csv" ? "csv" : "json", rowCount: rows.length },
+  }).catch(() => {});
+
+  if (String(req.query.format || "").toLowerCase() === "csv") {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="assessment-decision-audit-${job._id}.csv"`);
+    return res.send(toCsv(rows));
+  }
+  res.json({ job: { id: job._id, title: job.title, assessmentPolicy: job.assessmentPolicy }, rows, summary: auditSummary(rows) });
 }
 
 // --- Session actions ---------------------------------------------------------
@@ -208,6 +265,7 @@ module.exports = {
   skipForCandidate,
   getForCandidate,
   jobOverview,
+  decisionAudit,
   resend,
   cancel,
   resumeSession,
