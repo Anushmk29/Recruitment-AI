@@ -1,7 +1,9 @@
-# Render Blueprint — three services from one repo.
+# Render Blueprint — the API and its Redis. The two SPAs are deployed on VERCEL
+# (one project per subdirectory, Root Directory = admin / user), so they are
+# deliberately NOT defined here. See DEPLOY.md.
 #
-# Two-pass deploy: the *.onrender.com hostnames don't exist until the services are
-# created, and several env vars have to reference each other's URL. Everything marked
+# Two-pass deploy: the hostnames don't exist until the services are created, and
+# several env vars have to reference each other's URL. Everything marked
 # `sync: false` is deliberately left blank here and filled in from the dashboard after
 # the first deploy. See DEPLOY.md for the exact values.
 #
@@ -115,46 +117,48 @@ services:
       - key: METRICS_TOKEN
         generateValue: true
 
-  # ---------------------------------------------------------------- candidate SPA
-  # Static sites are free, CDN-backed and never spin down — only the API sleeps.
-  - type: web
-    name: recruitment-user
-    runtime: static
-    rootDir: user
-    # --include=dev is load-bearing: vite and the tailwind plugin are devDependencies,
-    # and a plain `npm ci` omits them whenever NODE_ENV=production reaches the build,
-    # which fails with "vite: not found". Do not depend on the platform default here.
-    buildCommand: npm ci --include=dev && npm run build
-    staticPublishPath: dist
-    routes:
-      # React Router owns /interview/:token etc. Without this rewrite, a candidate
-      # opening a magic link directly gets a 404 from the CDN — the SPA never loads.
-      - type: rewrite
-        source: /*
-        destination: /index.html
-    envVars:
-      # Build-time. Must be the ABSOLUTE API URL ending in /api — the "/api" value used
-      # in dev relies on the Vite dev-server proxy, which does not exist in a static build.
-      - key: VITE_API_URL
-        sync: false
+  # ---------------------------------------------------------------- the two SPAs
+  # NOT here. recruitment-user and recruitment-admin are Vercel projects, each
+  # pointed at a subdirectory of this repo, each carrying its own vercel.json with
+  # the SPA rewrite React Router needs. Their VITE_API_URL is set in the Vercel
+  # dashboard and is build-time — changing it requires a redeploy there, not here.
 
-  # ---------------------------------------------------------------- recruiter SPA
-  - type: web
-    name: recruitment-admin
-    runtime: static
-    rootDir: admin
-    # --include=dev is load-bearing: vite and the tailwind plugin are devDependencies,
-    # and a plain `npm ci` omits them whenever NODE_ENV=production reaches the build,
-    # which fails with "vite: not found". Do not depend on the platform default here.
-    buildCommand: npm ci --include=dev && npm run build
-    staticPublishPath: dist
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-    envVars:
-      - key: VITE_API_URL
-        sync: false
+  # ---------------------------------------------------------------- MinIO (optional)
+  # Uncomment ONLY if you want self-hosted object storage instead of Cloudflare R2.
+  # Read DEPLOY.md § "Option B" first — the honest summary:
+  #
+  #   * A disk is mandatory, and Render disks require a PAID instance. MinIO on an
+  #     ephemeral filesystem accepts writes, reports success and loses every object
+  #     on the next deploy — worse than having no storage, because nothing errors.
+  #   * Realistic cost is $7/mo (starter) + ~$0.25/GB/mo (disk). R2 is $0.
+  #   * `pserv` (private service), not `web`: storageService streams every download
+  #     through Express and this codebase issues NO presigned URLs, so a candidate's
+  #     browser never contacts the bucket. It must not have a public hostname.
+  #   * Create the bucket yourself — the official image has no auto-create.
+  #
+  # - type: pserv
+  #   name: recruitment-minio
+  #   runtime: image
+  #   region: singapore
+  #   plan: starter
+  #   image:
+  #     url: docker.io/minio/minio:latest
+  #   dockerCommand: server /data --console-address :9001
+  #   disk:
+  #     name: minio-data
+  #     mountPath: /data
+  #     sizeGB: 10
+  #   envVars:
+  #     - key: MINIO_ROOT_USER
+  #       sync: false
+  #     - key: MINIO_ROOT_PASSWORD
+  #       sync: false
+  #
+  # Then on recruitment-api, over the private network (http, not https — internal
+  # traffic is not TLS terminated) and path-style (MinIO cannot do virtual-host):
+  #   S3_ENDPOINT=http://recruitment-minio:9000
+  #   S3_FORCE_PATH_STYLE=true
+  #   S3_REGION=us-east-1
 
   # ---------------------------------------------------------------- Redis / Key Value
   # Backs the Socket.io adapter, the BullMQ email queue, distributed cron locks and
