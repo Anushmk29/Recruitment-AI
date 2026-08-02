@@ -90,7 +90,7 @@ An AI-branded recruitment/hiring platform split into **three independently-run a
 - **`admin/`** — React 18 + Vite SPA for companies/recruiters, port **5173**. ESM.
 - **`user/`** — React 18 + Vite SPA for candidates, port **5174**. ESM.
 
-Both frontends use React Router v6, Tailwind v4 (`@tailwindcss/vite`), axios, react-hook-form + zod, framer-motion, lucide-react, and socket.io-client. There is no test suite and no linter configured.
+Both frontends use React Router v6, Tailwind v4 (`@tailwindcss/vite`), axios, react-hook-form + zod, framer-motion, lucide-react, and socket.io-client. No linter is configured. The **backend has a test suite** — `cd backend && npm test` runs `node --test test/unit/*.test.js` (413 tests). The frontends have none.
 
 ## Commands
 
@@ -117,7 +117,9 @@ npm run build
 npm run preview
 ```
 
-There are no tests. To smoke-test end to end: start backend + both frontends, then exercise login + one API call + a socket feature (live notifications).
+Run `cd backend && npm test` for the unit suite (no DB or network needed — LLM paths are covered by
+fault injection and `LLM_REPLAY=1` fixtures). To smoke-test end to end: start backend + both frontends,
+then exercise login + one API call + a socket feature (live notifications).
 
 ## Critical environment / config facts
 

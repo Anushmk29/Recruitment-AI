@@ -1,0 +1,15 @@
+[
+  {
+    "date": "2026-08-02",
+    "scope": "app-screen",
+    "macrostructure": "Long Document",
+    "theme": "HireFlow AI (design.md — locked, not rotated)",
+    "genre": "modern-minimal",
+    "enrichment": "none",
+    "nav": "n/a — renders inside the existing dashboard shell",
+    "footer": "n/a — colophon block, not a page footer",
+    "target": "admin/src/pages/dashboard/ScoreExplanation.jsx",
+    "brief": "HireFlow AI · \"Why this score\" — evidence assessment rendered as a ledger whose line items visibly sum to the recorded score",
+    "note": "design.md-managed project: the diversification rule is INVERTED. Future screens must MATCH this system, not differ from it. Do not rotate macrostructure/theme away from DESIGN.md."
+  }
+]

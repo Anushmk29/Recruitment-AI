@@ -151,6 +151,99 @@ function _resetBreakerForTests() {
   publishBreakerGauge();
 }
 
+// --- Credit exhaustion latch -------------------------------------------------
+// A 402 means the provider account is out of credit. That is neither a transient
+// provider fault nor a property of this request, so neither existing mechanism
+// reacts to it: 402 is absent from RETRYABLE_STATUS so no retries are burned
+// (correct), and breakerRecordFailure is only reached by retryable errors so the
+// breaker never opens (a gap). Left there, every AI call for every tenant keeps
+// round-tripping to a provider guaranteed to refuse it, and each call site
+// reports its own generic failure — which is how one billing outage disguises
+// itself as a dozen unrelated bugs.
+//
+// So an observed 402 latches, and later calls fail fast with the SAME code, so
+// every surface can keep naming the real cause. The latch does not need a
+// restart to clear: a top-up is a human action with no callback, so recovery is
+// discovered by letting one request through per cooldown. `outageSince` is
+// deliberately NOT reset by that probe — it marks when the outage began, so
+// callers can alert once per outage instead of once per probe.
+
+const credits = { outageSince: 0, nextProbeAt: 0 };
+
+function creditsCooldownMs() {
+  return Number(process.env.LLM_NO_CREDITS_COOLDOWN_MS) || 300000;
+}
+
+function publishCreditsGauge() {
+  metrics.setGauge("llm_credits_exhausted", {}, credits.outageSince ? 1 : 0);
+}
+
+// Fail fast only between probes; when the cooldown elapses one request is let
+// through to find out whether the account was topped up.
+function creditsBlocked() {
+  return credits.outageSince !== 0 && Date.now() < credits.nextProbeAt;
+}
+
+// 0 when healthy, else the epoch ms the current outage was first observed.
+// Stable for the whole outage, so callers can dedupe operator alerts on it.
+function creditOutageSince() {
+  return credits.outageSince;
+}
+
+function noteCreditsExhausted() {
+  const now = Date.now();
+  if (!credits.outageSince) {
+    credits.outageSince = now;
+    metrics.incCounter("llm_credit_outages_total");
+    console.error(
+      `[llm] provider account is OUT OF CREDIT — every AI path is degraded to its deterministic fallback ` +
+        `until it is topped up. One request per ${creditsCooldownMs()}ms will probe for recovery.`
+    );
+  }
+  credits.nextProbeAt = now + creditsCooldownMs();
+  publishCreditsGauge();
+}
+
+function noteCreditsRestored() {
+  if (!credits.outageSince) return;
+  credits.outageSince = 0;
+  credits.nextProbeAt = 0;
+  publishCreditsGauge();
+  console.log("[llm] provider credit restored — AI paths are live again");
+}
+
+function noCreditsError() {
+  const err = new Error("LLM provider account is out of credit; using fallback until it is topped up");
+  err.code = "LLM_NO_CREDITS";
+  err.retryable = false;
+  return err;
+}
+
+function _resetCreditsForTests() {
+  credits.outageSince = 0;
+  credits.nextProbeAt = 0;
+  publishCreditsGauge();
+}
+
+// --- Failure wording ---------------------------------------------------------
+// One phrase per failure code, so every surface names a cause the same way
+// instead of each call site inventing its own — and so no surface prints a raw
+// code at a human. Rule 5 asks for the degradation to be LABELLED; an error
+// enum pasted into a recruiter's alert is a leak, not a label.
+
+const FAILURE_REASONS = {
+  LLM_NO_CREDITS: "the AI provider account is out of credit",
+  LLM_DISABLED: "no AI provider is configured",
+  LLM_BREAKER_OPEN: "the AI provider is failing repeatedly",
+  LLM_TIMEOUT: "the AI provider timed out",
+  LLM_TRUNCATED: "the AI response hit its token limit",
+  LLM_REPLAY_MISS: "replay mode has no recorded fixture for this request",
+};
+
+function describeFailure(err) {
+  return FAILURE_REASONS[err && err.code] || "an unexpected AI provider error";
+}
+
 function extraHeaders() {
   const h = {};
   if (process.env.OPENROUTER_SITE_URL) h["HTTP-Referer"] = process.env.OPENROUTER_SITE_URL;
@@ -236,6 +329,11 @@ async function attempt({ system, prompt, schema, maxTokens, model, temperature, 
     const detail = await res.text().catch(() => "");
     const e = new Error(`OpenRouter request failed (${res.status}): ${detail.slice(0, 300)}`);
     e.retryable = RETRYABLE_STATUS.has(res.status);
+    // 402 = out of credit. Coded so callers can say "the account is empty"
+    // instead of reporting a billing outage as a failed reading of the
+    // candidate's own document — which sends whoever is debugging after the
+    // file, the parser, and the prompt in turn. See the credit latch above.
+    if (res.status === 402) e.code = "LLM_NO_CREDITS";
     const retryAfter = Number(res.headers.get("retry-after"));
     if (retryAfter) e.retryAfterMs = retryAfter * 1000;
     throw e;
@@ -244,6 +342,11 @@ async function attempt({ system, prompt, schema, maxTokens, model, temperature, 
   if (data.error) {
     const e = new Error(`OpenRouter error: ${data.error.message || JSON.stringify(data.error)}`);
     e.retryable = false;
+    // OpenRouter mirrors upstream failures into a 200 body as well as into the
+    // HTTP status. Recognising 402 on only one of the two routes means the same
+    // outage is named correctly or generically depending on which shape came
+    // back, so the same request looks like two different bugs.
+    if (Number(data.error.code) === 402) e.code = "LLM_NO_CREDITS";
     throw e;
   }
   const choice = data.choices?.[0];
@@ -341,6 +444,14 @@ async function generateJSON({ system, prompt, schema, maxTokens = 768, model, te
     }
   }
 
+  // Checked after the cache — a hit costs nothing, so serve it even mid-outage —
+  // and before the breaker, because "the account is empty" is the more specific
+  // diagnosis and the only one naming an action an operator can take.
+  if (creditsBlocked()) {
+    countRequest("no_credits", reqShape.model);
+    throw noCreditsError();
+  }
+
   if (breakerState() === "open") {
     countRequest("breaker_open", reqShape.model);
     const err = new Error("LLM circuit breaker is open (provider failing); using fallback until cooldown elapses");
@@ -354,6 +465,9 @@ async function generateJSON({ system, prompt, schema, maxTokens = 768, model, te
     try {
       const result = await attempt({ system, prompt, schema, maxTokens, model, temperature, timeoutMs: callTimeoutMs });
       breakerRecordSuccess();
+      // A settled response proves the account has credit — this is the probe
+      // that ends an outage, so nothing needs to watch billing to recover.
+      noteCreditsRestored();
       countRequest("success", reqShape.model);
       metrics.observeHistogram("llm_request_duration_ms", { model: reqShape.model }, Date.now() - t0);
       if (result.usage.costCents) metrics.incCounter("llm_cost_cents_total", {}, result.usage.costCents);
@@ -368,6 +482,9 @@ async function generateJSON({ system, prompt, schema, maxTokens = 768, model, te
       return result;
     } catch (err) {
       lastErr = err;
+      // Latch before rethrowing, so the caller's own handler already sees the
+      // outage as started and can alert once for it rather than once per call.
+      if (err.code === "LLM_NO_CREDITS") noteCreditsExhausted();
       if (err.retryable) {
         breakerRecordFailure();
         // The breaker opening mid-loop means the provider is down — stop burning
@@ -460,8 +577,11 @@ module.exports = {
   generateJSONEnsemble,
   heavyTimeoutMs,
   breakerState,
+  creditOutageSince,
+  describeFailure,
   MODEL,
   requestKey,
   stableStringify,
   _resetBreakerForTests,
+  _resetCreditsForTests,
 };

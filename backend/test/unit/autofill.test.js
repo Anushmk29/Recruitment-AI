@@ -17,7 +17,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 
 const { normalizeText } = require("../../utils/textNormalize");
-const { buildSuggestions, deterministicBasics, attributeProvenance } = require("../../services/autofillService");
+const { buildSuggestions, deterministicBasics, attributeProvenance, DEGRADED } = require("../../services/autofillService");
 const { buildModelView } = require("../../utils/promptSafety");
 const defense = require("../../services/resumeDefenseService");
 
@@ -329,6 +329,36 @@ test("skills are attributed by value, and unsuggested ones stay the candidate's"
   const byValue = new Map(out.skillProvenance.map((s) => [s.value, s.source]));
   assert.equal(byValue.get("Go"), "autofill_accepted");
   assert.equal(byValue.get("Assembly"), "candidate");
+});
+
+// Rule 5, one layer down: it is not enough for a degraded run to be labelled —
+// the label has to say WHICH degradation, because the reader's next action
+// differs. Two of these were once byte-identical, which made an unconfigured
+// deployment and an exhausted account look like the same event on screen.
+test("every degraded cause is distinguishable from every other, in reason AND in wording", () => {
+  const causes = Object.entries(DEGRADED);
+  assert.ok(causes.length >= 3);
+
+  const reasons = causes.map(([, d]) => d.reason);
+  assert.equal(new Set(reasons).size, reasons.length, "two causes share a reason code");
+
+  const messages = causes.map(([, d]) => d.message);
+  assert.equal(new Set(messages).size, messages.length, "two causes show the candidate identical text");
+
+  for (const [name, d] of causes) {
+    assert.ok(d.reason && d.message, `${name} must carry both a code and candidate-facing wording`);
+    // The sections really are empty; saying so is the whole point of the label.
+    assert.match(d.message, /NOT been filled in|fill in the rest yourself/i, `${name} must state the form is incomplete`);
+  }
+});
+
+test("only the retryable cause invites a retry", () => {
+  // Telling a candidate to try again when an operator has to top up an account
+  // is the failure this whole path exists to avoid.
+  assert.match(DEGRADED.extractionFailed.message, /this time/i);
+  assert.match(DEGRADED.noCredits.message, /will not help/i);
+  assert.doesNotMatch(DEGRADED.noCredits.message, /try again|this time/i);
+  assert.doesNotMatch(DEGRADED.notConfigured.message, /try again|this time/i);
 });
 
 test("with no suggestions on file, everything is the candidate's own", () => {

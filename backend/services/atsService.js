@@ -25,6 +25,7 @@ const { notifyAdmin, notifyCandidate } = require("./notificationService");
 const { appendStageHistory } = require("../utils/pipeline");
 const resumeDefenseService = require("./resumeDefenseService");
 const evidenceAtsService = require("./evidenceAtsService");
+const llm = require("./llmService");
 const metrics = require("../utils/metrics");
 
 metrics.registerMetric("ats_shadow_divergence_total", "counter", "Shadow runs where evidence and legacy disagree");
@@ -284,7 +285,7 @@ async function runAtsForCandidate(candidate, job) {
             title: "Evidence scoring failed — keyword fallback used",
             message:
               `${candidate.basicDetails.name}'s screening for ${job.title} could not run the evidence engine ` +
-              `(${err.code || err.message}), so the score shown is the legacy keyword match, NOT rubric-based. ` +
+              `— ${llm.describeFailure(err)} — so the score shown is the legacy keyword match, NOT rubric-based. ` +
               `Use "Rescore" on the candidate to retry once the cause is cleared.`,
             meta: { candidateId: candidate._id, jobId: job._id, reason: err.code || err.message },
           }).catch((e) => console.error("Could not send evidence-fallback alert:", e.message));

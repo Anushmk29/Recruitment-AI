@@ -13,11 +13,13 @@ const BUCKETS_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
 const META = new Map([
   ["http_requests_total", { help: "Total HTTP requests handled.", type: "counter" }],
   ["http_request_duration_ms", { help: "HTTP request latency in milliseconds.", type: "histogram" }],
-  ["llm_requests_total", { help: "LLM calls by outcome (success|error|cache_hit|replay|breaker_open|disabled).", type: "counter" }],
+  ["llm_requests_total", { help: "LLM calls by outcome (success|error|cache_hit|replay|breaker_open|disabled|no_credits).", type: "counter" }],
   ["llm_request_duration_ms", { help: "Live LLM call latency in milliseconds.", type: "histogram" }],
   ["llm_cost_cents_total", { help: "Cumulative LLM spend in cents (live calls only).", type: "counter" }],
   ["llm_breaker_state", { help: "LLM circuit breaker state: 0=closed, 1=half-open, 2=open.", type: "gauge" }],
   ["llm_breaker_opens_total", { help: "Times the LLM circuit breaker has opened.", type: "counter" }],
+  ["llm_credits_exhausted", { help: "1 while the LLM provider account is out of credit (every AI path degraded).", type: "gauge" }],
+  ["llm_credit_outages_total", { help: "Distinct LLM credit outages observed (once per outage, not per call).", type: "counter" }],
 ]);
 
 const counters = new Map(); // name -> Map(labelKey -> count)

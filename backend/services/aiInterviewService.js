@@ -232,7 +232,7 @@ async function makePlan({ session, candidate, job, settings, context, useAi }) {
     await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "plan", provider: PROVIDER, model, usage, latencyMs: Date.now() - t0, engine: "ai", promptVersion: PROMPT_VERSION, cached });
     return { plan: data, engine: "ai" };
   } catch (err) {
-    console.error("[aiInterview] plan generation failed, using fallback:", err.message);
+    console.error(`[aiInterview] plan generation failed, using fallback (${err.code || "no code"}): ${err.message}`);
     return { plan: fallbackPlan(job), engine: "fallback" };
   }
 }
@@ -265,7 +265,7 @@ async function nextQuestion({ session, candidate, job, settings, ai, context, us
     await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "question", provider: PROVIDER, model, usage, latencyMs, engine: "ai", promptVersion: PROMPT_VERSION, cached });
     return { ...data, engine: "ai", model, latencyMs };
   } catch (err) {
-    console.error("[aiInterview] question generation failed, using fallback:", err.message);
+    console.error(`[aiInterview] question generation failed, using fallback (${err.code || "no code"}): ${err.message}`);
     return { ...fallbackQuestion({ ai, job }), engine: "fallback", model: null, latencyMs: Date.now() - t0 };
   }
 }
@@ -339,7 +339,7 @@ async function makeEvaluation({ session, candidate, job, settings, ai, useAi }) 
       latencyMs,
     };
   } catch (err) {
-    console.error("[aiInterview] evaluation failed, using fallback:", err.message);
+    console.error(`[aiInterview] evaluation failed, using fallback (${err.code || "no code"}): ${err.message}`);
     return fallbackEvaluation(ai);
   }
 }

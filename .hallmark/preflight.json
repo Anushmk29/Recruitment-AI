@@ -1,0 +1,45 @@
+{
+  "scanned": "2026-08-02",
+  "designMd": {
+    "present": true,
+    "path": "DESIGN.md",
+    "name": "HireFlow AI",
+    "note": "System-managed project. This file is the locked design system and overrides all other signals."
+  },
+  "fonts": {
+    "display": "Lexend (500-800)",
+    "body": "Inter (400-900)",
+    "source": "Google Fonts <link> in admin/index.html L9-L12 and user/index.html; tokens at admin/src/index.css L4-L5",
+    "monoFace": null
+  },
+  "palette": {
+    "system": "Tailwind v4 @theme tokens",
+    "location": "admin/src/index.css L7-L17 (mirrored in user/src/index.css)",
+    "accent": "--color-brand-* = unmodified Tailwind blue ramp (#eff6ff -> #172554)",
+    "note": "DESIGN.md 'Inherited Palette Rule' — the ramp is provisional, not an owned brand accent."
+  },
+  "shadows": {
+    "tokens": ["--shadow-card", "--shadow-soft"],
+    "location": "admin/src/index.css L19-L20",
+    "rule": "Two-Shadow Rule — no other box-shadow values permitted."
+  },
+  "motion": {
+    "stance": "motion-on",
+    "library": "framer-motion ^12.42.2",
+    "location": "admin/package.json L14, user/package.json L15"
+  },
+  "spacing": {
+    "scale": "Tailwind 4px base, unmodified",
+    "recurringSteps": ["8px", "12-16px", "24px", "32px", "96px"]
+  },
+  "breakpoints": "Tailwind defaults, unmodified (lg 1024px is the meaningful one)",
+  "framework": {
+    "admin": "React 18 + Vite 5 + Tailwind v4 (@tailwindcss/vite), react-router-dom v6, port 5173",
+    "user": "React 18 + Vite 5 + Tailwind v4 (@tailwindcss/vite), react-router-dom v6, port 5174",
+    "icons": "lucide-react",
+    "forms": "react-hook-form + zod"
+  },
+  "conflicts": [],
+  "preserve": ["DESIGN.md system", "Lexend/Inter pairing", "brand-* token ramp", "two shadow tokens", "4px spacing scale", "12/16 radius rule"],
+  "log": ".hallmark/log.json not present — no prior Hallmark runs in this project"
+}

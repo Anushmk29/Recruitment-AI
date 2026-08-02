@@ -33,6 +33,7 @@ const crypto = require("crypto");
 const CompanySettings = require("../models/CompanySettings");
 const llm = require("./llmService");
 const usageService = require("./usageService");
+const { notifyAdmin } = require("./notificationService");
 const resumeDefenseService = require("./resumeDefenseService");
 const { collapseView } = require("./claimService");
 const { resolveRole } = require("../config/models");
@@ -273,6 +274,69 @@ function buildSuggestions({ canonicalText, exclusions, raw }) {
   };
 }
 
+// Degraded-state labels, one per cause.
+//
+// These strings are the candidate's ONLY signal that the form below them is
+// blank because the reader failed, not because their document was empty — so
+// they are defined once and reused, never retyped at a call site. Two of them
+// were briefly byte-identical, which made an unconfigured deployment and an
+// exhausted account indistinguishable on screen: the same misdirection rule 5
+// exists to prevent, reintroduced one layer down.
+//
+// They differ because what the READER should do differs. "Try again" is honest
+// advice for a one-off parse failure and a lie for the other two, and a message
+// that invites a doomed retry is worse than one that admits nothing will help.
+const DEGRADED = {
+  // No provider configured for this deployment. Not an incident, not transient.
+  notConfigured: {
+    reason: "llm_not_configured",
+    message:
+      "Automatic reading is not enabled here, so only contact details were detected. The work history, " +
+      "education, and skills sections below have NOT been filled in — please complete them yourself.",
+  },
+  // Provider account out of credit. Nothing the candidate does changes this, so
+  // the message must not imply otherwise; an operator has been alerted.
+  noCredits: {
+    reason: "llm_no_credits",
+    message:
+      "Automatic reading is temporarily unavailable, so only contact details were detected. Re-uploading " +
+      "will not help — the work history, education, and skills sections below have NOT been filled in, so " +
+      "please complete them yourself. Your application is not affected.",
+  },
+  // This document, this time. Retrying is genuinely worth a try here.
+  extractionFailed: {
+    reason: "extraction_failed",
+    message:
+      "The résumé could not be read automatically this time, so only contact details were detected. Please " +
+      "fill in the rest yourself — your application is not affected.",
+  },
+};
+
+// One operator alert per outage per tenant, not one per application. Keyed on
+// the outage's start timestamp (stable for its whole duration), so a top-up
+// followed by a fresh outage does alert again. The map write happens before the
+// first await, so concurrent applications cannot race past it.
+const creditAlertSentFor = new Map();
+
+async function alertCreditOutage(company) {
+  const since = llm.creditOutageSince();
+  if (!company || !since) return;
+  const key = String(company);
+  if (creditAlertSentFor.get(key) === since) return;
+  creditAlertSentFor.set(key, since);
+  await notifyAdmin({
+    companyId: company,
+    type: "system_alert",
+    title: "AI provider out of credit — autofill and scoring degraded",
+    message:
+      "The AI provider account has no credit left, so résumé autofill is returning contact details only and " +
+      "every other AI path is falling back to its deterministic engine. Candidates are told the reading was " +
+      "incomplete. Top up the account to restore full extraction; no candidate outcome was decided by the " +
+      "degraded path.",
+    meta: { reason: "llm_no_credits", outageSince: new Date(since) },
+  }).catch((e) => console.error("Could not send credit-outage alert:", e.message));
+}
+
 // Empty-but-valid payload, used for every degraded path so callers never have
 // to branch on shape — only on `degraded`.
 function emptyPayload({ engine, degraded }) {
@@ -280,7 +344,11 @@ function emptyPayload({ engine, degraded }) {
     version: AUTOFILL_VERSION,
     promptVersion: AUTOFILL_PROMPT_VERSION,
     engine,
-    degraded: degraded || null,
+    // Copied, not aliased: the DEGRADED entries are shared module constants, and
+    // this payload is handed to a caller and persisted as a Mixed subdocument.
+    // One mutation through either route would rewrite the label every later
+    // candidate sees.
+    degraded: degraded ? { ...degraded } : null,
     sections: { basics: {}, experience: [], education: [], projects: [], certificates: [], skills: [] },
     stats: { dropped: {} },
     notices: [],
@@ -361,15 +429,7 @@ async function suggestForResume(resume, { company } = {}) {
 
   if (!llm.isEnabled()) {
     const payload = {
-      ...emptyPayload({
-        engine: "deterministic",
-        degraded: {
-          reason: "llm_unavailable",
-          message:
-            "AI extraction is unavailable right now, so only contact details were detected. The work history, " +
-            "education, and skills sections below have NOT been filled in — please complete them yourself.",
-        },
-      }),
+      ...emptyPayload({ engine: "deterministic", degraded: DEGRADED.notConfigured }),
       notices,
     };
     payload.sections.basics = deterministicBasics(view, canonicalText);
@@ -396,16 +456,20 @@ async function suggestForResume(resume, { company } = {}) {
     }));
   } catch (err) {
     // Autofill is a convenience. It degrades; it never blocks an application.
+    //
+    // An exhausted provider account is separated from a failed read because the
+    // two need opposite responses. "Could not be read THIS TIME" invites a retry
+    // that is guaranteed to fail, and points the candidate — and anyone
+    // debugging — at the résumé, when the résumé was never the problem. A credit
+    // outage is an operator action, so a recruiter is told (once per outage, not
+    // once per application) rather than it running unnoticed behind a log line.
+    const outOfCredits = err.code === "LLM_NO_CREDITS";
     console.warn(`[autofill] extraction failed for resume ${resume._id}: ${err.code || err.message}`);
+    if (outOfCredits) await alertCreditOutage(company);
     const payload = {
       ...emptyPayload({
         engine: "deterministic",
-        degraded: {
-          reason: "extraction_failed",
-          message:
-            "The résumé could not be read automatically this time, so only contact details were detected. Please " +
-            "fill in the rest yourself — your application is not affected.",
-        },
+        degraded: outOfCredits ? DEGRADED.noCredits : DEGRADED.extractionFailed,
       }),
       notices,
     };
@@ -578,6 +642,7 @@ module.exports = {
   buildSuggestions,
   deterministicBasics,
   attributeProvenance,
+  DEGRADED,
   AUTOFILL_VERSION,
   AUTOFILL_PROMPT_VERSION,
 };
