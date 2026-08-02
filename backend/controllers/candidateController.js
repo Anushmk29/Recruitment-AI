@@ -12,6 +12,7 @@ const { notifyAdmin, notifyCandidate } = require("../services/notificationServic
 const { applyTransition } = require("../services/pipelineService");
 const { allowedNextStages, stageLabel } = require("../utils/pipeline");
 const proctoring = require("../utils/proctoring");
+const { runInBackground } = require("../utils/backgroundTasks");
 const {
   computeAnswerSubstance,
   computeDurationFlag,
@@ -240,7 +241,7 @@ async function applyToJob(req, res) {
   // instead of a spinner held hostage by pdf-parse + LLM + SMTP latency.
   res.status(201).json(toApplyReceipt(candidate, job));
 
-  setImmediate(() => runPostApplyPipeline(candidate, job));
+  runInBackground(`screen candidate ${candidate._id}`, () => runPostApplyPipeline(candidate, job));
 }
 
 // Post-201 work for a new application: notifications + ATS screening. Every
@@ -512,7 +513,7 @@ async function rerunAts(req, res) {
   // rescore candidate" for work that then completed successfully.
   res.status(202).json({ status: "rescoring", candidateId: candidate._id, previousScoredAt: candidate.ats?.scoredAt || null });
 
-  setImmediate(async () => {
+  runInBackground(`rescore candidate ${candidate._id}`, async () => {
     try {
       await runAtsForCandidate(candidate, job);
     } catch (err) {

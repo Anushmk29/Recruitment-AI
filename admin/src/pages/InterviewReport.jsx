@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Bot, User, Sparkles, Clock, CheckCircle2, AlertTriangle, Download, Mic, ShieldCheck, ShieldAlert, ScanFace, Eye } from "lucide-react";
+import { ArrowLeft, Bot, User, Cpu, Clock, CheckCircle2, AlertTriangle, Download, Mic, ShieldCheck, ShieldAlert, ScanFace, Eye } from "lucide-react";
 import api from "../api/client.js";
 import { getSocket } from "../lib/socket.js";
 import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
@@ -136,7 +136,7 @@ function CoverageMatrix({ coverage }) {
           <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
             <ShieldCheck className="h-4 w-4 text-brand-600" /> What we actually know
           </h3>
-          <p className="mt-1 text-xs text-slate-400">
+          <p className="mt-1 text-xs text-slate-500">
             Every requirement for this role{coverage.rubricVersion != null ? ` (rubric v${coverage.rubricVersion})` : ""}, grouped by how
             strong the evidence is. Percentages are each requirement&apos;s weight in the rubric.
           </p>
@@ -207,7 +207,7 @@ function TurnQualityStrip({ quality }) {
         <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
           <Mic className="h-4 w-4 text-brand-600" /> Answer-by-answer quality
         </h3>
-        <span className="text-xs text-slate-400">
+        <span className="text-xs text-slate-500">
           {quality.degradedCount} of {quality.total} answers flagged
         </span>
       </div>
@@ -245,7 +245,7 @@ function TurnQualityStrip({ quality }) {
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-600" /> ! Degraded audio signature
         </span>
-        <span className="text-slate-400">Hover any bar for the reason.</span>
+        <span className="text-slate-500">Hover any bar for the reason.</span>
       </div>
     </Card>
   );
@@ -272,7 +272,7 @@ function VerdictBanner({ verdict }) {
   return (
     <div className={`rounded-2xl border-2 p-5 ${meta.classes}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-bold uppercase tracking-wide">{meta.label}</h2>
+        <h2 className="text-xl font-bold">{meta.label}</h2>
         <Badge tone={meta.tone}>Confidence: {verdict.confidence}</Badge>
       </div>
       <p className="mt-1.5 text-sm font-medium">{verdict.reason}</p>
@@ -338,7 +338,7 @@ function ClaimVerificationCard({ cv }) {
           </Badge>
         )}
       </div>
-      <p className="mt-1 text-xs text-slate-400">
+      <p className="mt-1 text-xs text-slate-500">
         These questions tested résumé claims the screening couldn&apos;t verify. Verdicts changed the evidence score through the
         verification multiplier{d ? "" : " (rescore pending)"}.
       </p>
@@ -354,23 +354,23 @@ function ClaimVerificationCard({ cv }) {
               </div>
               {p.resumeQuote && (
                 <p className="mt-2 text-xs text-slate-500">
-                  <span className="font-semibold uppercase tracking-wide text-slate-400">Résumé:</span> &ldquo;{p.resumeQuote}&rdquo;
+                  <span className="font-semibold text-slate-600">Résumé:</span> &ldquo;{p.resumeQuote}&rdquo;
                 </p>
               )}
               <p className="mt-1 text-sm text-slate-700">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Asked:</span> {p.question}
+                <span className="text-xs font-semibold text-slate-600">Asked:</span> {p.question}
               </p>
               {p.answerQuote && (
                 <p className="mt-1 text-xs text-slate-600">
-                  <span className="font-semibold uppercase tracking-wide text-slate-400">Answer:</span> &ldquo;{p.answerQuote}&rdquo;
+                  <span className="font-semibold text-slate-600">Answer:</span> &ldquo;{p.answerQuote}&rdquo;
                 </p>
               )}
-              {p.verdictReasoning && <p className="mt-1.5 text-xs italic text-slate-400">{p.verdictReasoning}</p>}
+              {p.verdictReasoning && <p className="mt-1.5 text-xs italic text-slate-500">{p.verdictReasoning}</p>}
             </div>
           );
         })}
       </div>
-      <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
+      <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">
         A contradicted claim is evidence for your judgement — both quotes are shown so you can read the exchange yourself. It never
         auto-rejects.
       </p>
@@ -409,7 +409,7 @@ function AssessmentCard({ assessment, criterionLabels }) {
           interview. A recorded human decision, not missing data.
         </p>
       ) : !session ? (
-        <p className="mt-2 text-sm text-slate-400">An assessment decision was recorded but no session exists yet.</p>
+        <p className="mt-2 text-sm text-slate-500">An assessment decision was recorded but no session exists yet.</p>
       ) : (
         <>
           {session.difficultyTier && (
@@ -420,7 +420,7 @@ function AssessmentCard({ assessment, criterionLabels }) {
             </p>
           )}
           {!result ? (
-            <p className="mt-2 text-sm text-slate-400">Status: {session.status}. No scored result yet.</p>
+            <p className="mt-2 text-sm text-slate-500">Status: {session.status}. No scored result yet.</p>
           ) : (
             <>
               <p className="mt-2 text-lg font-bold text-slate-900">
@@ -451,7 +451,7 @@ function AssessmentCard({ assessment, criterionLabels }) {
                   })}
                 </div>
               )}
-              <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
+              <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">
                 Scored {formatWhen(result.scoredAt)} · scorer {result.scorerVersion || "—"} · reproducibility{" "}
                 {(result.reproducibilityHash || "").slice(0, 16)}… — computed deterministically by code from the frozen key; no AI in
                 the scoring path.
@@ -472,7 +472,7 @@ function RecommendedActionCard({ action }) {
   if (action.suppressed) {
     return (
       <Card className="border-2 border-dashed border-amber-400 bg-amber-50">
-        <p className="text-xs font-medium uppercase tracking-wide text-amber-700">Recommendation withheld</p>
+        <p className="text-xs font-medium text-amber-700">Recommendation withheld</p>
         <p className="mt-1 text-lg font-bold text-amber-900">{action.action}</p>
         <p className="mt-1 text-sm text-amber-800">{action.justification}</p>
       </Card>
@@ -480,7 +480,7 @@ function RecommendedActionCard({ action }) {
   }
   return (
     <Card className="border-2 border-slate-800 bg-slate-900 text-white">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-300">Recommended action</p>
+      <p className="text-xs font-medium text-slate-300">Recommended action</p>
       <p className="mt-1 text-lg font-bold">{action.action}</p>
       <p className="mt-1 text-sm text-slate-300">{action.justification}</p>
     </Card>
@@ -492,13 +492,13 @@ function IdentityRow({ identityMatch }) {
   const map = {
     match: { icon: ShieldCheck, cls: "text-emerald-600", text: "Face matched the identity photo" },
     mismatch: { icon: ShieldAlert, cls: "text-red-600", text: "Face did NOT match the identity photo" },
-    unknown: { icon: ScanFace, cls: "text-slate-400", text: "Identity not checked during the interview" },
+    unknown: { icon: ScanFace, cls: "text-slate-500", text: "Identity not checked during the interview" },
   };
   const { icon: Icon, cls, text } = map[s] || map.unknown;
   return (
     <div className="flex items-center gap-2 text-sm text-slate-600">
       <Icon className={`h-4 w-4 shrink-0 ${cls}`} /> {text}
-      {identityMatch?.distance != null && <span className="text-xs text-slate-400">(distance {identityMatch.distance})</span>}
+      {identityMatch?.distance != null && <span className="text-xs text-slate-500">(distance {identityMatch.distance})</span>}
     </div>
   );
 }
@@ -527,12 +527,38 @@ function EvidenceClip({ clip }) {
   }
 
   const label = `${new Date(clip.capturedAt).toLocaleTimeString()} · ${clip.source === "phone" ? "phone cam" : "laptop cam"}`;
+  const t = clip.trigger;
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
       <div className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-500">
         <span className="font-medium text-slate-700">{clip.eventType.replace(/_/g, " ")}</span>
         <span>{label}</span>
       </div>
+
+      {/* The measurement that caused this capture, shown ABOVE the footage on purpose. A clip is
+          here to let you overturn the flag, not to prove it — so you should read what the machine
+          claims and then watch whether the video actually shows it. A clip that contradicts its own
+          label is the single most important thing this panel can surface. */}
+      {t && (
+        <div className="mb-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] leading-relaxed text-slate-500">
+          {t.rule && <p className="font-medium text-slate-600">Triggered by: {t.rule}</p>}
+          <p className="mt-0.5 flex flex-wrap gap-x-3">
+            {t.direction && <span>direction: looking {t.direction === "down" ? "down" : "to the side"}</span>}
+            {t.faceCount != null && <span>faces detected: {t.faceCount}</span>}
+            {t.distance != null && <span>face distance: {t.distance}{t.threshold != null && ` (match under ${t.threshold})`}</span>}
+            {t.lastDetectorScore != null && <span>detector confidence beforehand: {t.lastDetectorScore}</span>}
+            {t.lastFaceFrameRatio != null && <span>face filled {(t.lastFaceFrameRatio * 100).toFixed(1)}% of frame</span>}
+            {t.lastFaceAtEdge === true && <span>face was cropped by the frame edge</span>}
+          </p>
+        </div>
+      )}
+      {clip.scored === false && (
+        <p className="mb-2 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] text-slate-500">
+          This clip records <span className="font-medium text-slate-600">our camera view quality</span>, not the
+          candidate&apos;s conduct. It carries no risk score and is not a flag against them.
+        </p>
+      )}
+
       {src ? (
         <video src={src} controls className="w-full rounded-lg bg-black" />
       ) : (
@@ -566,7 +592,7 @@ function IntegrityCard({ proctoring, evidenceClips }) {
       <div className="mt-4 flex items-center gap-4">
         <div className="flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-2xl bg-slate-900 text-white">
           <span className="text-2xl font-bold">{proctoring.displayRiskScore ?? 0}</span>
-          <span className="text-[10px] uppercase tracking-wide text-slate-300">Risk</span>
+          <span className="text-[10px] text-slate-300">Risk</span>
         </div>
         <div className="flex-1 space-y-2">
           <IdentityRow identityMatch={proctoring.identityMatch} />
@@ -577,7 +603,7 @@ function IntegrityCard({ proctoring, evidenceClips }) {
               <><AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" /> Camera monitoring off — browser signals only</>
             )}
           </div>
-          <div className="text-xs text-slate-400">
+          <div className="text-xs text-slate-500">
             {proctoring.totalEvents} flag{proctoring.totalEvents === 1 ? "" : "s"} recorded
             {proctoring.consent?.given ? " · candidate consented" : proctoring.consent?.declined ? " · candidate declined proctoring" : ""}
           </div>
@@ -588,10 +614,16 @@ function IntegrityCard({ proctoring, evidenceClips }) {
         <div className="mt-4 space-y-2">
           {proctoring.breakdown.map((row) => (
             <div key={row.type} className="flex flex-wrap items-baseline gap-2">
-              <Badge tone={SEVERITY_TONE[row.severity] || "slate"}>
+              {/* Recording-condition rows are shown but visually demoted and explicitly marked
+                  unscored. They must appear — "we could not see" rendered as silence reads as
+                  "nothing happened" — but they are not findings about the candidate. */}
+              <Badge tone={row.scored === false ? "slate" : SEVERITY_TONE[row.severity] || "slate"}>
                 {row.label} · {row.count}×
               </Badge>
-              {row.benignExplanation && <span className="text-xs text-slate-400">{row.benignExplanation}</span>}
+              {row.scored === false && (
+                <span className="text-xs font-semibold text-slate-500">Not scored</span>
+              )}
+              {row.benignExplanation && <span className="text-xs text-slate-500">{row.benignExplanation}</span>}
             </div>
           ))}
         </div>
@@ -600,7 +632,7 @@ function IntegrityCard({ proctoring, evidenceClips }) {
       {evidenceClips?.length > 0 && (
         <div className="mt-4 border-t border-slate-100 pt-4">
           <p className="mb-2 text-sm font-semibold text-slate-900">Evidence clips ({evidenceClips.length})</p>
-          <p className="mb-3 text-xs text-slate-400">
+          <p className="mb-3 text-xs text-slate-500">
             Short clips captured only when a high-severity flag fired — consent-gated, never continuous recording. For
             human review only; they never enter any scoring path.
           </p>
@@ -612,7 +644,7 @@ function IntegrityCard({ proctoring, evidenceClips }) {
         </div>
       )}
 
-      <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
+      <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">
         Integrity flags are advisory signals for your review — not proof of misconduct, and never on their own a reason to reject.
       </p>
     </Card>
@@ -754,14 +786,14 @@ export default function InterviewReport() {
       <Card>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900">
-              <Sparkles className="h-5 w-5 text-brand-600" /> AI Interview Report
+            <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">
+              <Cpu className="h-5 w-5 text-brand-600" /> AI Interview Report
             </h1>
             <p className="mt-1 text-sm text-slate-500">
               {candidate?.name} · <span className="font-medium text-slate-700">{job?.title}</span>
             </p>
             {decisionTrail && (
-              <p className="mt-1 text-xs text-slate-400">
+              <p className="mt-1 text-xs text-slate-500">
                 Moved to &ldquo;{decisionTrail.stageLabel}&rdquo; by {decisionTrail.by || "system"} · {formatWhen(decisionTrail.at)}
                 {decisionTrail.note ? ` — ${decisionTrail.note}` : ""}
               </p>
@@ -842,7 +874,7 @@ export default function InterviewReport() {
                 <div className="mt-4 flex items-center gap-4">
                   <div className={`flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-2xl text-white ${ev.generatedBy === "fallback" ? "bg-slate-400" : "bg-slate-900"}`}>
                     <span className="text-2xl font-bold">{ev.overallScore ?? "—"}</span>
-                    <span className="text-[10px] uppercase tracking-wide text-slate-300">{ev.generatedBy === "fallback" ? "Placeholder" : "Overall"}</span>
+                    <span className="text-[10px] text-slate-300">{ev.generatedBy === "fallback" ? "Placeholder" : "Overall"}</span>
                   </div>
                   {interview.competencyTriplet ? (
                     <div className="grid flex-1 gap-3 sm:grid-cols-3">
@@ -851,7 +883,7 @@ export default function InterviewReport() {
                       <ScoreBar label="Problem Solving" value={interview.competencyTriplet.problemSolving} />
                     </div>
                   ) : (
-                    <p className="flex-1 text-sm text-slate-400">
+                    <p className="flex-1 text-sm text-slate-500">
                       Communication / Technical / Problem solving:{" "}
                       {ev.generatedBy === "fallback" ? "PLACEHOLDER — not a real evaluation." : "not separately measured for this interview."}
                     </p>
@@ -863,7 +895,7 @@ export default function InterviewReport() {
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
                   {ev.strengths?.length > 0 && (
                     <div>
-                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Strengths</p>
+                      <p className="mb-2 text-xs font-medium text-slate-600">Strengths</p>
                       <ul className="space-y-1">
                         {ev.strengths.map((s, i) => (
                           <li key={i} className="flex items-start gap-1.5 text-sm text-slate-600">
@@ -875,7 +907,7 @@ export default function InterviewReport() {
                   )}
                   {ev.weaknesses?.length > 0 && (
                     <div>
-                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Weaknesses</p>
+                      <p className="mb-2 text-xs font-medium text-slate-600">Weaknesses</p>
                       <ul className="space-y-1">
                         {ev.weaknesses.map((s, i) => (
                           <li key={i} className="flex items-start gap-1.5 text-sm text-slate-600">
@@ -889,7 +921,7 @@ export default function InterviewReport() {
 
                 {ev.missingSkills?.length > 0 && (
                   <div className="mt-4">
-                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Skills to probe</p>
+                    <p className="mb-2 text-xs font-medium text-slate-600">Skills to probe</p>
                     <div className="flex flex-wrap gap-1.5">
                       {ev.missingSkills.map((s) => (
                         <Badge key={s} tone="red">{s}</Badge>
@@ -902,25 +934,25 @@ export default function InterviewReport() {
                     kept visually de-emphasized and clearly labeled to avoid accent/audio bias. */}
                 {(ev.delivery != null || ev.confidence != null) && (
                   <div className="mt-4 border-t border-slate-100 pt-3">
-                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Signal quality (secondary — voice delivery, not competency)</p>
+                    <p className="mb-2 text-xs font-medium text-slate-600">Signal quality (secondary — voice delivery, not competency)</p>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <ScoreBar label="Delivery (voice)" value={ev.delivery} />
                       <ScoreBar label="Confidence (voice)" value={ev.confidence} />
                     </div>
-                    <p className="mt-2 text-xs text-slate-400">
+                    <p className="mt-2 text-xs text-slate-500">
                       Measures speaking pace and fluency, not technical ability — can reflect accent or audio quality rather than skill.
                     </p>
                   </div>
                 )}
 
-                <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
+                <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">
                   Generated by {ev.generatedBy === "fallback" ? "deterministic fallback (AI provider not configured)" : "AI"}
                   {ev.generatedAt ? ` · ${formatWhen(ev.generatedAt)}` : ""}
                   {interview.startedAt ? ` · interview ${formatWhen(interview.startedAt)}` : ""}
                 </p>
               </>
             ) : (
-              <p className="mt-3 text-sm text-slate-400">Evaluation not available yet.</p>
+              <p className="mt-3 text-sm text-slate-500">Evaluation not available yet.</p>
             )}
           </Card>
 
@@ -963,7 +995,7 @@ export default function InterviewReport() {
           <Card>
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-base font-semibold text-slate-900">Transcript</h3>
-              <div className="flex items-center gap-3 text-xs text-slate-400">
+              <div className="flex items-center gap-3 text-xs text-slate-500">
                 {interview.substance && (
                   <span>Responsive: {interview.substance.responsiveCount}/{interview.substance.totalAnswers}</span>
                 )}
@@ -987,7 +1019,7 @@ export default function InterviewReport() {
                 />
               ))}
               {(!interview.transcript || interview.transcript.length === 0) && (
-                <p className="text-sm text-slate-400">No transcript recorded.</p>
+                <p className="text-sm text-slate-500">No transcript recorded.</p>
               )}
             </div>
           </Card>

@@ -4,6 +4,9 @@
   "private": true,
   "type": "commonjs",
   "main": "server.js",
+  "engines": {
+    "node": ">=20 <25"
+  },
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",

@@ -30,6 +30,12 @@ function cfg() {
     // actually treating silence as the end of the turn.
     utteranceEndMs: Number(process.env.DEEPGRAM_UTTERANCE_END_MS || 3200),
     ttlSeconds: Number(process.env.VOICE_TOKEN_TTL_SECONDS || 60),
+    // Speaker diarization. Deepgram labels each word with a speaker index on the SAME stream we
+    // already open, at no extra cost on nova-3 — so "a second voice answered this question" becomes
+    // observable for free. It is by far the strongest integrity signal available to this platform:
+    // a camera can be fooled by a phone off-frame, but someone else speaking the answer cannot.
+    // Defaults ON; set DEEPGRAM_DIARIZE=false to disable.
+    diarize: String(process.env.DEEPGRAM_DIARIZE || "true") !== "false",
   };
 }
 
@@ -171,6 +177,7 @@ async function grantStreamingToken({ keyterms = [] } = {}) {
       utteranceEndMs: c.utteranceEndMs,
       punctuate: true,
       smartFormat: true,
+      diarize: c.diarize,
       keyterms: Array.isArray(keyterms) ? keyterms : [],
       keytermParam: keytermParamFor(c.sttModel),
     },

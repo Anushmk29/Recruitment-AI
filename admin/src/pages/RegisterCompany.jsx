@@ -78,7 +78,7 @@ export default function RegisterCompany() {
       <div className="mx-auto max-w-2xl px-5 py-14 sm:px-8">
         <OnboardingSteps current={step} />
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Register Your Company</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-3xl">Register Your Company</h1>
           <p className="mt-2 text-sm text-slate-500">
             {step === 1 ? "Tell us about your organization." : "Now create the admin account for your workspace."}
           </p>

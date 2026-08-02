@@ -5,6 +5,8 @@ import api from "../api/client.js";
 import { useToast } from "../components/ui/Toast.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
+import PageHeader from "../components/ui/PageHeader.jsx";
+import { TableWrap, Table, THead, TH, TBody, TR, TD, RowAction } from "../components/ui/DataTable.jsx";
 
 const CANDIDATE_PORTAL_URL = import.meta.env.VITE_CANDIDATE_PORTAL_URL || "http://localhost:5174";
 
@@ -92,7 +94,7 @@ function PublishBoardsModal({ job, onClose }) {
       <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-base font-semibold text-slate-900">Publish "{job.title}" to boards</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600" aria-label="Close">
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-600" aria-label="Close">
             <X className="h-4.5 w-4.5" />
           </button>
         </div>
@@ -122,7 +124,7 @@ function PublishBoardsModal({ job, onClose }) {
                   </div>
                   {!b.enabled && <p className="mt-1.5 pl-6 text-xs text-amber-600">{b.reason}</p>}
                   {b.enabled && b.needsCredential && !b.credentialConfigured && (
-                    <p className="mt-1.5 pl-6 text-xs text-slate-400">
+                    <p className="mt-1.5 pl-6 text-xs text-slate-500">
                       Connect this board's credentials in Settings → Integrations first.
                     </p>
                   )}
@@ -136,7 +138,7 @@ function PublishBoardsModal({ job, onClose }) {
                     </a>
                   )}
                   {b.status === "published" && (
-                    <button onClick={() => withdraw(b.board)} disabled={busy} className="mt-1.5 pl-6 text-xs font-medium text-slate-400 hover:text-red-600">
+                    <button onClick={() => withdraw(b.board)} disabled={busy} className="mt-1.5 pl-6 text-xs font-medium text-slate-500 hover:text-red-600">
                       Withdraw from this board
                     </button>
                   )}
@@ -204,15 +206,15 @@ export default function JobList() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
-          <p className="mt-1 text-sm text-slate-500">Manage your open roles and track applicants.</p>
-        </div>
-        <Button as={Link} to="/jobs/new">
-          <Plus className="h-4 w-4" /> New Job
-        </Button>
-      </div>
+      <PageHeader
+        title="Jobs"
+        description="Manage your open roles and track applicants."
+        action={
+          <Button as={Link} to="/jobs/new" className="whitespace-nowrap">
+            <Plus className="h-4 w-4" aria-hidden="true" /> New job
+          </Button>
+        }
+      />
 
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
 
@@ -237,64 +239,62 @@ export default function JobList() {
             />
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+          <TableWrap>
+            <Table>
+              <THead>
                 <tr>
-                  <th className="px-6 py-3 font-medium">Title</th>
-                  <th className="px-6 py-3 font-medium">Department</th>
-                  <th className="px-6 py-3 font-medium">Status</th>
-                  <th className="px-6 py-3 font-medium">Scoring Rubric</th>
-                  <th className="px-6 py-3 font-medium">Candidates</th>
-                  <th className="px-6 py-3 font-medium">Actions</th>
+                  <TH>Title</TH>
+                  <TH>Department</TH>
+                  <TH>Status</TH>
+                  <TH>Scoring rubric</TH>
+                  <TH>Candidates</TH>
+                  <TH>Actions</TH>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
+              </THead>
+              <TBody>
                 {jobs.map((job) => (
-                  <tr key={job._id}>
-                    <td className="px-6 py-3 font-medium text-slate-800">{job.title}</td>
-                    <td className="px-6 py-3 text-slate-500">{job.department || "—"}</td>
-                    <td className="px-6 py-3">
+                  <TR key={job._id}>
+                    <TD className="font-medium text-slate-800">{job.title}</TD>
+                    <TD className="text-slate-600">{job.department || "—"}</TD>
+                    <TD>
                       <Badge tone={job.status === "published" ? "green" : "amber"}>{job.status}</Badge>
-                    </td>
-                    <td className="px-6 py-3">
-                      <Link to={`/jobs/${job._id}/rubric`} className="inline-flex">
+                    </TD>
+                    <TD>
+                      <Link
+                        to={`/jobs/${job._id}/rubric`}
+                        className="inline-flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+                      >
                         <Badge tone={(RUBRIC_STATUS_META[job.rubricStatus] || RUBRIC_STATUS_META.none).tone}>
                           {(RUBRIC_STATUS_META[job.rubricStatus] || RUBRIC_STATUS_META.none).label}
                         </Badge>
                       </Link>
-                    </td>
-                    <td className="px-6 py-3">
+                    </TD>
+                    <TD>
                       <Link
                         to={`/jobs/${job._id}/candidates`}
-                        className="inline-flex items-center gap-1 font-medium text-brand-700 hover:underline"
+                        className="inline-flex items-center gap-1.5 rounded-lg font-medium whitespace-nowrap text-brand-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
                       >
-                        <Users className="h-3.5 w-3.5" /> View
+                        <Users className="h-3.5 w-3.5" aria-hidden="true" /> View
                       </Link>
-                    </td>
-                    <td className="px-6 py-3">
-                      <div className="flex items-center gap-3">
-                        <Link to={`/jobs/${job._id}/edit`} className="text-slate-400 hover:text-brand-700" title="Edit">
-                          <Pencil className="h-4 w-4" />
-                        </Link>
+                    </TD>
+                    <TD>
+                      <div className="flex items-center gap-0.5">
+                        <RowAction as={Link} to={`/jobs/${job._id}/edit`} label="Edit job" icon={Pencil} />
                         {job.status === "published" && (
-                          <button
+                          <RowAction
                             onClick={() => setPublishModalJob(job)}
-                            className="text-slate-400 hover:text-brand-700"
-                            title="Publish to Job Boards"
-                          >
-                            <Globe2 className="h-4 w-4" />
-                          </button>
+                            label="Publish to job boards"
+                            icon={Globe2}
+                          />
                         )}
                         {job.status === "published" && (
                           <span className="relative">
-                            <button
+                            <RowAction
                               onClick={() => setLinkPickerFor(linkPickerFor === job._id ? null : job._id)}
-                              className="text-slate-400 hover:text-brand-700"
-                              title="Copy Apply Link"
-                            >
-                              <Link2 className="h-4 w-4" />
-                            </button>
+                              label="Copy apply link"
+                              icon={Link2}
+                              aria-expanded={linkPickerFor === job._id}
+                            />
                             {linkPickerFor === job._id && (
                               <span
                                 className="absolute right-0 top-6 z-20 w-44 rounded-xl border border-slate-200 bg-white py-1.5 shadow-soft"
@@ -311,7 +311,7 @@ export default function JobList() {
                                 ))}
                                 <button
                                   onClick={() => handleCopyApplyLink(job)}
-                                  className="block w-full border-t border-slate-100 px-3.5 py-1.5 text-left text-xs text-slate-400 hover:bg-slate-50"
+                                  className="block w-full border-t border-slate-100 px-3.5 py-1.5 text-left text-xs text-slate-500 hover:bg-slate-50"
                                 >
                                   Untagged link
                                 </button>
@@ -320,20 +320,26 @@ export default function JobList() {
                           </span>
                         )}
                         {job.status !== "published" && (
-                          <button onClick={() => handlePublish(job._id)} className="text-slate-400 hover:text-emerald-600" title="Publish">
-                            <UploadCloud className="h-4 w-4" />
-                          </button>
+                          <RowAction
+                            onClick={() => handlePublish(job._id)}
+                            label="Publish job"
+                            icon={UploadCloud}
+                            tone="positive"
+                          />
                         )}
-                        <button onClick={() => handleDelete(job._id)} className="text-slate-400 hover:text-red-600" title="Delete">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        <RowAction
+                          onClick={() => handleDelete(job._id)}
+                          label="Delete job"
+                          icon={Trash2}
+                          tone="danger"
+                        />
                       </div>
-                    </td>
-                  </tr>
+                    </TD>
+                  </TR>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </TBody>
+            </Table>
+          </TableWrap>
         )}
       </Card>
 

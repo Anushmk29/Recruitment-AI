@@ -36,8 +36,14 @@ mongodb+srv://USER:PASS@cluster.mongodb.net/recruitment?retryWrites=true&w=major
 
 Render's filesystem is **ephemeral**: wiped on every deploy and on every restart (and free
 services restart often, see below). `storageService` falls back to `backend/uploads` when
-`S3_BUCKET` is unset, so without object storage every uploaded résumé is destroyed —
+S3 is unconfigured, so without object storage every uploaded résumé is destroyed —
 and then ATS extracts empty text and scores the candidate on nothing, without an error.
+
+**The API refuses to boot in production without all three of `S3_BUCKET`,
+`S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`** — a partial config falls back to local
+disk exactly as an empty one does, so it is rejected the same way. If you are deploying
+somewhere with genuinely persistent disk (a VPS with a mounted volume), set
+`ALLOW_LOCAL_STORAGE=true` to downgrade it to a warning. Never set that on Render.
 
 Any S3-compatible store works, since the code already supports `S3_ENDPOINT` +
 `S3_FORCE_PATH_STYLE`. **Cloudflare R2** is the cheapest fit (10 GB free, no egress fees):
@@ -116,7 +122,9 @@ Plus the `S3_*` block from above, and the `RAZORPAY_*` keys if you want checkout
 
 `CLIENT_ORIGIN_*` drives CORS **and** the Socket.io handshake — if either origin is
 missing or misspelled, the SPA loads but every API call and the live notification socket
-are rejected by the browser.
+are rejected by the browser. Scheme included, no path. A trailing slash is now stripped
+for you, but the scheme is not optional: `recruitment-admin.onrender.com` will not match
+the `https://recruitment-admin.onrender.com` a browser actually sends.
 
 `PUBLIC_CANDIDATE_URL` is the one that fixes the dead-link problem: it overrides
 `CLIENT_ORIGIN_USER` when building emailed links, so link generation can never again
@@ -169,6 +177,31 @@ Free is fine for testing the deploy. Before you invite real candidates, set
 
 Also note the free key-value store has no persistence — a restart drops anything queued
 in BullMQ at that moment. Check Render's current free-tier limits, as they change.
+
+### The key-value eviction policy is not a tuning knob
+
+[render.yaml](render.yaml) pins `maxmemoryPolicy: noeviction` on `recruitment-kv`. Render
+defaults new instances to `allkeys-lru`, under which Redis evicts BullMQ's own bookkeeping
+keys as memory tightens. Jobs then disappear **without** emitting a `failed` event, so the
+worker's final-attempt alert never fires and the `EmailLog` row sits at `queued` forever
+while the UI reports success — registration OTPs, verification links and interview
+invitations silently not sent. If you create the store by hand instead of from the
+Blueprint, set this yourself.
+
+### Deploys interrupt work that has already been acknowledged
+
+Apply returns `201` and screens afterwards; rescore returns `202`; an interview finalises
+after the candidate's last answer. On SIGTERM those detached tasks get `SHUTDOWN_DRAIN_MS`
+(15 s) to finish before Mongo is disconnected. A live-mode screen is several LLM calls and
+can outlast that, in which case the shutdown log carries the line:
+
+```
+background tasks abandoned at shutdown — re-run these   {"abandoned":["screen candidate 65f…"]}
+```
+
+Those candidates have no score and no outcome email. The recovery is **Rescore** on each
+one. Grep for `abandoned at shutdown` after any deploy that lands during working hours —
+free-tier spin-downs produce the same line.
 
 ---
 

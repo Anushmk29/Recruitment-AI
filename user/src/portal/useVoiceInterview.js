@@ -120,6 +120,18 @@ function measureDelivery(transcript, durationMs, energySamples) {
   return acoustic;
 }
 
+// Collapse the per-label word tally into the two numbers the server needs: how many distinct
+// speakers were heard, and how many words did NOT belong to the dominant one. Deliberately not a
+// verdict — "is this a second person" is a judgement, and judgements are made server-side where a
+// candidate cannot influence them.
+function summarizeSpeakers(speakerWords) {
+  const entries = Object.entries(speakerWords || {});
+  if (!entries.length) return undefined;
+  const total = entries.reduce((s, [, n]) => s + n, 0);
+  const dominant = entries.reduce((a, b) => (a[1] >= b[1] ? a : b));
+  return { distinctSpeakers: entries.length, secondaryWords: total - dominant[1] };
+}
+
 export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
   const [phase, setPhase] = useState("idle"); // idle | speaking | listening | processing
   const [interim, setInterim] = useState("");
@@ -503,6 +515,10 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       punctuate: "true",
       smart_format: "true",
     });
+    // Speaker separation, when the server enabled it. Costs nothing extra on the socket we already
+    // open, and turns "someone else answered this question" from invisible into measurable. We
+    // report only word COUNTS per speaker (below) — never who, never a voiceprint, never audio.
+    if (p.diarize) params.set("diarize", "true");
     // Vocabulary biasing so technical nouns survive transcription ("Kubernetes" not "cooper
     // netties"). The server decides both the terms (backend/utils/keyterms.js) and the param
     // name the provider expects, so this stays provider-agnostic and the client never has to
@@ -517,7 +533,11 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
-    const acc = { finalText: "", lastInterim: "", confidence: 0, startedAt: Date.now(), energy: [] };
+    // `speakerWords` tallies words per diarization label for THIS answer. Counts only — no
+    // voiceprint, no identity, nothing that could follow a candidate anywhere. Whether these
+    // numbers amount to "a second person answered" is decided server-side (utils/proctoring.js),
+    // because that is a judgement and the browser is an untrusted reporter.
+    const acc = { finalText: "", lastInterim: "", confidence: 0, startedAt: Date.now(), energy: [], speakerWords: {} };
     sessionRef.current = acc;
 
     // Sample the RMS-energy envelope ~10x/sec for pause-ratio + energy-variance (prosody).
@@ -575,6 +595,17 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
         acc.lastInterim = "";
         if (alt.confidence) acc.confidence = Math.max(acc.confidence, alt.confidence);
         setInterim(acc.finalText);
+
+        // Tally diarization labels on finals only (interims get revised). Skipped while a question
+        // is still playing on the barge-in path: the mic is deliberately open over our own voice
+        // there, and labelling the interviewer as a second speaker would flag the candidate for
+        // our design decision.
+        if (!bargeInArmedRef.current && Array.isArray(alt.words)) {
+          for (const w of alt.words) {
+            if (!Number.isFinite(w?.speaker)) continue;
+            acc.speakerWords[w.speaker] = (acc.speakerWords[w.speaker] || 0) + 1;
+          }
+        }
 
         // "Sorry, could you repeat that?" — checked on FINAL transcripts only, never interim: a
         // partial can be revised, and acting on one risks discarding an answer that was never a
@@ -723,6 +754,7 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       durationMs,
       confidence: acc.confidence || undefined,
       acoustic: measureDelivery(transcript, durationMs, acc.energy),
+      speakers: summarizeSpeakers(acc.speakerWords),
       // Reported on submit so the server can strip any of our own words that the mic picked up,
       // and record the interview's real conversational conditions.
       backchannels,

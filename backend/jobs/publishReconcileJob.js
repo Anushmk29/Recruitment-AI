@@ -3,7 +3,7 @@
 // the board dropped, expires listings past validThrough, and withdraws rows
 // whose local job is no longer published. Never auto-republishes anything.
 
-const cron = require("node-cron");
+const { schedule, cronTimezone } = require("../utils/cronSchedule");
 const tenantContext = require("../utils/tenantContext");
 const { reconcileAll } = require("../services/jobPublishService");
 
@@ -13,7 +13,7 @@ function startPublishReconcileJob() {
     return;
   }
   // 03:45 daily — after the retention job, before business hours.
-  cron.schedule("45 3 * * *", () => {
+  schedule("45 3 * * *", () => {
     tenantContext
       .runAsSystem(() => reconcileAll())
       .then(({ checked, synced }) => {
@@ -21,7 +21,7 @@ function startPublishReconcileJob() {
       })
       .catch((err) => console.error("[publishReconcile] run failed:", err.message));
   });
-  console.log("[publishReconcile] scheduled daily at 03:45");
+  console.log(`[publishReconcile] scheduled daily at 03:45 ${cronTimezone()}`);
 }
 
 module.exports = { startPublishReconcileJob };

@@ -1,6 +1,37 @@
 [
   {
     "date": "2026-08-02",
+    "scope": "marketing-page",
+    "macrostructure": "Split Studio",
+    "theme": "HireFlow AI (design.md — locked, not rotated)",
+    "genre": "modern-minimal",
+    "enrichment": "Tier-A hand-built artifact panels (LoopArtifacts.jsx) — rubric table, cited-span highlight, summing ledger, probe verdicts",
+    "nav": "N1b (unchanged — shared component owned by 8 routes)",
+    "footer": "Ft5 Statement (unchanged)",
+    "components": "H2 split diptych (7/5, right=proof column) · 3-up asymmetric hairline strip · 4 alternating Split Studio diptychs · F3 tabular spec sheet",
+    "target": "admin/src/pages/Landing.jsx (route /welcome) + admin/src/components/marketing/LoopArtifacts.jsx (new)",
+    "brief": "Restructure the landing page against a dark AI-SaaS reference the user supplied — hero visual anchor, 3-up row, visual-per-step How It Works — while staying inside the locked light system",
+    "removed": "six equal stacked text cards (the monotony the redesign targets), the sticky two-column how-it-works head (gates 54 + 56), Reveal on 4 sections down to 1, one arbitrary type size (gate 48), hero pb 1.2x -> 1.4x (gate 44a)",
+    "refused": "dark neural backdrop + glow wave (DESIGN.md Don't list), borrowed brand logo wall (gate 46 — fabricated endorsement), 3 equal icon-above-heading cards (gate 3)",
+    "note": "Artifact panels label themselves 'Illustration' and depict no candidate. design.md-managed project: diversification INVERTED — theme locked, macrostructure rotated off Narrative Workflow."
+  },
+  {
+    "date": "2026-08-02",
+    "scope": "marketing-page",
+    "macrostructure": "Narrative Workflow",
+    "theme": "HireFlow AI (design.md — locked, not rotated)",
+    "genre": "modern-minimal",
+    "enrichment": "none",
+    "nav": "N1b canonical SaaS three-section (was N1a — gate 42 fingerprint)",
+    "footer": "Ft5 Statement",
+    "components": "F4 step sequence (1.0/2.0/3.0, vertical, hairline spine) · F3 tabular spec sheet (2-col, rule every row)",
+    "target": "admin/src/pages/Landing.jsx (route /welcome) + admin/src/components/marketing/MarketingNavbar.jsx",
+    "brief": "HireFlow AI marketing landing — repositioned from commodity 'automate hiring with AI' to the evidence/Claim-Probe-Verdict loop",
+    "removed": "re-drawn browser chrome (gate 47), fabricated candidate scores and counts (gate 46), sparkle brand mark, 14 icon-tile cards, 5 identical centred py-24 heads, universal whileInView fade-up stagger, brand-600 full-bleed CTA flood, bg-grid + gradient wash",
+    "note": "design.md-managed project: diversification is INVERTED. Future pages must MATCH this system. Macrostructure still rotates — previous was Long Document (ScoreExplanation)."
+  },
+  {
+    "date": "2026-08-02",
     "scope": "app-screen",
     "macrostructure": "Long Document",
     "theme": "HireFlow AI (design.md — locked, not rotated)",
@@ -10,6 +41,6 @@
     "footer": "n/a — colophon block, not a page footer",
     "target": "admin/src/pages/dashboard/ScoreExplanation.jsx",
     "brief": "HireFlow AI · \"Why this score\" — evidence assessment rendered as a ledger whose line items visibly sum to the recorded score",
-    "note": "design.md-managed project: the diversification rule is INVERTED. Future screens must MATCH this system, not differ from it. Do not rotate macrostructure/theme away from DESIGN.md."
+    "note": "design.md-managed project: the diversification rule is INVERTED. Future screens must MATCH this system, not differ from it."
   }
 ]

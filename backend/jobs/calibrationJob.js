@@ -2,7 +2,7 @@
 // decided outcomes, rebuild the score→advancement curve. Display-only output —
 // see services/calibrationService.js for the hard rules.
 
-const cron = require("node-cron");
+const { schedule, cronTimezone } = require("../utils/cronSchedule");
 const ScoreOutcome = require("../models/ScoreOutcome");
 const calibrationService = require("../services/calibrationService");
 const tenantContext = require("../utils/tenantContext");
@@ -20,12 +20,12 @@ async function recomputeAll() {
 }
 
 function startCalibrationJob() {
-  cron.schedule("30 2 * * *", () => {
+  schedule("30 2 * * *", () => {
     tenantContext
       .runAsSystem(() => recomputeAll())
       .catch((err) => console.error("[calibrationJob] run failed:", err.message));
   });
-  console.log("[calibrationJob] scheduled daily at 02:30");
+  console.log(`[calibrationJob] scheduled daily at 02:30 ${cronTimezone()}`);
 }
 
 module.exports = { startCalibrationJob, recomputeAll };

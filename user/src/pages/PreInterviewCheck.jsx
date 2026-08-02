@@ -193,7 +193,10 @@ export default function PreInterviewCheck() {
         // still resolves via the catch and identity match just stays unavailable — never blocks.
         try {
           await faceVision.ensureLoaded();
-          const res = await faceVision.analyzeFrame(canvas);
+          // `withDescriptor` is opt-in (the interview room only pays for the recognition net on
+          // identity-sample ticks) — but this call is the ONE place that must always have it: it
+          // produces the reference every later match is measured against.
+          const res = await faceVision.analyzeFrame(canvas, { withDescriptor: true });
           if (res?.descriptor) sessionStorage.setItem("proctorRefDescriptor", JSON.stringify(res.descriptor));
         } catch {
           // vision model unavailable/failed — identity match degrades to "unknown", never blocks.

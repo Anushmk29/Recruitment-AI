@@ -16,17 +16,32 @@
   --color-brand-900: #1e3a8a;
   --color-brand-950: #172554;
 
-  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -8px rgba(15, 23, 42, 0.08);
+  /* Elevation — four planes, all cool-tinted so layering reads as lift rather
+     than as drop shadow. Planes 3 and 4 extend the original two-shadow
+     vocabulary; see DESIGN.md § Elevation & Depth. */
   --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -8px rgba(15, 23, 42, 0.08);
+  --shadow-lift: 0 2px 4px rgba(15, 23, 42, 0.04), 0 18px 40px -12px rgba(15, 23, 42, 0.13);
+  --shadow-deep: 0 4px 8px rgba(15, 23, 42, 0.05), 0 36px 64px -20px rgba(15, 23, 42, 0.18);
+
+  /* Motion. Three curves cover the whole system; the browser default `ease` is
+     never used, and nothing overshoots — bounce reads as a toy. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 @layer base {
   html {
     font-family: var(--font-sans);
+    /* `clip`, not `hidden` — `hidden` creates a scroll container and would
+       break the sticky dashboard header and marketing navbar. */
+    overflow-x: clip;
   }
 
   body {
     @apply bg-slate-50 text-slate-900 antialiased;
+    overflow-x: clip;
   }
 
   h1,
@@ -45,9 +60,156 @@
   .shadow-card {
     box-shadow: var(--shadow-card);
   }
+  .shadow-lift {
+    box-shadow: var(--shadow-lift);
+  }
+  .shadow-deep {
+    box-shadow: var(--shadow-deep);
+  }
   .bg-grid {
     background-image: radial-gradient(circle at 1px 1px, rgba(37, 99, 235, 0.12) 1px, transparent 0);
     background-size: 28px 28px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Motion primitives — consumed by src/motion/. Transitions live here so the
+   components stay free of inlined durations and easings.
+
+   Only `opacity` and `transform` are animated anywhere below: both are
+   compositor properties, so they never trigger layout on a scrolling page.
+   --------------------------------------------------------------------------- */
+@layer components {
+  [data-reveal] {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+    transition:
+      opacity 620ms var(--ease-out),
+      transform 620ms var(--ease-out);
+    transition-delay: var(--reveal-delay, 0ms);
+    will-change: opacity, transform;
+  }
+
+  [data-reveal][data-revealed="true"] {
+    opacity: 1;
+    transform: none;
+    will-change: auto;
+  }
+
+  /* ---- Dashboard data tables -------------------------------------------
+     Every list screen (jobs, candidates, audit trail, assessments, reports,
+     platform console) renders the same shape, so the shared behaviour lives
+     here instead of being re-specified — and re-drifting — on each page.
+     Page-level utilities still win, since utilities outrank this layer. */
+  table thead {
+    border-color: var(--color-slate-200);
+  }
+
+  /* Sentence case, semibold, slate-600. Not uppercase-tracked slate-400: the
+     system's smallest text is already dense, and slate-400 on white is 2.8:1. */
+  table thead th {
+    font-weight: 600;
+    color: var(--color-slate-600);
+    text-transform: none;
+    letter-spacing: normal;
+    white-space: nowrap;
+  }
+
+  /* One hover signal, a background tint. A row is a line in a list; rows that
+     lift or scale make a queue hard to track with the eye. */
+  table tbody tr {
+    transition: background-color 150ms var(--ease-out);
+  }
+
+  table tbody tr:hover {
+    background-color: color-mix(in oklab, var(--color-slate-50) 85%, transparent);
+  }
+
+  [data-tilt] {
+    transform-style: preserve-3d;
+    transition:
+      transform 400ms var(--ease-out),
+      box-shadow 250ms var(--ease-out);
+  }
+
+  /* While the pointer is driving the tilt, the transform must track it with no
+     easing lag — the transition is for the return-to-rest, not the tracking. */
+  [data-tilt="on"]:hover {
+    transition:
+      transform 80ms linear,
+      box-shadow 250ms var(--ease-out);
+  }
+
+  [data-tilt="on"]:hover,
+  [data-tilt="on"]:focus-within {
+    box-shadow: var(--shadow-lift);
+  }
+}
+
+/* Hero event network. Drift is a few pixels over nine seconds — enough that the
+   scene is alive, far too slow to pull the eye off the headline. */
+@keyframes event-drift {
+  from {
+    transform: translate3d(0, -6px, 0);
+  }
+  to {
+    transform: translate3d(0, 6px, 0);
+  }
+}
+
+/* Dashboard route change. Deliberately short and small — this fires on every
+   navigation a recruiter makes, so anything longer than ~300ms becomes a tax
+   on their day rather than polish. */
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+[data-page-enter] {
+  animation: page-enter 280ms var(--ease-out) both;
+}
+
+@keyframes event-swap {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Continuous loops stop entirely — a drifting card is exactly the ambient
+     movement the preference exists to switch off. */
+  [style*="event-drift"] {
+    animation: none !important;
+  }
+
+  [data-event-swap],
+  [data-page-enter] {
+    animation: none !important;
+  }
+
+  /* Content is never withheld from anyone who asked for less motion: the
+     revealed state is the resting state, applied with no transition at all. */
+  [data-reveal],
+  [data-reveal][data-revealed="false"] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  [data-tilt] {
+    transform: none !important;
+    transition: none;
   }
 }
 

@@ -58,6 +58,7 @@ const { startPublishWorker } = require("./workers/publishWorker");
 const { startPublishReconcileJob } = require("./jobs/publishReconcileJob");
 const { auditLog } = require("./middleware/auditLog");
 const { requestContext, metricsEndpoint } = require("./middleware/observability");
+const backgroundTasks = require("./utils/backgroundTasks");
 const logger = require("./utils/logger");
 
 // Last-resort safety net. This is a single-instance server with no supervisor restarting it
@@ -294,8 +295,16 @@ connectDB()
     process.exit(1);
   });
 
-// Graceful shutdown: stop accepting new connections, then drain sockets, worker, and DB.
-// Without this, a rolling deploy/autoscale-down kills in-flight requests and jobs.
+// Graceful shutdown: stop accepting new connections, then drain sockets, background
+// work, worker, and DB. Without this, a rolling deploy/autoscale-down kills in-flight
+// requests and jobs.
+//
+// Budgets are sized for the platform's SIGTERM→SIGKILL window, which is what actually
+// bounds us (Render allows ~30s). SHUTDOWN_DRAIN_MS is how long detached work gets;
+// SHUTDOWN_TIMEOUT_MS is the hard stop for the whole sequence and must exceed it with
+// room for the socket/worker/Mongo teardown that follows.
+const SHUTDOWN_DRAIN_MS = Number(process.env.SHUTDOWN_DRAIN_MS) || 15000;
+const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 25000;
 let shuttingDown = false;
 // `code` is the exit status on a CLEAN drain: 0 for an operator-initiated signal, 1 when we
 // are bailing out of a broken state (unhandledRejection/uncaughtException) so the supervisor
@@ -305,11 +314,27 @@ async function shutdown(signal, code = 0) {
   shuttingDown = true;
   logger.info("shutting down gracefully", { signal, exitCode: code });
   const forceExit = setTimeout(() => {
-    logger.error("forced exit after 10s");
+    logger.error("forced exit", { afterMs: SHUTDOWN_TIMEOUT_MS });
     process.exit(1);
-  }, 10000);
+  }, SHUTDOWN_TIMEOUT_MS);
   try {
     if (httpServer && httpServer.listening) await new Promise((resolve) => httpServer.close(resolve));
+
+    // Closing the HTTP server resolves immediately for work that already answered its
+    // request — apply screens after its 201, rescore after its 202, an interview
+    // finalises after the candidate's last answer. Disconnecting Mongo underneath those
+    // kills them mid-write, and silently: the alert path inside each one needs the same
+    // connection. Give them a bounded window first.
+    if (backgroundTasks.pendingCount() > 0) {
+      logger.info("draining background tasks", { pending: backgroundTasks.pendingCount(), budgetMs: SHUTDOWN_DRAIN_MS });
+      const { drained, abandoned } = await backgroundTasks.drain(SHUTDOWN_DRAIN_MS);
+      // A live-mode screen is several LLM calls and can outlast any drain budget a
+      // SIGTERM allows. When that happens the work IS lost — so name it, because the
+      // recovery is a human re-running "Rescore" on exactly these records.
+      if (!drained) logger.error("background tasks abandoned at shutdown — re-run these", { abandoned });
+      else logger.info("background tasks drained");
+    }
+
     const { getIO } = require("./config/socket");
     getIO()?.close();
     if (emailWorker) await emailWorker.close();

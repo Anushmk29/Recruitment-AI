@@ -35,6 +35,7 @@ import PlatformConsole from "./pages/platform/PlatformConsole.jsx";
 import RequireAdmin from "./auth/RequireAdmin.jsx";
 import RequirePlatform from "./auth/RequirePlatform.jsx";
 import { useAdminAuth } from "./auth/useAdminAuth.js";
+import SmoothScroll from "./motion/SmoothScroll.jsx";
 
 // Phase 13 fix: the dashboard shell is now ONE layout route. Previously "/"
 // rendered its own <DashboardShell> while "/*" rendered a second one, so
@@ -57,8 +58,14 @@ function ShellLayout() {
 }
 
 export default function App() {
+  // Smooth scroll is scoped to the marketing surface; "/" only counts as
+  // marketing while signed out, since it renders the dashboard otherwise.
+  const { isAuthenticated } = useAdminAuth();
+
   return (
-    <Routes>
+    <>
+      <SmoothScroll allowRoot={!isAuthenticated} />
+      <Routes>
       <Route path="/welcome" element={<Landing />} />
       <Route path="/demo" element={<Demo />} />
       <Route path="/register-company" element={<RegisterCompany />} />
@@ -103,6 +110,7 @@ export default function App() {
         <Route path="audit-trail" element={<AuditTrail />} />
         <Route path="*" element={<NotFound />} />
       </Route>
-    </Routes>
+      </Routes>
+    </>
   );
 }

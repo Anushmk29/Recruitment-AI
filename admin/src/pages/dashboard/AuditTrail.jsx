@@ -55,7 +55,7 @@ export default function AuditTrail() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Audit Trail</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">Audit Trail</h1>
         <p className="mt-1 text-sm text-slate-500">
           Every mutating action in your workspace — who did what, when, and with what outcome. Read-only and
           append-only.
@@ -121,7 +121,7 @@ export default function AuditTrail() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                  <tr className="border-b border-slate-200 text-xs font-semibold text-slate-600">
                     <th className="py-2.5 pr-4 font-semibold">When</th>
                     <th className="py-2.5 pr-4 font-semibold">Actor</th>
                     <th className="py-2.5 pr-4 font-semibold">Action</th>
@@ -137,7 +137,7 @@ export default function AuditTrail() {
                       </td>
                       <td className="py-2.5 pr-4">
                         <span className="font-medium text-slate-700">{row.actorEmail || "system"}</span>
-                        {row.actorRole && <span className="ml-1.5 text-xs text-slate-400">({row.actorRole})</span>}
+                        {row.actorRole && <span className="ml-1.5 text-xs text-slate-500">({row.actorRole})</span>}
                       </td>
                       <td className="py-2.5 pr-4 font-mono text-xs text-slate-700">{row.action}</td>
                       <td className="py-2.5 pr-4 text-xs text-slate-500">

@@ -23,7 +23,7 @@ export default function OnboardingSteps({ current }) {
               >
                 {done ? <Check className="h-4 w-4" /> : step}
               </div>
-              <span className={`hidden text-[11px] font-medium sm:block ${active || done ? "text-brand-700" : "text-slate-400"}`}>
+              <span className={`hidden text-[11px] font-medium sm:block ${active || done ? "text-brand-700" : "text-slate-500"}`}>
                 {label}
               </span>
             </div>

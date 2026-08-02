@@ -70,7 +70,7 @@ export default function ReviewQueue() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Review Queue</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">Review Queue</h1>
         <p className="mt-1 text-sm text-slate-500">
           Candidates the screening engine is <span className="font-medium text-slate-700">honestly unsure about</span> —
           it routed them to you instead of forcing a confident answer. Your decision is recorded and used to calibrate

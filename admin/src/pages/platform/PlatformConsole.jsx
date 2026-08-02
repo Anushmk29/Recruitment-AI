@@ -11,7 +11,7 @@ import {
   History,
   Mail,
   Gauge,
-  Sparkles,
+  Cpu,
   LogOut,
   Eye,
   Inbox,
@@ -117,7 +117,7 @@ function TenantsTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                <tr className="border-b border-slate-200 text-xs font-semibold text-slate-600">
                   <th className="py-2 pr-4 font-semibold">Tenant</th>
                   <th className="py-2 pr-4 font-semibold">Status</th>
                   <th className="py-2 pr-4 font-semibold">Plan</th>
@@ -131,7 +131,7 @@ function TenantsTab() {
                   <tr key={t.id} className="border-b border-slate-50">
                     <td className="py-2.5 pr-4">
                       <p className="font-medium text-slate-800">{t.name}</p>
-                      <p className="text-xs text-slate-400">{t.companyCode} · {t.city || "—"}, {t.country || "—"}</p>
+                      <p className="text-xs text-slate-500">{t.companyCode} · {t.city || "—"}, {t.country || "—"}</p>
                     </td>
                     <td className="py-2.5 pr-4">
                       <Badge tone={STATUS_TONE[t.status] || "slate"}>{t.status}</Badge>
@@ -223,23 +223,23 @@ function TrustTab() {
     <div className="space-y-6">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <p className="text-xs font-medium text-slate-400">LLM circuit breaker</p>
+          <p className="text-xs font-medium text-slate-500">LLM circuit breaker</p>
           <p className="mt-1"><Badge tone={breakerTone}>{data.breaker}</Badge></p>
         </Card>
         <Card>
-          <p className="text-xs font-medium text-slate-400">Assessments (30d)</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{data.assessments.total}</p>
+          <p className="text-xs font-medium text-slate-500">Assessments (30d)</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">{data.assessments.total}</p>
         </Card>
         <Card>
-          <p className="text-xs font-medium text-slate-400">Review rate</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">
+          <p className="text-xs font-medium text-slate-500">Review rate</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">
             {data.assessments.reviewRate != null ? `${Math.round(data.assessments.reviewRate * 100)}%` : "—"}
           </p>
-          <p className="text-[11px] text-slate-400">0% would mean overconfidence</p>
+          <p className="text-[11px] text-slate-500">0% would mean overconfidence</p>
         </Card>
         <Card>
-          <p className="text-xs font-medium text-slate-400">Ensemble agreement</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{data.assessments.meanEnsembleAgreement ?? "—"}</p>
+          <p className="text-xs font-medium text-slate-500">Ensemble agreement</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">{data.assessments.meanEnsembleAgreement ?? "—"}</p>
         </Card>
       </div>
 
@@ -250,14 +250,14 @@ function TrustTab() {
             Ran on {data.assessments.counterfactuals.ran} assessment(s) · identical result{" "}
             {data.assessments.counterfactuals.identical} · <span className="font-semibold text-red-600">{data.assessments.counterfactuals.leaks} leak(s)</span>
           </p>
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs text-slate-500">
             A leak = swapping demographic proxies changed the outcome. Anything above zero is an incident, not a statistic.
           </p>
         </Card>
         <Card>
           <h3 className="mb-3 text-base font-semibold text-slate-900">Scoring engine mix (30d)</h3>
           <div className="space-y-1.5 text-sm text-slate-600">
-            {Object.entries(data.engineMix).length === 0 && <p className="text-slate-400">No scored candidates in range.</p>}
+            {Object.entries(data.engineMix).length === 0 && <p className="text-slate-500">No scored candidates in range.</p>}
             {Object.entries(data.engineMix).map(([engine, n]) => (
               <p key={engine}>
                 <Badge tone={engine === "evidence" ? "green" : engine === "fallback-legacy" ? "amber" : "slate"}>{engine}</Badge>{" "}
@@ -265,7 +265,7 @@ function TrustTab() {
               </p>
             ))}
           </div>
-          <p className="mt-2 text-xs text-slate-400">fallback-legacy = the labelled no-AI path carried the decision — uncertainty stays visible.</p>
+          <p className="mt-2 text-xs text-slate-500">fallback-legacy = the labelled no-AI path carried the decision — uncertainty stays visible.</p>
         </Card>
       </div>
 
@@ -274,7 +274,7 @@ function TrustTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+              <tr className="border-b border-slate-200 text-xs font-semibold text-slate-600">
                 <th className="py-2 pr-4 font-semibold">Kind</th>
                 <th className="py-2 pr-4 font-semibold">Calls</th>
                 <th className="py-2 pr-4 font-semibold">Cost</th>
@@ -306,7 +306,7 @@ function TrustTab() {
               </span>
             </div>
           ))}
-          {data.tenants.length === 0 && <p className="text-slate-400">No evidence-engine assessments in range.</p>}
+          {data.tenants.length === 0 && <p className="text-slate-500">No evidence-engine assessments in range.</p>}
         </div>
       </Card>
     </div>
@@ -355,13 +355,13 @@ function LogTab({ endpoint, columns, filters }) {
       {!data ? (
         <Skeleton className="h-40 w-full" />
       ) : (data.items || data.rows || []).length === 0 ? (
-        <p className="py-8 text-center text-sm text-slate-400">No rows in range.</p>
+        <p className="py-8 text-center text-sm text-slate-500">No rows in range.</p>
       ) : (
         <>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+                <tr className="border-b border-slate-200 text-xs font-semibold text-slate-600">
                   {columns.map((c) => (
                     <th key={c.label} className="py-2 pr-4 font-semibold">{c.label}</th>
                   ))}
@@ -399,7 +399,7 @@ export default function PlatformConsole() {
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-slate-900 px-5 py-3 text-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
           <p className="flex items-center gap-2 font-display text-base font-bold">
-            <Sparkles className="h-4.5 w-4.5 text-brand-300" /> HireFlow AI — Platform Console
+            <Cpu className="h-4.5 w-4.5 text-brand-300" /> HireFlow AI — Platform Console
           </p>
           <button onClick={logout} className="flex items-center gap-1.5 text-sm text-slate-300 hover:text-white">
             <LogOut className="h-4 w-4" /> Log out

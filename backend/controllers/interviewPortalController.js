@@ -289,6 +289,38 @@ async function submitAnswer(req, res) {
   };
   const state = await aiInterview.submitAnswer(session, b.text, opts);
 
+  // Diarization: the browser reports how many words in this answer belonged to a speaker other
+  // than the dominant one; the SERVER decides whether that constitutes a second voice and owns the
+  // resulting risk event. Best-effort — an integrity signal must never cost a candidate their
+  // answer, so a failure here is logged and swallowed.
+  try {
+    const second = proctoring.detectSecondSpeaker(b.speakers);
+    if (second) {
+      const p = session.proctoring || {};
+      p.counts = { ...(p.counts || {}) };
+      p.counts.second_speaker = (p.counts.second_speaker || 0) + 1;
+      p.events = [
+        ...(p.events || []),
+        {
+          type: "second_speaker",
+          severity: "high",
+          meta: proctoring.sanitizeMeta("second_speaker", second),
+          at: new Date(),
+        },
+      ].slice(-PROCTORING_EVENT_TAIL);
+      p.totalEvents = (p.totalEvents || 0) + 1;
+      p.lastEventAt = new Date();
+      const { riskScore, riskBand } = proctoring.computeRisk(p.counts);
+      p.riskScore = riskScore;
+      p.riskBand = riskBand;
+      session.proctoring = p;
+      session.markModified("proctoring");
+      await session.save();
+    }
+  } catch (err) {
+    console.error("[interviewPortal] second-speaker ingest failed:", err.message);
+  }
+
   // Phase 9.4 — meter voice STT spend per spoken answer (the only point where
   // the audio duration is known). Best-effort: metering never blocks an answer.
   if (opts.inputMode === "voice" && opts.audioDurationMs > 0) {
@@ -365,9 +397,10 @@ async function ingestProctoringEvents(session, body, { checkPhone = false } = {}
   for (const raw of incoming) {
     const type = String(raw?.type || "");
     if (!proctoring.isKnownType(type)) continue;
-    // phone_cam_lost is derived server-side from heartbeat staleness — a client
-    // can't inject it directly.
-    if (type === "phone_cam_lost") continue;
+    // phone_cam_lost (heartbeat staleness) and second_speaker (diarization word counts on answer
+    // submit) are both DERIVED server-side — a client can't inject either directly, or it could
+    // manufacture a high-severity flag against itself or hide one by never sending it.
+    if (type === "phone_cam_lost" || type === "second_speaker") continue;
     counts[type] = (counts[type] || 0) + 1;
     accepted.push({ type, severity: proctoring.severityOf(type), meta: proctoring.sanitizeMeta(type, raw?.meta), at: new Date() });
   }
@@ -531,6 +564,9 @@ async function uploadEvidenceClip(req, res) {
       source: req.evidenceSource === "phone" ? "phone" : "laptop",
       buffer: req.file.buffer,
       durationMs: req.body?.durationMs,
+      // The measurement that triggered the capture (multipart field, so it arrives as a JSON
+      // string). Allow-listed and clamped in the service — never trusted as sent.
+      trigger: req.body?.trigger,
     });
     res.status(201).json({ id: row._id, eventType: row.eventType, capturedAt: row.capturedAt });
   } catch (err) {

@@ -17,7 +17,10 @@ export const Textarea = forwardRef(function Textarea({ className = "", error, ..
   return (
     <textarea
       ref={ref}
-      className={`${fieldClass} ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
+      // `resize-y`, not the browser default `resize: both` — a textarea the user
+      // can drag wider than its column silently breaks the form grid, and the
+      // horizontal handle has no legitimate use inside a fixed-width field.
+      className={`${fieldClass} resize-y ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
       {...props}
     />
   );

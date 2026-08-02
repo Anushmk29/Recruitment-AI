@@ -1,4 +1,4 @@
-const cron = require("node-cron");
+const { schedule, cronTimezone } = require("../utils/cronSchedule");
 const Subscription = require("../models/Subscription");
 const Company = require("../models/Company");
 const tenantContext = require("../utils/tenantContext");
@@ -55,7 +55,7 @@ async function sendDueReminders() {
 }
 
 function startSubscriptionExpiryJob() {
-  cron.schedule("0 8 * * *", () => {
+  schedule("0 8 * * *", () => {
     tenantContext
       .runAsSystem(async () => {
         // Phase 11.2: state transitions FIRST (active → past_due → expired),
@@ -69,7 +69,7 @@ function startSubscriptionExpiryJob() {
       })
       .catch((err) => console.error("[subscriptionExpiryJob] run failed:", err.message));
   });
-  console.log("[subscriptionExpiryJob] scheduled daily at 08:00");
+  console.log(`[subscriptionExpiryJob] scheduled daily at 08:00 ${cronTimezone()}`);
 }
 
 module.exports = { startSubscriptionExpiryJob };

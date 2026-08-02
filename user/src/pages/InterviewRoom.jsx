@@ -352,6 +352,9 @@ export default function InterviewRoom() {
         transcriptConfidence: result.confidence,
         audioDurationMs: result.durationMs,
         acoustic: result.acoustic,
+        // Per-speaker word counts from diarization. A measurement only — the server decides whether
+        // it amounts to a second voice, and owns the resulting integrity event.
+        speakers: result.speakers,
         // Lets the server strip any of the interviewer's own words the mic picked up, and record
         // the interview's real conversational conditions. Server-validated against its own
         // approved bank — arbitrary strings are ignored.
@@ -507,12 +510,42 @@ export default function InterviewRoom() {
         </div>
       )}
 
-      {/* Self-view — kept mounted so the monitor can attach its stream; a quiet reminder the
-          session is proctored. Anchored top-right (below the sticky header) rather than
-          bottom-right so it never sits over "Send answer" / "Done answering" on a phone.
-          Hide/show only toggles the preview — the stream and monitoring keep running underneath. */}
+      {/* Self-view — a quiet reminder the session is proctored. Anchored top-right (below the
+          sticky header) rather than bottom-right so it never sits over "Send answer" / "Done
+          answering" on a phone.
+
+          The <video> element is ALWAYS mounted, and hiding only collapses it to a zero-size,
+          non-visible box. It used to be swapped out for the "show preview" button — which unmounted
+          it, nulled the ref React had handed the proctor, and killed face detection for the rest of
+          the session. Re-showing then mounted a NEW element with no srcObject (the stream is
+          attached once, at monitor start), so the preview stayed black and vision never came back.
+          Anything that unmounts this element silently disables monitoring; keep it mounted. */}
       <div className={monitoring ? "fixed top-16 right-4 z-40" : "hidden"}>
-        {pipHidden ? (
+        <div className={pipHidden ? "relative h-0 w-0 overflow-hidden" : "relative"}>
+          <video
+            ref={proctorVideoRef}
+            autoPlay
+            muted
+            playsInline
+            aria-hidden="true"
+            className="h-20 w-28 rounded-lg border-2 border-white/80 bg-slate-900 object-cover shadow-soft sm:h-24 sm:w-32"
+          />
+          <span
+            aria-hidden="true"
+            className="absolute left-1 top-1 flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white"
+          >
+            <Eye className="h-2.5 w-2.5" /> Monitored
+          </span>
+          <button
+            type="button"
+            onClick={() => setPipHidden(true)}
+            aria-label="Hide camera preview"
+            className="absolute right-1 top-1 rounded bg-black/55 p-1.5 text-white hover:bg-black/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-100"
+          >
+            <EyeOff className="h-3 w-3" />
+          </button>
+        </div>
+        {pipHidden && (
           <button
             type="button"
             onClick={() => setPipHidden(false)}
@@ -520,31 +553,6 @@ export default function InterviewRoom() {
           >
             <Eye className="h-3 w-3" aria-hidden="true" /> Show camera preview
           </button>
-        ) : (
-          <div className="relative">
-            <video
-              ref={proctorVideoRef}
-              autoPlay
-              muted
-              playsInline
-              aria-hidden="true"
-              className="h-20 w-28 rounded-lg border-2 border-white/80 bg-slate-900 object-cover shadow-soft sm:h-24 sm:w-32"
-            />
-            <span
-              aria-hidden="true"
-              className="absolute left-1 top-1 flex items-center gap-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white"
-            >
-              <Eye className="h-2.5 w-2.5" /> Monitored
-            </span>
-            <button
-              type="button"
-              onClick={() => setPipHidden(true)}
-              aria-label="Hide camera preview"
-              className="absolute right-1 top-1 rounded bg-black/55 p-1.5 text-white hover:bg-black/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-100"
-            >
-              <EyeOff className="h-3 w-3" />
-            </button>
-          </div>
         )}
       </div>
 

@@ -16,7 +16,7 @@ export default function SubscriptionPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Subscription</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">Subscription</h1>
         <p className="mt-1 text-sm text-slate-500">Your current plan and usage limits.</p>
       </div>
 
@@ -49,7 +49,7 @@ export default function SubscriptionPage() {
                   {plan?.pricing?.[subscription.billingCycle] > 0 && (subscription.billingCycle === "monthly" ? " /mo" : " /yr")}
                 </p>
                 {subscription.currentPeriodEnd && (
-                  <p className="mt-1 text-xs text-slate-400">
+                  <p className="mt-1 text-xs text-slate-500">
                     Renews {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
                   </p>
                 )}
@@ -72,7 +72,7 @@ export default function SubscriptionPage() {
                   ["Storage", `${(plan.limits.storageLimitMb / 1000).toFixed(1)} GB`],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-xl bg-slate-50 p-4">
-                    <p className="text-xs font-medium text-slate-400">{label}</p>
+                    <p className="text-xs font-medium text-slate-500">{label}</p>
                     <p className="mt-1 text-lg font-bold text-slate-900">{value?.toLocaleString?.() ?? value}</p>
                   </div>
                 ))}

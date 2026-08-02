@@ -18,6 +18,7 @@ const llm = require("./llmService");
 const { resolveRole } = require("../config/models");
 const usageService = require("./usageService");
 const tenantContext = require("../utils/tenantContext");
+const { runInBackground } = require("../utils/backgroundTasks");
 const { applyTransition } = require("./pipelineService");
 const { notifyAdmin } = require("./notificationService");
 const { scoreDelivery, aggregateVoiceScores } = require("../utils/prosody");
@@ -534,11 +535,11 @@ async function submitAnswer(session, answerText, opts = {}) {
 
 // Detached: decouple the (slow, high-token) evaluation from the candidate's HTTP request.
 function scheduleFinalization(sessionId) {
-  setImmediate(() => {
+  runInBackground(`finalize interview ${sessionId}`, () =>
     tenantContext
       .runAsSystem(() => runFinalization(sessionId))
-      .catch((err) => console.error("[aiInterview] finalization failed:", err.message));
-  });
+      .catch((err) => console.error("[aiInterview] finalization failed:", err.message))
+  );
 }
 
 async function runFinalization(sessionId) {

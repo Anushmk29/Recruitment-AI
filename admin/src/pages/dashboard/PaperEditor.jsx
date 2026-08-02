@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   ArrowLeft,
-  Sparkles,
+  Cpu,
   Lock,
   AlertTriangle,
   CheckCircle2,
@@ -229,7 +229,7 @@ export default function PaperEditor() {
             </Badge>
           )}
           <Button onClick={compile} disabled={busy} variant="secondary">
-            <Sparkles className="h-4 w-4" /> {papers.length ? "Compile new version" : "Compile blueprint"}
+            <Cpu className="h-4 w-4" /> {papers.length ? "Compile new version" : "Compile blueprint"}
           </Button>
         </div>
       </div>
@@ -241,7 +241,7 @@ export default function PaperEditor() {
           description="Compile the blueprint from this job's approved Scoring Rubric. Every question is generated per-criterion and blind-solved before you review it — there is no generic question bank."
           action={
             <Button onClick={compile} disabled={busy}>
-              <Sparkles className="h-4 w-4" /> Compile blueprint
+              <Cpu className="h-4 w-4" /> Compile blueprint
             </Button>
           }
         />
@@ -285,7 +285,7 @@ export default function PaperEditor() {
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-base font-semibold text-slate-800">Structure & difficulty</h2>
               {isDraft && (
-                <span className="text-xs text-slate-400">Editable until Approve & Freeze</span>
+                <span className="text-xs text-slate-500">Editable until Approve & Freeze</span>
               )}
             </div>
 
@@ -300,7 +300,7 @@ export default function PaperEditor() {
                   <option value="fixed">Fixed tier — same difficulty for every candidate</option>
                   <option value="claim_tiered">Claim-tiered — difficulty follows each résumé's own claims (recruiter can override per candidate)</option>
                 </Select>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1 text-xs text-slate-500">
                   Claim-tiered pitches the test at the level the résumé asserts — verifying “8 years of React” requires the hard items.
                   The tier is derived in code from the candidate's claims, never by a model, and your per-candidate override always wins.
                 </p>
@@ -372,7 +372,7 @@ export default function PaperEditor() {
               </div>
               {isDraft && (
                 <Button onClick={generate} disabled={busy || generating}>
-                  <Sparkles className="h-4 w-4" /> {selected.items.length ? "Resume / top-up generation" : "Generate items"}
+                  <Cpu className="h-4 w-4" /> {selected.items.length ? "Resume / top-up generation" : "Generate items"}
                 </Button>
               )}
             </div>
@@ -419,7 +419,7 @@ export default function PaperEditor() {
                 <div key={section.id}>
                   <h3 className="mb-2 text-sm font-semibold text-slate-700">
                     {section.title}{" "}
-                    <span className="font-normal text-slate-400">
+                    <span className="font-normal text-slate-500">
                       — serves {section.servedItemCount} of {(itemsBySection.get(section.id) || []).filter((i) => i.status === "active").length} active items
                     </span>
                   </h3>
@@ -437,7 +437,7 @@ export default function PaperEditor() {
                       />
                     ))}
                     {!(itemsBySection.get(section.id) || []).length && (
-                      <p className="text-xs text-slate-400">No items yet — run generation.</p>
+                      <p className="text-xs text-slate-500">No items yet — run generation.</p>
                     )}
                   </div>
                 </div>
@@ -496,7 +496,7 @@ function SectionRow({ section, editable, onSave }) {
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
       <div className="min-w-[12rem] flex-1">
         <p className="text-sm font-semibold text-slate-700">{section.title}</p>
-        <p className="text-xs text-slate-400">criteria: {section.criterionIds.join(", ")}</p>
+        <p className="text-xs text-slate-500">criteria: {section.criterionIds.join(", ")}</p>
       </div>
       <div>
         <Label className="!text-xs">Questions served</Label>
@@ -506,7 +506,7 @@ function SectionRow({ section, editable, onSave }) {
         <Label className="!text-xs">Time limit (sec)</Label>
         <Input type="number" min="60" step="30" value={time} disabled={!editable} onChange={(e) => setTime(e.target.value)} className="w-28" />
       </div>
-      <div className="text-xs text-slate-400">
+      <div className="text-xs text-slate-500">
         mix: {section.difficultyMix?.easy || 0}E / {section.difficultyMix?.medium || 0}M / {section.difficultyMix?.hard || 0}H
       </div>
       {editable && dirty && (

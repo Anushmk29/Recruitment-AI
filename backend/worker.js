@@ -8,6 +8,12 @@
 // itself by default.
 
 require("dotenv").config();
+// Must run before mongoose is required — this process connects to Mongo directly, so
+// an SRV lookup fired before the override is applied still fails. server.js has always
+// done this; without it here, DNS_SERVERS silently had no effect in the worker and a
+// mongodb+srv:// URI failed with "querySrv ECONNREFUSED" on the networks it exists for.
+require("./config/dnsOverride").applyDnsOverride();
+
 const { validateEnv } = require("./config/env");
 try {
   validateEnv();
@@ -20,6 +26,7 @@ const mongoose = require("mongoose");
 const connectDB = require("./config/db");
 const { startEmailWorker } = require("./workers/emailWorker");
 const { startInterviewReminderJob } = require("./jobs/interviewReminderJob");
+const { startAssessmentReminderJob } = require("./jobs/assessmentReminderJob");
 const { startSubscriptionExpiryJob } = require("./jobs/subscriptionExpiryJob");
 const { startRetentionJob } = require("./jobs/retentionJob");
 const { startCalibrationJob } = require("./jobs/calibrationJob");
@@ -36,6 +43,11 @@ connectDB()
     }
     startPublishWorker();
     startInterviewReminderJob();
+    // Gated identically to server.js. Omitting it here meant that the moment you moved
+    // to RUN_WORKERS_IN_API=false — the whole point of this process — assessment
+    // reminders stopped going out and expired papers were never swept, with the API
+    // logs looking completely healthy because the job simply did not exist anywhere.
+    if (require("./services/assessmentPaperService").engineEnabled()) startAssessmentReminderJob();
     startSubscriptionExpiryJob();
     startRetentionJob();
     startCalibrationJob();

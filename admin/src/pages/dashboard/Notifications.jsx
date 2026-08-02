@@ -98,7 +98,7 @@ export default function Notifications() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Notifications</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">Notifications</h1>
           <p className="mt-1 text-sm text-slate-500">Workspace, ATS, and billing alerts for your company.</p>
         </div>
         <Button variant="outline" size="sm" onClick={markAllRead}>
@@ -109,7 +109,7 @@ export default function Notifications() {
       <Card>
         <div className="mb-4 grid gap-3 sm:grid-cols-3">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
             <Input
               className="pl-9"
               placeholder="Search notifications…"
@@ -169,7 +169,7 @@ export default function Notifications() {
                     {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" />}
                   </div>
                   <p className="mt-1 text-sm text-slate-500">{n.message}</p>
-                  <p className="mt-1 text-xs text-slate-400">{timeAgo(n.createdAt)}</p>
+                  <p className="mt-1 text-xs text-slate-500">{timeAgo(n.createdAt)}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   {!n.read && (
@@ -182,7 +182,7 @@ export default function Notifications() {
                   )}
                   <button
                     onClick={() => remove(n._id)}
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"
                     aria-label="Delete notification"
                   >
                     <Trash2 className="h-4 w-4" />

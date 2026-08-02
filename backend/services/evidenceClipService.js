@@ -14,18 +14,69 @@
 const crypto = require("crypto");
 const storageService = require("./storageService");
 const ProctoringEvidence = require("../models/ProctoringEvidence");
+const { NON_SCORING_TYPES: NON_SCORING_EVENTS } = require("../utils/proctoring");
 
 const MAX_CLIPS_PER_SESSION = Number(process.env.EVIDENCE_MAX_CLIPS_PER_SESSION) || 6;
 const MAX_CLIP_BYTES = 6 * 1024 * 1024; // multer also enforces this at ingest
 const MAX_DURATION_MS = 25000; // ~15s buffer + assembly slack
 
-// Only high-severity, reviewable moments justify persisting video. "attention_pattern" is the one
-// behavioral exception: not a single high-severity event, but a cumulative ambient-noise pattern
-// (repeated tab-switch/blur/gaze-away/right-click) the client detects crossing a real threshold —
-// still one bounded, reviewable clip per escalation window, not a per-warning recording. Unlike the
-// other four, its clip is blurred client-side (see user/src/portal/useProctoring.js) since a reviewer
-// only needs body-language/context here, not identity.
-const QUALIFYING_EVENTS = new Set(["multi_face", "identity_mismatch", "face_absent", "phone_cam_lost", "attention_pattern"]);
+// Only confirmed, reviewable moments justify persisting video. Every one of these is raised by the
+// client's confirmation state machine after a condition has held continuously for its full window
+// (see CONFIRM_TICKS in user/src/portal/useProctoring.js) — never on a single frame.
+//
+// "attention_pattern" is the behavioral exception: not a single event, but a cumulative
+// ambient-noise pattern (repeated tab-switch/blur/right-click) crossing a threshold. Its clip is
+// blurred client-side since a reviewer needs body language and context here, not identity.
+//
+// "detector_uncertain" is the epistemic exception, and the reason it is on this list at all: when
+// our detector loses the candidate while already reading marginally, the clip is what lets a human
+// SEE that the camera was dim or the candidate was far away. It carries zero risk weight — it
+// exists to refute a flag, not to raise one.
+const QUALIFYING_EVENTS = new Set([
+  "multi_face",
+  "identity_mismatch",
+  "face_absent",
+  "gaze_away",
+  "detector_uncertain",
+  "phone_cam_lost",
+  "attention_pattern",
+]);
+
+// The measurement that justified a capture, travelling with the clip so a reviewer sees the claim
+// and the evidence together. Strictly allow-listed and clamped: `rule` is the only string that
+// survives and it is capped, because everything here renders into the admin report and the PDF.
+const TRIGGER_NUMERIC_FIELDS = [
+  "faceCount",
+  "detectorScore",
+  "lastDetectorScore",
+  "lastFaceFrameRatio",
+  "distance",
+  "threshold",
+];
+
+function sanitizeTrigger(raw) {
+  let input = raw;
+  if (typeof input === "string") {
+    try {
+      input = JSON.parse(input);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const out = {};
+  if (typeof input.rule === "string" && input.rule.trim()) out.rule = input.rule.trim().slice(0, 160);
+  if (input.direction === "down" || input.direction === "side") out.direction = input.direction;
+  if (input.classified === "face_absent" || input.classified === "detector_uncertain") {
+    out.classified = input.classified;
+  }
+  if (typeof input.lastFaceAtEdge === "boolean") out.lastFaceAtEdge = input.lastFaceAtEdge;
+  for (const key of TRIGGER_NUMERIC_FIELDS) {
+    const n = Number(input[key]);
+    if (Number.isFinite(n)) out[key] = Math.round(n * 1000) / 1000;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 // WebM = EBML header; MP4 = "ftyp" brand at byte 4. Everything else is rejected
 // regardless of the client-claimed content type.
@@ -52,7 +103,7 @@ function secondaryCamEnabled(companySettings) {
 
 // Persist one uploaded clip. Throws a status-carrying error on any policy
 // violation; the caller maps it straight to the response.
-async function storeClip({ session, eventType, source, buffer, durationMs }) {
+async function storeClip({ session, eventType, source, buffer, durationMs, trigger }) {
   if (!session.proctoring?.evidenceConsent?.given) {
     const err = new Error("Evidence-clip consent was not given for this session");
     err.status = 403;
@@ -111,6 +162,8 @@ async function storeClip({ session, eventType, source, buffer, durationMs }) {
     mimeType,
     sizeBytes: buffer.length,
     durationMs: duration,
+    trigger: sanitizeTrigger(trigger),
+    scored: !NON_SCORING_EVENTS.has(String(eventType)),
     sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
   });
 }
@@ -135,6 +188,7 @@ module.exports = {
   MAX_CLIPS_PER_SESSION,
   MAX_CLIP_BYTES,
   QUALIFYING_EVENTS,
+  sanitizeTrigger,
   detectClipType,
   clipsEnabled,
   secondaryCamEnabled,

@@ -303,16 +303,64 @@ shadow rather than adding a heavier border; the border strategy is already at it
 - **Soft** (`box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)`): The lifted
   plane. Primary buttons, popovers, toasts, the active sidebar item, floating marketing panels, and cards
   on hover. The `-8px` spread is what makes it read as hovering rather than outlined.
+- **Lift** (`box-shadow: 0 2px 4px rgba(15,23,42,0.04), 0 18px 40px -12px rgba(15,23,42,0.13)`): The
+  addressed plane — a surface the pointer is currently on. Pointer-tilted cards, scroll-raised panels.
+- **Deep** (`box-shadow: 0 4px 8px rgba(15,23,42,0.05), 0 36px 64px -20px rgba(15,23,42,0.18)`): The
+  overlay plane. Modals, sheets, anything that sits above a scrim.
 
 ### Named Rules
 
-**The Two-Shadow Rule.** `shadow-card` and `shadow-soft` are the only shadows. No ad-hoc `box-shadow`
-values, no `shadow-lg`/`shadow-xl` utilities, no colored glows. A new plane picks one of the two; if
-neither fits, the plane count is wrong.
+**The Four-Plane Rule.** `shadow-card`, `shadow-soft`, `shadow-lift`, and `shadow-deep` are the only
+shadows, and they are a *ladder*: resting → lifted → addressed → overlaying. No ad-hoc `box-shadow`
+values, no `shadow-lg`/`shadow-xl` utilities, no coloured glows. A new plane picks one of the four; if
+none fits, the plane count is wrong.
+
+*Amended 2026-08-02.* This was the Two-Shadow Rule. Planes 3 and 4 were added when the platform took on
+scroll-led depth — two planes could not express "resting" and "addressed" and "overlaying" at once, so
+components were reaching for one-off shadows. Depth still comes from **lightness and layering first**;
+the ladder exists so that when a shadow is the right answer, it is drawn from the system.
 
 **The Lift-on-Intent Rule.** Movement between planes is a response to intent — hover raises a card from
 `shadow-card` to `shadow-soft` with a `-translate-y-1`; a press drops it via `active:scale-[0.98]`.
 Elevation animates; it does not sit and pulse.
+
+## Motion & Scroll
+
+Motion is a **surface-scoped** system: the marketing pages are read top-to-bottom and earn scroll
+choreography; the app is scanned and must not have its scroll position interpolated. The primitives live
+in `admin/src/motion/` and are consumed by name, never re-implemented per page.
+
+**Easing.** Three curves, tokenised in `src/index.css`. The browser default `ease` is never used and
+nothing overshoots — bounce reads as a toy on a product that decides livelihoods.
+
+- `--ease-out` `cubic-bezier(0.16, 1, 0.3, 1)` — entering elements. The default.
+- `--ease-in` `cubic-bezier(0.7, 0, 0.84, 0)` — exiting elements.
+- `--ease-in-out` `cubic-bezier(0.65, 0, 0.35, 1)` — symmetrical state toggles.
+
+**Primitives.**
+
+- **`<SmoothScroll>`** — headless Lenis controller mounted once in `App.jsx`. Active only on `/welcome`,
+  `/demo`, `/pricing`, and on `/` while signed out. Never on the dashboard.
+- **`<Reveal>`** — one-shot IntersectionObserver reveal (18px rise + fade, 620ms `--ease-out`, optional
+  stagger `delay`). One-shot is the point: content that re-animates on every re-entry means the page never
+  settles.
+- **`<Tilt>`** — pointer-tracked perspective, capped at 3.5°, fine-pointer only. Pairs with `shadow-lift`.
+- **`useReducedMotion()`** — every primitive above is gated on it, with a CSS backstop.
+
+### Named Rules
+
+**The Native-Scroll Rule.** Smooth scrolling stops at the dashboard door. Interpolated scroll desyncs the
+scrollbar from the wheel, which is a pleasant effect on a page you read and a defect on a queue you scan.
+A recruiter must land exactly where they aimed.
+
+**The Reduced-Motion Floor.** Every animation defines its reduced-motion behaviour explicitly, and the
+resting state under `prefers-reduced-motion: reduce` is the *revealed* state. Content is never withheld
+behind an animation someone asked not to see — and never behind a JS capability the browser might lack.
+
+**The Anchored-Depth Rule.** Depth must attach to something real: a card the pointer is addressing, a
+plane that holds while content passes it. Ambient 3D — floating orbs, drifting spheres, WebGL props the
+user cannot manipulate, glassmorphism as decoration — is banned. It is the fastest way to look generated,
+and it contradicts the claim that a code path rather than a vibe produced the score.
 
 ## Shapes
 

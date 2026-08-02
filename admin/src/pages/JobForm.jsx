@@ -34,6 +34,22 @@ const RUBRIC_STATUS_META = {
   none: { tone: "slate", label: "Not compiled yet" },
 };
 
+// `gap-x-4` only, plus `-mb-4` to swallow the last row's margin: FormGroup
+// already ships its own `mb-4`, so a grid with `gap-4` double-spaced every row
+// (32px vertical against 16px horizontal). Row rhythm comes from FormGroup,
+// column rhythm from the grid — never both.
+const FIELD_GRID = "-mb-4 grid gap-x-4 sm:grid-cols-2";
+
+function SectionCard({ title, description, children }) {
+  return (
+    <Card>
+      <h2 className="text-base font-semibold text-slate-900 [overflow-wrap:anywhere]">{title}</h2>
+      {description && <p className="mt-1 mb-4 text-sm text-slate-500">{description}</p>}
+      {children}
+    </Card>
+  );
+}
+
 // API job document → flat form state (skills array ⇄ comma-separated text).
 function fromJob(j) {
   return {
@@ -174,19 +190,19 @@ export default function JobForm() {
         <ArrowLeft className="h-4 w-4" /> Back to jobs
       </Link>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-slate-900">{id ? "Edit Job" : "New Job"}</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">{id ? "Edit Job" : "New Job"}</h1>
         {id && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge tone={(RUBRIC_STATUS_META[rubricStatus] || RUBRIC_STATUS_META.none).tone}>
               {(RUBRIC_STATUS_META[rubricStatus] || RUBRIC_STATUS_META.none).label}
             </Badge>
-            <Button as={Link} to={`/jobs/${id}/rubric`} variant="secondary">
+            <Button as={Link} to={`/jobs/${id}/rubric`} variant="secondary" className="whitespace-nowrap">
               <ClipboardCheck className="h-4 w-4" /> Scoring Rubric
             </Button>
-            <Button as={Link} to={`/jobs/${id}/assessment`} variant="secondary">
+            <Button as={Link} to={`/jobs/${id}/assessment`} variant="secondary" className="whitespace-nowrap">
               <ClipboardCheck className="h-4 w-4" /> Assessment Paper
             </Button>
-            <Button as={Link} to={`/jobs/${id}/assessments`} variant="secondary">
+            <Button as={Link} to={`/jobs/${id}/assessments`} variant="secondary" className="whitespace-nowrap">
               <ClipboardCheck className="h-4 w-4" /> Assessments
             </Button>
           </div>
@@ -194,121 +210,151 @@ export default function JobForm() {
       </div>
 
       {loading ? (
-        <Card className="max-w-2xl">
-          <Skeleton className="h-96 w-full" />
-        </Card>
+        /* The skeleton mirrors the real two-column shape, so the layout doesn't
+           jump when the job arrives. */
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] xl:items-start">
+          <Card>
+            <Skeleton className="h-[32rem] w-full" />
+          </Card>
+          <div className="space-y-6">
+            <Card>
+              <Skeleton className="h-56 w-full" />
+            </Card>
+            <Card>
+              <Skeleton className="h-40 w-full" />
+            </Card>
+          </div>
+        </div>
       ) : (
-        <Card className="max-w-2xl">
-          <form onSubmit={handleSubmit}>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormGroup className="sm:col-span-2">
-                <Label required>Title</Label>
-                <Input name="title" value={form.title} onChange={handleChange} required />
-              </FormGroup>
-              <FormGroup>
-                <Label>Department</Label>
-                <Input name="department" value={form.department} onChange={handleChange} />
-              </FormGroup>
-              <FormGroup>
-                <Label>Location</Label>
-                <Input name="location" value={form.location} onChange={handleChange} />
-              </FormGroup>
-              <FormGroup className="sm:col-span-2">
-                <Label required>Description</Label>
-                <Textarea name="description" rows={5} value={form.description} onChange={handleChange} required />
-              </FormGroup>
-              <FormGroup className="sm:col-span-2">
-                <Label>Requirements</Label>
-                <Textarea name="requirements" rows={4} value={form.requirements} onChange={handleChange} />
-              </FormGroup>
-            </div>
-
-            <h2 className="mb-1 mt-2 text-base font-semibold text-slate-900">Screening criteria</h2>
-            <p className="mb-4 text-sm text-slate-500">
-              What the ATS scores applicants against. Leaving these empty means the screen cannot reject anyone —
-              every applicant advances to an AI interview and uses interview quota.
-            </p>
-            {noScreeningCriteria && (
-              <div className="mb-4 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-800">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                No screening criteria set — with no required skills, experience or education, every applicant will
-                score above the threshold and be invited to interview.
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Two columns from xl up: the job's prose on the left where it needs
+              width, its settings on the right. DESIGN.md's Two-Model Rule — the
+              app fills, only marketing centres — so there is no max-width here.
+              A recruiter editing a full job description on a 1080p monitor was
+              previously doing it through a 672px ribbon. */}
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] xl:items-start">
+            <SectionCard
+              title="Job details"
+              description="What candidates read on the posting, and what the rubric is compiled from."
+            >
+              <div className={FIELD_GRID}>
+                <FormGroup className="sm:col-span-2">
+                  <Label required>Title</Label>
+                  <Input name="title" value={form.title} onChange={handleChange} required />
+                </FormGroup>
+                <FormGroup>
+                  <Label>Department</Label>
+                  <Input name="department" value={form.department} onChange={handleChange} />
+                </FormGroup>
+                <FormGroup>
+                  <Label>Location</Label>
+                  <Input name="location" value={form.location} onChange={handleChange} />
+                </FormGroup>
+                <FormGroup className="sm:col-span-2">
+                  <Label required>Description</Label>
+                  {/* A job description is many paragraphs long. Editing one
+                      through a 5-row porthole was the worst interaction on the
+                      page — this is the field the whole screen exists for. */}
+                  <Textarea name="description" rows={14} value={form.description} onChange={handleChange} required />
+                </FormGroup>
+                <FormGroup className="sm:col-span-2">
+                  <Label>Requirements</Label>
+                  <Textarea name="requirements" rows={10} value={form.requirements} onChange={handleChange} />
+                </FormGroup>
               </div>
-            )}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormGroup className="sm:col-span-2">
-                <Label>Required skills</Label>
-                <Input
-                  name="requiredSkills"
-                  value={form.requiredSkills}
-                  onChange={handleChange}
-                  placeholder="e.g. React, Node.js, PostgreSQL (comma-separated)"
-                />
-              </FormGroup>
-              <FormGroup>
-                <Label>Minimum experience (years)</Label>
-                <Input type="number" min="0" max="50" step="1" name="minExperienceYears" value={form.minExperienceYears} onChange={handleChange} />
-              </FormGroup>
-              <FormGroup>
-                <Label>Required education</Label>
-                <Input name="requiredEducation" value={form.requiredEducation} onChange={handleChange} placeholder="e.g. B.Tech / any bachelor's degree" />
-              </FormGroup>
-              <FormGroup className="sm:col-span-2">
-                <Label>Screening threshold (0–100)</Label>
-                <Input type="number" min="0" max="100" step="1" name="atsThreshold" value={form.atsThreshold} onChange={handleChange} className="max-w-[10rem]" />
-                <p className="mt-1 text-xs text-slate-400">Applicants scoring at or above this advance to the AI interview. Default 60.</p>
-              </FormGroup>
-            </div>
+            </SectionCard>
 
-            <h2 className="mb-1 mt-2 text-base font-semibold text-slate-900">Skills assessment</h2>
-            <p className="mb-4 text-sm text-slate-500">
-              A timed, proctored test generated from this job's approved rubric. Runs only for candidates you assign — nothing is
-              automatic in manual mode.
-            </p>
-            <div className="mb-6 grid gap-4 sm:grid-cols-2">
-              <FormGroup className="sm:col-span-2">
-                <Label>Assessment policy</Label>
-                <Select name="assessmentPolicy" value={form.assessmentPolicy} onChange={handleChange}>
-                  <option value="off">Off — candidates go straight to the AI interview (default)</option>
-                  <option value="manual">Manual — you decide per candidate: send assessment, or skip to interview</option>
-                  <option value="auto">Auto — every ATS pass is assigned (for high-volume drives only)</option>
-                </Select>
-                <p className="mt-1 text-xs text-slate-400">
-                  In manual mode, ATS-passed candidates wait in an "awaiting decision" queue — a senior hire can be skipped
-                  straight to the interview with one click, and the skip is recorded as your decision (it never reads as missing
-                  data, and it costs nothing).
-                </p>
-              </FormGroup>
-            </div>
+            <div className="space-y-6">
+              <SectionCard
+                title="Screening criteria"
+                description="What the ATS scores applicants against. Leaving these empty means the screen cannot reject anyone — every applicant advances to an AI interview and uses interview quota."
+              >
+                {noScreeningCriteria && (
+                  <div className="mb-4 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-800">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                    No screening criteria set — with no required skills, experience or education, every applicant will
+                    score above the threshold and be invited to interview.
+                  </div>
+                )}
+                <div className={FIELD_GRID}>
+                  <FormGroup className="sm:col-span-2">
+                    <Label>Required skills</Label>
+                    <Input
+                      name="requiredSkills"
+                      value={form.requiredSkills}
+                      onChange={handleChange}
+                      placeholder="e.g. React, Node.js, PostgreSQL (comma-separated)"
+                    />
+                  </FormGroup>
+                  <FormGroup>
+                    <Label>Minimum experience (years)</Label>
+                    <Input type="number" min="0" max="50" step="1" name="minExperienceYears" value={form.minExperienceYears} onChange={handleChange} />
+                  </FormGroup>
+                  <FormGroup>
+                    <Label>Required education</Label>
+                    <Input name="requiredEducation" value={form.requiredEducation} onChange={handleChange} placeholder="e.g. B.Tech / any bachelor's degree" />
+                  </FormGroup>
+                  <FormGroup className="sm:col-span-2">
+                    <Label>Screening threshold (0–100)</Label>
+                    <Input type="number" min="0" max="100" step="1" name="atsThreshold" value={form.atsThreshold} onChange={handleChange} className="max-w-[10rem]" />
+                    <p className="mt-1 text-xs text-slate-500">Applicants scoring at or above this advance to the AI interview. Default 60.</p>
+                  </FormGroup>
+                </div>
+              </SectionCard>
 
-            <h2 className="mb-1 mt-2 text-base font-semibold text-slate-900">AI interview</h2>
-            <p className="mb-4 text-sm text-slate-500">Optional overrides for how the AI interviews candidates for this role.</p>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormGroup>
-                <Label>Minimum questions</Label>
-                <Input type="number" min="1" max="30" step="1" name="interviewMinQuestions" value={form.interviewMinQuestions} onChange={handleChange} placeholder="Default" />
-              </FormGroup>
-              <FormGroup>
-                <Label>Maximum questions</Label>
-                <Input type="number" min="1" max="30" step="1" name="interviewMaxQuestions" value={form.interviewMaxQuestions} onChange={handleChange} placeholder="Default" />
-              </FormGroup>
-              <FormGroup className="sm:col-span-2">
-                <Label>Interview instructions</Label>
-                <Textarea
-                  name="interviewInstructions"
-                  rows={3}
-                  value={form.interviewInstructions}
-                  onChange={handleChange}
-                  placeholder="Anything the AI interviewer should focus on for this role, e.g. 'probe production debugging experience'"
-                />
-              </FormGroup>
-            </div>
+              <SectionCard
+                title="Skills assessment"
+                description="A timed, proctored test generated from this job's approved rubric. Runs only for candidates you assign — nothing is automatic in manual mode."
+              >
+                <div className="-mb-4">
+                  <FormGroup>
+                    <Label>Assessment policy</Label>
+                    <Select name="assessmentPolicy" value={form.assessmentPolicy} onChange={handleChange}>
+                      <option value="off">Off — candidates go straight to the AI interview (default)</option>
+                      <option value="manual">Manual — you decide per candidate: send assessment, or skip to interview</option>
+                      <option value="auto">Auto — every ATS pass is assigned (for high-volume drives only)</option>
+                    </Select>
+                    <p className="mt-1 text-xs text-slate-500">
+                      In manual mode, ATS-passed candidates wait in an “awaiting decision” queue — a senior hire can be
+                      skipped straight to the interview with one click, and the skip is recorded as your decision (it never
+                      reads as missing data, and it costs nothing).
+                    </p>
+                  </FormGroup>
+                </div>
+              </SectionCard>
 
-            <Button type="submit" loading={submitting}>
-              <Save className="h-4 w-4" /> Save Job
-            </Button>
-          </form>
-        </Card>
+              <SectionCard
+                title="AI interview"
+                description="Optional overrides for how the AI interviews candidates for this role."
+              >
+                <div className={FIELD_GRID}>
+                  <FormGroup>
+                    <Label>Minimum questions</Label>
+                    <Input type="number" min="1" max="30" step="1" name="interviewMinQuestions" value={form.interviewMinQuestions} onChange={handleChange} placeholder="Default" />
+                  </FormGroup>
+                  <FormGroup>
+                    <Label>Maximum questions</Label>
+                    <Input type="number" min="1" max="30" step="1" name="interviewMaxQuestions" value={form.interviewMaxQuestions} onChange={handleChange} placeholder="Default" />
+                  </FormGroup>
+                  <FormGroup className="sm:col-span-2">
+                    <Label>Interview instructions</Label>
+                    <Textarea
+                      name="interviewInstructions"
+                      rows={4}
+                      value={form.interviewInstructions}
+                      onChange={handleChange}
+                      placeholder="Anything the AI interviewer should focus on for this role, e.g. 'probe production debugging experience'"
+                    />
+                  </FormGroup>
+                </div>
+              </SectionCard>
+            </div>
+          </div>
+
+          <Button type="submit" loading={submitting} className="whitespace-nowrap">
+            <Save className="h-4 w-4" /> Save Job
+          </Button>
+        </form>
       )}
     </div>
   );

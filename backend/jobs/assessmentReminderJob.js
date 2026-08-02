@@ -4,7 +4,7 @@
 // flag. Also sweeps sessions past expiry so partial work gets scored (the
 // score-what-exists guarantee) instead of rotting at in_progress.
 
-const cron = require("node-cron");
+const { schedule } = require("../utils/cronSchedule");
 const AssessmentSession = require("../models/AssessmentSession");
 const Candidate = require("../models/Candidate");
 const Job = require("../models/Job");
@@ -86,7 +86,7 @@ async function sweepExpired() {
 }
 
 function startAssessmentReminderJob() {
-  cron.schedule("*/15 * * * *", () => {
+  schedule("*/15 * * * *", () => {
     tenantContext
       .runAsSystem(async () => {
         await sendDueReminders();

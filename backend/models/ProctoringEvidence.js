@@ -18,6 +18,16 @@ const proctoringEvidenceSchema = new mongoose.Schema(
     eventType: { type: String, required: true, trim: true },
     source: { type: String, enum: ["laptop", "phone"], default: "laptop" },
 
+    // The measurement that caused this capture: the rule that fired, the detector's own confidence,
+    // how much of the frame the face filled, whether it was edge-cropped. Stored so a reviewer sees
+    // the CLAIM and the FOOTAGE side by side — the point being that a clip which contradicts its own
+    // label becomes obvious at a glance rather than quietly counting against someone. Server-
+    // sanitized (evidenceClipService.sanitizeTrigger); nothing free-form from the browser lands here.
+    trigger: { type: mongoose.Schema.Types.Mixed },
+    // False for recording-condition events (detector_uncertain): this clip documents OUR view
+    // quality, not the candidate's conduct, and no risk score counts it.
+    scored: { type: Boolean, default: true },
+
     // Storage key under evidence/<companyId>/… (storageService).
     clipKey: { type: String, required: true },
     mimeType: { type: String, trim: true },

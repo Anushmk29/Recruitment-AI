@@ -159,7 +159,7 @@ export default function Checkout() {
               </div>
               <h1 className="text-lg font-semibold text-slate-900">Preparing Checkout…</h1>
               <p className="mt-2 text-sm text-slate-500">Please wait while we set up your secure payment.</p>
-              <div className="mt-5 flex items-center justify-center gap-1.5 text-xs text-slate-400">
+              <div className="mt-5 flex items-center justify-center gap-1.5 text-xs text-slate-500">
                 <ShieldCheck className="h-3.5 w-3.5" /> Secured by Razorpay
               </div>
             </>

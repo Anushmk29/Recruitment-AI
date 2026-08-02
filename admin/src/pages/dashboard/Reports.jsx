@@ -51,11 +51,11 @@ function ProportionRow({ icon: Icon, label, value, total, tone = "brand" }) {
     <div>
       <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
         <span className="flex items-center gap-1.5 font-medium text-slate-700">
-          {Icon && <Icon className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
+          {Icon && <Icon className="h-3.5 w-3.5 shrink-0 text-slate-500" />}
           {label}
         </span>
         <span className="shrink-0 tabular-nums text-slate-500">
-          <span className="font-semibold text-slate-800">{value}</span> <span className="text-slate-400">· {pct}%</span>
+          <span className="font-semibold text-slate-800">{value}</span> <span className="text-slate-500">· {pct}%</span>
         </span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
@@ -98,12 +98,12 @@ function VerdictSplit({ verified, contradicted, inconclusive, total, className =
 function KpiStat({ icon: Icon, label, value, hint }) {
   return (
     <div className="flex flex-col gap-2 px-5 py-4">
-      <div className="flex items-center gap-1.5 text-slate-400">
+      <div className="flex items-center gap-1.5 text-slate-500">
         {Icon && <Icon className="h-3.5 w-3.5" />}
         <span className="text-xs font-semibold text-slate-500">{label}</span>
       </div>
       <p className="text-3xl font-bold tabular-nums text-slate-900">{value ?? "—"}</p>
-      {hint && <p className="text-[11px] leading-snug text-slate-400">{hint}</p>}
+      {hint && <p className="text-[11px] leading-snug text-slate-500">{hint}</p>}
     </div>
   );
 }
@@ -129,7 +129,7 @@ function ScoreHistogram({ bins }) {
       </div>
       <div className="mt-1.5 flex gap-1.5">
         {bins.map((b) => (
-          <span key={b.lo} className="flex-1 text-center text-[10px] text-slate-400">
+          <span key={b.lo} className="flex-1 text-center text-[10px] text-slate-500">
             {b.lo}
           </span>
         ))}
@@ -199,7 +199,7 @@ export default function Reports() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">Reports</h1>
           <p className="mt-1 text-sm text-slate-500">Hiring funnel, score distribution, and evidence-quality signals for the selected period.</p>
         </div>
         <div className="flex items-center gap-2">
@@ -271,7 +271,7 @@ export default function Reports() {
                 <ProportionRow icon={AlertTriangle} label="Human review" value={screening.decisions.review} total={totals.candidates} tone="amber" />
                 <ProportionRow icon={XCircle} label="Decline" value={screening.decisions.fail} total={totals.candidates} tone="red" />
               </div>
-              <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
+              <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-500">
                 {screening.reviewRate != null ? `${Math.round(screening.reviewRate * 100)}%` : "—"} routed to human review. That band exists by
                 design — ambiguous evidence goes to a person instead of a falsely confident score.
               </p>
@@ -279,19 +279,19 @@ export default function Reports() {
 
             <Card>
               <h3 className="mb-1 text-base font-semibold text-slate-900">Score distribution</h3>
-              <p className="mb-3 text-xs text-slate-400">Candidates by screening score, this period.</p>
+              <p className="mb-3 text-xs text-slate-500">Candidates by screening score, this period.</p>
               <ScoreHistogram bins={screening.scoreDistribution} />
             </Card>
 
             <Card>
               <h3 className="mb-1 text-base font-semibold text-slate-900">Funnel</h3>
-              <p className="mb-3 text-xs text-slate-400">Stage reached, of {overview.funnel.total} candidates.</p>
+              <p className="mb-3 text-xs text-slate-500">Stage reached, of {overview.funnel.total} candidates.</p>
               <div className="space-y-3">
                 {funnelStages.map((s) => (
                   <ProportionRow key={s.stage} label={stageLabel(s.stage)} value={s.count} total={overview.funnel.total} tone={stageTone(s.stage)} />
                 ))}
               </div>
-              <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-400">{overview.funnel.rejected} rejected in period.</p>
+              <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">{overview.funnel.rejected} rejected in period.</p>
             </Card>
           </div>
 
@@ -302,13 +302,13 @@ export default function Reports() {
               <h3 className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-900">
                 <Scale className="h-4 w-4 text-brand-600" /> What eliminates candidates
               </h3>
-              <p className="mb-3 text-xs text-slate-400">Rubric criteria most often responsible for a decline, ranked by frequency.</p>
+              <p className="mb-3 text-xs text-slate-500">Rubric criteria most often responsible for a decline, ranked by frequency.</p>
               <div className="space-y-2">
                 {(evidence?.topEliminators || []).slice(0, 6).map((e) => (
                   <RankedRow key={e.criterionId} label={e.label} value={e.eliminations} maxValue={maxElimination} tone="red" />
                 ))}
                 {(!evidence || evidence.topEliminators.length === 0) && (
-                  <p className="text-sm text-slate-400">No evidence-engine declines in this period yet.</p>
+                  <p className="text-sm text-slate-500">No evidence-engine declines in this period yet.</p>
                 )}
               </div>
             </Card>
@@ -317,7 +317,7 @@ export default function Reports() {
               <h3 className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-900">
                 <TrendingDown className="h-4 w-4 text-brand-600" /> Claim verification by skill
               </h3>
-              <p className="mb-3 text-xs text-slate-400">
+              <p className="mb-3 text-xs text-slate-500">
                 Skills claimed on a résumé but most often contradicted once tested in the interview — patterns of overstatement no keyword
                 scanner can catch.
               </p>
@@ -334,7 +334,7 @@ export default function Reports() {
                   </div>
                 ))}
                 {(!evidence || evidence.claimVerificationBySkill.length === 0) && (
-                  <p className="text-sm text-slate-400">No assessed claim-probes in this period yet.</p>
+                  <p className="text-sm text-slate-500">No assessed claim-probes in this period yet.</p>
                 )}
               </div>
             </Card>
@@ -343,7 +343,7 @@ export default function Reports() {
             {sources?.length > 0 && (
               <Card className="lg:col-span-2">
                 <h3 className="mb-1 text-base font-semibold text-slate-900">Source quality</h3>
-                <p className="mb-3 text-xs text-slate-400">
+                <p className="mb-3 text-xs text-slate-500">
                   Pass rate, interview verification, and advance rate by source — measured by what happened after the click, not by volume.
                   Source never influences a score.
                 </p>
@@ -382,7 +382,7 @@ export default function Reports() {
                                 </span>
                               </div>
                             ) : (
-                              <span className="text-xs text-slate-400">no probes yet</span>
+                              <span className="text-xs text-slate-500">no probes yet</span>
                             )}
                           </td>
                           <td className="py-2.5 pr-4 text-right tabular-nums text-slate-600">
@@ -400,7 +400,7 @@ export default function Reports() {
             {evidence?.lowValueCriteria?.length > 0 && (
               <Card className="lg:col-span-2">
                 <h3 className="mb-1 text-base font-semibold text-slate-900">Criteria with no predictive value</h3>
-                <p className="mb-3 text-xs text-slate-400">
+                <p className="mb-3 text-xs text-slate-500">
                   These criteria show no relationship to who actually advances — worth a look in the rubric editor. Nothing here is auto-tuned.
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2">

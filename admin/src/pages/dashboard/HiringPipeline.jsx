@@ -25,7 +25,7 @@ function CandidateCard({ candidate, onMove, busy }) {
             ATS {candidate.ats.overallScore}%
           </Badge>
         ) : (
-          <span className="text-xs text-slate-400">No ATS</span>
+          <span className="text-xs text-slate-500">No ATS</span>
         )}
         {nexts.length > 0 && (
           <select
@@ -77,7 +77,7 @@ export default function HiringPipeline() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Hiring Pipeline</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">Hiring Pipeline</h1>
         <p className="mt-1 text-sm text-slate-500">Every candidate across all jobs, grouped by hiring stage. Move them forward as they progress.</p>
       </div>
 

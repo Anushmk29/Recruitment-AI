@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { LogIn, Sparkles } from "lucide-react";
+import { LogIn, Cpu } from "lucide-react";
 import api from "../api/client.js";
 import { saveAdminAuth } from "../auth/adminAuth.js";
 import { Card } from "../components/ui/Card.jsx";
@@ -67,11 +67,11 @@ export default function Login() {
         <div className="mb-8 flex flex-col items-center text-center">
           <Link to="/welcome" className="mb-4 flex items-center gap-2 font-display text-lg font-bold text-slate-900">
             <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
-              <Sparkles className="h-4.5 w-4.5" />
+              <Cpu className="h-4.5 w-4.5" />
             </span>
             HireFlow <span className="text-brand-600">AI</span>
           </Link>
-          <h1 className="text-2xl font-bold text-slate-900">Welcome back</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">Welcome back</h1>
           <p className="mt-1 text-sm text-slate-500">Log in to your admin workspace</p>
         </div>
 

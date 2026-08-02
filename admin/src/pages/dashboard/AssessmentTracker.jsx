@@ -203,14 +203,14 @@ export default function AssessmentTracker() {
             </p>
           )}
           <div className="mt-4 space-y-2">
-            {data.awaitingDecision.length === 0 && <p className="text-sm text-slate-400">Nobody waiting — all decided.</p>}
+            {data.awaitingDecision.length === 0 && <p className="text-sm text-slate-500">Nobody waiting — all decided.</p>}
             {data.awaitingDecision.map((c) => (
               <div key={c._id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
                 <div className="min-w-[12rem] flex-1">
                   <Link to={`/candidates/${c._id}`} className="text-sm font-semibold text-slate-800 hover:text-brand-700">
                     {c.basicDetails?.name}
                   </Link>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500">
                     {c.basicDetails?.email} · ATS {c.ats?.overallScore ?? "—"}
                   </p>
                 </div>
@@ -259,9 +259,9 @@ export default function AssessmentTracker() {
                         {s.candidate.name}
                       </Link>
                     ) : (
-                      <span className="text-sm text-slate-400">(candidate removed)</span>
+                      <span className="text-sm text-slate-500">(candidate removed)</span>
                     )}
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-slate-500">
                       assigned by {s.assignment?.assignedByName} ({s.assignment?.mode}) ·{" "}
                       {new Date(s.assignment?.at).toLocaleString()}
                     </p>

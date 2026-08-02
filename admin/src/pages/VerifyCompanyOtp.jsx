@@ -153,7 +153,7 @@ export default function VerifyCompanyOtp() {
 
               <div className="mt-5 text-center text-sm">
                 {cooldown > 0 ? (
-                  <span className="text-slate-400">Resend code in {cooldown}s</span>
+                  <span className="text-slate-500">Resend code in {cooldown}s</span>
                 ) : (
                   <button
                     type="button"

@@ -4,11 +4,18 @@
 // or other device on the LAN, without disabling CORS or juggling two different .env
 // files for the same running server.
 
+// A browser's Origin header is scheme+host+port with NO trailing slash, and the cors
+// package compares this list by exact string equality — so one pasted "https://x/"
+// silently rejects every request and every socket handshake from that app. The paste
+// comes from a browser address bar or a Render/Vercel dashboard, both of which show
+// the slash, and the failure looks nothing like its cause: link-building uses
+// normalizeBase(), which already strips it, so the interview EMAILS keep working
+// while the SPA cannot reach the API at all. Strip it here too.
 function parseOrigins(...envValues) {
   return envValues
     .filter(Boolean)
     .flatMap((v) => v.split(","))
-    .map((v) => v.trim())
+    .map((v) => v.trim().replace(/\/+$/, ""))
     .filter(Boolean);
 }
 

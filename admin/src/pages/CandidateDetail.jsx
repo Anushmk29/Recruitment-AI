@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Link2, Globe, FileText, Mail, Phone, MapPin, Download, Clock, CheckCircle2, XCircle, Sparkles, Trash2, Send, CalendarClock, Scale, AlertTriangle, RefreshCw } from "lucide-react";
+import { ArrowLeft, Link2, Globe, FileText, Mail, Phone, MapPin, Download, Clock, CheckCircle2, XCircle, Cpu, Trash2, Send, CalendarClock, Scale, AlertTriangle, RefreshCw } from "lucide-react";
 import api from "../api/client.js";
 import { getSocket } from "../lib/socket.js";
 import { downloadFile } from "../lib/download.js";
@@ -46,7 +46,7 @@ function ProvenanceTag({ provenance }) {
       title={meta.title}
       className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${meta.className}`}
     >
-      <Sparkles className="h-3 w-3" />
+      <Cpu className="h-3 w-3" />
       {meta.label}
     </span>
   );
@@ -108,7 +108,7 @@ function StageProgress({ status }) {
                 ? "bg-brand-600 text-white"
                 : reached
                 ? "bg-brand-100 text-brand-700"
-                : "bg-slate-100 text-slate-400")
+                : "bg-slate-100 text-slate-500")
             }
           >
             {stageLabel(s)}
@@ -389,7 +389,7 @@ export default function CandidateDetail() {
       <Card>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">{basicDetails.name}</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">{basicDetails.name}</h1>
             <p className="mt-1 text-sm text-slate-500">
               Applied for <span className="font-medium text-slate-700">{candidate.job?.title}</span>
             </p>
@@ -448,7 +448,7 @@ export default function CandidateDetail() {
               to={`/candidates/${candidate._id}/interview-report`}
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
             >
-              <Sparkles className="h-4 w-4" /> AI Report
+              <Cpu className="h-4 w-4" /> AI Report
             </Link>
             <button
               type="button"
@@ -470,29 +470,29 @@ export default function CandidateDetail() {
         </div>
 
         <div className="mt-5 border-t border-slate-100 pt-5">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Hiring Progress</p>
+          <p className="mb-2 text-xs font-medium text-slate-600">Hiring Progress</p>
           <StageProgress status={candidate.status} />
         </div>
 
         <div className="mt-5 grid gap-3 border-t border-slate-100 pt-5 sm:grid-cols-2">
           <div className="flex items-center gap-2 text-sm text-slate-600">
-            <Mail className="h-4 w-4 text-slate-400" /> {basicDetails.email}
+            <Mail className="h-4 w-4 text-slate-500" /> {basicDetails.email}
           </div>
           <div className="flex items-center gap-2 text-sm text-slate-600">
-            <Phone className="h-4 w-4 text-slate-400" /> {basicDetails.phone || "—"}
+            <Phone className="h-4 w-4 text-slate-500" /> {basicDetails.phone || "—"}
           </div>
           <div className="flex items-center gap-2 text-sm text-slate-600">
-            <MapPin className="h-4 w-4 text-slate-400" /> {basicDetails.location || "—"}
+            <MapPin className="h-4 w-4 text-slate-500" /> {basicDetails.location || "—"}
           </div>
           <div className="flex items-center gap-2 text-sm text-slate-600">
-            <FileText className="h-4 w-4 text-slate-400" />
+            <FileText className="h-4 w-4 text-slate-500" />
             <button type="button" onClick={handleResumeDownload} className="font-medium text-brand-700 hover:underline">
               {candidate.resumeOriginalName || "Download resume"}
             </button>
           </div>
           {basicDetails.linkedinUrl && (
             <div className="flex items-center gap-2 text-sm text-slate-600">
-              <Link2 className="h-4 w-4 text-slate-400" />
+              <Link2 className="h-4 w-4 text-slate-500" />
               <a href={basicDetails.linkedinUrl} target="_blank" rel="noreferrer" className="font-medium text-brand-700 hover:underline">
                 LinkedIn
               </a>
@@ -500,7 +500,7 @@ export default function CandidateDetail() {
           )}
           {basicDetails.portfolioUrl && (
             <div className="flex items-center gap-2 text-sm text-slate-600">
-              <Globe className="h-4 w-4 text-slate-400" />
+              <Globe className="h-4 w-4 text-slate-500" />
               <a href={basicDetails.portfolioUrl} target="_blank" rel="noreferrer" className="font-medium text-brand-700 hover:underline">
                 Portfolio
               </a>
@@ -517,7 +517,7 @@ export default function CandidateDetail() {
             transitions are available.
           </p>
         ) : nextStages.length === 0 ? (
-          <p className="text-sm text-slate-400">No stage transitions available.</p>
+          <p className="text-sm text-slate-500">No stage transitions available.</p>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             <FormGroup>
@@ -587,7 +587,7 @@ export default function CandidateDetail() {
               <Button variant="secondary" onClick={handleSkipAssessment} disabled={assessmentBusy}>
                 Skip to AI interview
               </Button>
-              <p className="w-full text-xs text-slate-400">
+              <p className="w-full text-xs text-slate-500">
                 Both choices are recorded as your decision. A skip goes through today's normal interview invitation — it never reads
                 as missing data and costs nothing.
               </p>
@@ -607,19 +607,19 @@ export default function CandidateDetail() {
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-xl bg-slate-50 p-3">
-                  <p className="text-xs text-slate-400">Status</p>
+                  <p className="text-xs text-slate-500">Status</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">{assessment.session.status}</p>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3">
-                  <p className="text-xs text-slate-400">Assigned by</p>
+                  <p className="text-xs text-slate-500">Assigned by</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">
                     {assessment.session.assignment?.assignedByName} ({assessment.session.assignment?.mode})
                   </p>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3">
-                  <p className="text-xs text-slate-400">Difficulty tier</p>
+                  <p className="text-xs text-slate-500">Difficulty tier</p>
                   <p className="mt-1 text-sm font-semibold text-slate-900">{assessment.session.difficultyTier?.value || "—"}</p>
-                  <p className="text-xs text-slate-400">{assessment.session.difficultyTier?.basis}</p>
+                  <p className="text-xs text-slate-500">{assessment.session.difficultyTier?.basis}</p>
                 </div>
               </div>
               {assessment.session.result?.scoredAt && (
@@ -647,7 +647,7 @@ export default function CandidateDetail() {
                       ))}
                     </div>
                   )}
-                  <p className="mt-2 text-[11px] text-slate-400">
+                  <p className="mt-2 text-[11px] text-slate-500">
                     Scored deterministically (key-match, scorer {assessment.session.result.scorerVersion}); reproducibility{" "}
                     {String(assessment.session.result.reproducibilityHash || "").slice(0, 12)}
                   </p>
@@ -663,15 +663,15 @@ export default function CandidateDetail() {
         <Section title="AI Interview">
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-xs text-slate-400">Scheduled for</p>
+              <p className="text-xs text-slate-500">Scheduled for</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">{formatWhen(session.interviewAt)}</p>
             </div>
             <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-xs text-slate-400">Link valid until</p>
+              <p className="text-xs text-slate-500">Link valid until</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">{formatWhen(session.expiresAt)}</p>
             </div>
             <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-xs text-slate-400">Status</p>
+              <p className="text-xs text-slate-500">Status</p>
               <p className="mt-1">
                 <Badge tone={SESSION_STATUS_TONE[session.status] || "slate"}>
                   {session.status?.replace("_", " ") || "—"}
@@ -716,7 +716,7 @@ export default function CandidateDetail() {
                   <CalendarClock className="h-4 w-4" /> Reschedule & send
                 </Button>
               </div>
-              <p className="mt-2 text-xs text-slate-400">
+              <p className="mt-2 text-xs text-slate-500">
                 Rescheduling and resending both generate a brand-new interview link — any previously shared link will stop working.
               </p>
 
@@ -751,7 +751,7 @@ export default function CandidateDetail() {
       {/* Timeline */}
       <Section title="Application Timeline">
         {!timeline?.stageHistory || timeline.stageHistory.length === 0 ? (
-          <p className="text-sm text-slate-400">No timeline entries yet.</p>
+          <p className="text-sm text-slate-500">No timeline entries yet.</p>
         ) : (
           <ol className="relative space-y-4 border-l border-slate-200 pl-5">
             {[...timeline.stageHistory].reverse().map((h, i) => (
@@ -761,7 +761,7 @@ export default function CandidateDetail() {
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-slate-800">{stageLabel(h.stage)}</span>
-                  <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                  <span className="inline-flex items-center gap-1 text-xs text-slate-500">
                     <Clock className="h-3 w-3" /> {formatWhen(h.at)}
                   </span>
                 </div>
@@ -777,7 +777,7 @@ export default function CandidateDetail() {
           <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm">
             <span className="font-medium text-slate-700">Offer:</span>{" "}
             <Badge tone={offer.status === "accepted" ? "green" : offer.status === "declined" ? "red" : "amber"}>{offer.status}</Badge>
-            {offer.sentAt && <span className="ml-2 text-xs text-slate-400">sent {formatWhen(offer.sentAt)}</span>}
+            {offer.sentAt && <span className="ml-2 text-xs text-slate-500">sent {formatWhen(offer.sentAt)}</span>}
           </div>
         )}
       </Section>
@@ -794,14 +794,14 @@ export default function CandidateDetail() {
               ["Keyword Match", ats.keywordMatch],
             ].map(([label, value]) => (
               <div key={label} className="rounded-xl bg-slate-50 p-3">
-                <p className="text-xs text-slate-400">{label}</p>
+                <p className="text-xs text-slate-500">{label}</p>
                 <p className="mt-1 text-lg font-bold text-slate-900">{value}%</p>
               </div>
             ))}
           </div>
           {ats.missingSkills?.length > 0 && (
             <div className="mt-4">
-              <p className="mb-2 text-xs font-medium text-slate-400">Missing Skills</p>
+              <p className="mb-2 text-xs font-medium text-slate-500">Missing Skills</p>
               <div className="flex flex-wrap gap-1.5">
                 {ats.missingSkills.map((s) => (
                   <Badge key={s} tone="red">{s}</Badge>
@@ -842,7 +842,7 @@ export default function CandidateDetail() {
                           className="rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-xs text-slate-600"
                         >
                           “{span.quote}”
-                          {span.page != null && <span className="ml-2 text-slate-400">(page {span.page})</span>}
+                          {span.page != null && <span className="ml-2 text-slate-500">(page {span.page})</span>}
                         </blockquote>
                       ))}
                     </div>
@@ -867,7 +867,7 @@ export default function CandidateDetail() {
         <Section title="How this application was filled in">
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <p className="flex items-start gap-2">
-              <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+              <Cpu className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
                 This candidate used résumé autofill. {autofill.accepted} suggestion
                 {autofill.accepted === 1 ? " was" : "s were"} accepted as-is, {autofill.edited} edited, and{" "}
@@ -896,7 +896,7 @@ export default function CandidateDetail() {
       )}
 
       <Section title="Experience">
-        {experience.length === 0 && <p className="text-sm text-slate-400">—</p>}
+        {experience.length === 0 && <p className="text-sm text-slate-500">—</p>}
         <div className="space-y-3">
           {experience.map((exp, i) => (
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-4" key={i}>
@@ -906,7 +906,7 @@ export default function CandidateDetail() {
                 </p>
                 <ProvenanceTag provenance={exp.provenance} />
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500">
                 {exp.startDate} — {exp.currentlyWorking ? "Present" : exp.endDate}
               </p>
               {exp.description && <p className="mt-2 text-sm text-slate-600">{exp.description}</p>}
@@ -917,7 +917,7 @@ export default function CandidateDetail() {
       </Section>
 
       <Section title="Education">
-        {education.length === 0 && <p className="text-sm text-slate-400">—</p>}
+        {education.length === 0 && <p className="text-sm text-slate-500">—</p>}
         <div className="space-y-3">
           {education.map((edu, i) => (
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-4" key={i}>
@@ -928,7 +928,7 @@ export default function CandidateDetail() {
                 </p>
                 <ProvenanceTag provenance={edu.provenance} />
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500">
                 {edu.startYear} — {edu.endYear} {edu.grade && `· Grade: ${edu.grade}`}
               </p>
               <ProvenanceSource provenance={edu.provenance} />
@@ -939,14 +939,14 @@ export default function CandidateDetail() {
 
       <Section title="Skills">
         {skills.length === 0 ? (
-          <p className="text-sm text-slate-400">—</p>
+          <p className="text-sm text-slate-500">—</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">
             {skills.map((s, i) => {
               const fromResume = skillSources.get(String(s).trim().toLowerCase()) === "autofill_accepted";
               return (
                 <Badge key={i} tone={fromResume ? "amber" : "slate"}>
-                  {fromResume && <Sparkles className="mr-1 inline h-3 w-3" />}
+                  {fromResume && <Cpu className="mr-1 inline h-3 w-3" />}
                   {s}
                 </Badge>
               );
@@ -956,7 +956,7 @@ export default function CandidateDetail() {
       </Section>
 
       <Section title="Projects">
-        {projects.length === 0 && <p className="text-sm text-slate-400">—</p>}
+        {projects.length === 0 && <p className="text-sm text-slate-500">—</p>}
         <div className="space-y-3">
           {projects.map((proj, i) => (
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-4" key={i}>
@@ -964,7 +964,7 @@ export default function CandidateDetail() {
                 <p className="font-semibold text-slate-800">{proj.title}</p>
                 <ProvenanceTag provenance={proj.provenance} />
               </div>
-              {proj.techStack && <p className="text-xs text-slate-400">Tech: {proj.techStack}</p>}
+              {proj.techStack && <p className="text-xs text-slate-500">Tech: {proj.techStack}</p>}
               {proj.description && <p className="mt-2 text-sm text-slate-600">{proj.description}</p>}
               {proj.link && (
                 <a href={proj.link} target="_blank" rel="noreferrer" className="mt-1 inline-block text-sm font-medium text-brand-700 hover:underline">
@@ -978,7 +978,7 @@ export default function CandidateDetail() {
       </Section>
 
       <Section title="Certificates">
-        {certificates.length === 0 && <p className="text-sm text-slate-400">—</p>}
+        {certificates.length === 0 && <p className="text-sm text-slate-500">—</p>}
         <div className="space-y-3">
           {certificates.map((cert, i) => (
             <div className="rounded-xl border border-slate-100 bg-slate-50 p-4" key={i}>
@@ -986,7 +986,7 @@ export default function CandidateDetail() {
                 <p className="font-semibold text-slate-800">{cert.name}</p>
                 <ProvenanceTag provenance={cert.provenance} />
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500">
                 {cert.issuer} {cert.issueDate && `· ${cert.issueDate}`}
               </p>
               {cert.credentialUrl && (

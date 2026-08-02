@@ -1,4 +1,4 @@
-const cron = require("node-cron");
+const { schedule } = require("../utils/cronSchedule");
 const InterviewSession = require("../models/InterviewSession");
 const Candidate = require("../models/Candidate");
 const Job = require("../models/Job");
@@ -66,7 +66,7 @@ async function sendDueReminders() {
 }
 
 function startInterviewReminderJob() {
-  cron.schedule("*/15 * * * *", () => {
+  schedule("*/15 * * * *", () => {
     // Runs across all tenants — mark trusted so the tenantScope guardrail doesn't scope it.
     tenantContext
       .runAsSystem(() => sendDueReminders())

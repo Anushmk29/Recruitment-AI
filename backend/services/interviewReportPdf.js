@@ -590,7 +590,11 @@ function integritySection(doc, p, evidenceClips) {
     doc.moveDown(4);
     doc.text("Flags recorded", { size: 10, bold: true, color: MUTED, gap: 3 });
     for (const row of p.breakdown) {
-      doc.text(`•  ${row.label} — ${row.count}× (${row.severity})`, { size: 11, color: INK, indent: 4, lineGap: 3 });
+      // A row that measures OUR camera view rather than the candidate is labelled as such here too.
+      // The screen, the API and the PDF have to agree: rendering an unobservable stretch of the
+      // session with a severity beside it invites a reader to treat it as a finding.
+      const qualifier = row.scored === false ? "not scored — recording conditions" : row.severity;
+      doc.text(`•  ${row.label} — ${row.count}× (${qualifier})`, { size: 11, color: INK, indent: 4, lineGap: 3 });
       if (row.benignExplanation) {
         doc.text(row.benignExplanation, { size: 8, color: MUTED, indent: 12, lineGap: 2, gap: 2 });
       }

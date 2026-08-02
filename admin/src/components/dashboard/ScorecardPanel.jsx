@@ -171,7 +171,7 @@ export default function ScorecardPanel({ candidateId, enabled = true }) {
       )}
 
       {scorecards.length === 0 ? (
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-slate-500">
           No interview rounds recorded yet. Invite an interviewer to capture one.
         </p>
       ) : (
@@ -253,7 +253,7 @@ export default function ScorecardPanel({ candidateId, enabled = true }) {
               )}
 
               {s.rollup?.reproducibilityHash && (
-                <p className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-400">
+                <p className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-500">
                   <ShieldCheck className="h-3 w-3" />
                   Computed by code from rubric v{s.rubricVersion} · record {s.rollup.reproducibilityHash.slice(0, 12)}
                 </p>
@@ -268,12 +268,12 @@ export default function ScorecardPanel({ candidateId, enabled = true }) {
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[520px] border-collapse text-sm">
                   <thead>
-                    <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
+                    <tr className="border-b border-slate-200 text-left text-xs text-slate-600">
                       <th className="py-2 pr-3 font-semibold">Criterion</th>
                       {ledger.rounds.map((r) => (
                         <th key={r.id} className="px-2 py-2 font-semibold">
                           {stageLabel(r.stage)}
-                          <span className="block font-normal normal-case text-slate-400">{r.interviewer}</span>
+                          <span className="block font-normal normal-case text-slate-500">{r.interviewer}</span>
                         </th>
                       ))}
                     </tr>
@@ -283,14 +283,14 @@ export default function ScorecardPanel({ candidateId, enabled = true }) {
                       <tr key={c.criterionId} className="border-b border-slate-100 align-top">
                         <td className="py-2 pr-3">
                           <span className="font-medium text-slate-800">{c.label}</span>
-                          <span className="ml-1.5 text-xs text-slate-400">{Math.round(c.weight * 100)}%</span>
+                          <span className="ml-1.5 text-xs text-slate-500">{Math.round(c.weight * 100)}%</span>
                         </td>
                         {c.cells.map((cell) => (
                           <td key={cell.roundId} className="px-2 py-2">
                             {!cell.assessed ? (
                               // Rule 5: an unassessed criterion is labelled, never
                               // left blank in a way that reads as a zero.
-                              <span className="text-xs italic text-slate-400">not assessed</span>
+                              <span className="text-xs italic text-slate-500">not assessed</span>
                             ) : (
                               <>
                                 <span className="font-semibold text-slate-900">{cell.rating}/5</span>
@@ -323,7 +323,7 @@ export default function ScorecardPanel({ candidateId, enabled = true }) {
                   </tbody>
                 </table>
               </div>
-              <p className="mt-2 text-xs text-slate-400">
+              <p className="mt-2 text-xs text-slate-500">
                 Every cell names the person who observed it and what they saw. Ratings are per-criterion; the
                 round score is computed from them in code, never entered by hand.
               </p>

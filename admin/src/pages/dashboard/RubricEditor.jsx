@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, ShieldCheck, Sparkles, AlertTriangle, Info, Lock, Plus, Trash2, RefreshCw, Save, CheckCircle2, ChevronDown, ChevronRight, GripVertical } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Cpu, AlertTriangle, Info, Lock, Plus, Trash2, RefreshCw, Save, CheckCircle2, ChevronDown, ChevronRight, GripVertical } from "lucide-react";
 import api from "../../api/client.js";
 import { useToast } from "../../components/ui/Toast.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
@@ -319,12 +319,12 @@ export default function RubricEditor() {
             aria-expanded={isOpen}
           >
             {isOpen ? (
-              <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+              <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" />
             ) : (
-              <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+              <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />
             )}
             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
-              {c.label || <span className="italic text-slate-400">Untitled criterion</span>}
+              {c.label || <span className="italic text-slate-500">Untitled criterion</span>}
             </span>
             <Badge tone={kindMeta.tone}>{kindMeta.label}</Badge>
           </button>
@@ -462,7 +462,7 @@ export default function RubricEditor() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Scoring Rubric</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">Scoring Rubric</h1>
           <p className="mt-1 text-sm text-slate-500">{job?.title}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -494,12 +494,12 @@ export default function RubricEditor() {
                     ? "bg-emerald-100 text-emerald-600"
                     : state === "active"
                       ? "bg-brand-100 text-brand-700"
-                      : "bg-slate-100 text-slate-400"
+                      : "bg-slate-100 text-slate-500"
                 }`}
               >
                 {state === "done" ? <CheckCircle2 className="h-4 w-4" /> : idx + 1}
               </div>
-              <span className={`text-xs font-semibold ${state === "todo" ? "text-slate-400" : "text-slate-700"}`}>{step.label}</span>
+              <span className={`text-xs font-semibold ${state === "todo" ? "text-slate-500" : "text-slate-700"}`}>{step.label}</span>
               {idx < STEPS.length - 1 && <div className="mx-1 hidden h-px flex-1 bg-slate-200 sm:block" />}
             </div>
           );
@@ -508,12 +508,12 @@ export default function RubricEditor() {
 
       {!versions.length ? (
         <EmptyState
-          icon={Sparkles}
+          icon={Cpu}
           title="No rubric yet"
           description="Compile the job description into explicit, weighted, individually-testable hiring criteria. You review and approve before anything is used for scoring."
           action={
             <Button onClick={compileRubric} loading={busy}>
-              <Sparkles className="h-4 w-4" /> Compile rubric
+              <Cpu className="h-4 w-4" /> Compile rubric
             </Button>
           }
         />
@@ -548,7 +548,7 @@ export default function RubricEditor() {
                 </div>
               ) : (
                 <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                  <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
+                  <Cpu className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
                   <div>
                     Compiled by <strong>{selected.compiledBy?.model}</strong> (prompt {selected.compiledBy?.promptVersion}). The model proposed
                     the criteria; all weights and thresholds are computed and normalised in code.
@@ -571,7 +571,7 @@ export default function RubricEditor() {
               {flaggedInsights.length > 0 && (
                 <Card>
                   <h3 className="mb-1 text-base font-semibold text-slate-900">Outcome insights</h3>
-                  <p className="mb-3 text-xs text-slate-400">
+                  <p className="mb-3 text-xs text-slate-500">
                     Based on {insights.sampleSize} candidates with decided outcomes against this rubric. Weights are never auto-tuned
                     from outcomes — that would automate past bias. You decide what to change.
                   </p>
@@ -583,7 +583,7 @@ export default function RubricEditor() {
                             {c.insight === "inverse" ? "Anti-predictive" : "No signal"}
                           </Badge>
                           <span className="font-medium text-slate-800">{c.label}</span>
-                          <span className="text-xs text-slate-400">
+                          <span className="text-xs text-slate-500">
                             satisfied by {Math.round((c.satisfiedAdvancedRate ?? 0) * 100)}% of advanced vs{" "}
                             {Math.round((c.satisfiedRejectedRate ?? 0) * 100)}% of rejected (n={c.nAdvanced + c.nRejected})
                           </span>
@@ -652,7 +652,7 @@ export default function RubricEditor() {
 
                 {isDraft && (
                   <div className="mb-5 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
-                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-500" />
                     <p>
                       Drag a slider (or type a number) to make a criterion matter more or less. These are <strong>relative</strong> — they
                       don&apos;t need to add up to 100. The bar above always shows each group&apos;s true share of the total score.
@@ -720,7 +720,7 @@ export default function RubricEditor() {
                             {rows.length ? (
                               <div className="space-y-2">{rows.map(({ c, i }) => renderCriterion(c, i, group.kind))}</div>
                             ) : (
-                              <p className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-400">
+                              <p className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
                                 {isDropTarget ? "Drop here to move it into this section." : "None yet."}
                               </p>
                             )}
@@ -766,7 +766,7 @@ export default function RubricEditor() {
               </Card>
 
               {selected.approvedBy?.at && (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   Approved {new Date(selected.approvedBy.at).toLocaleString()} — recorded in the audit log.
                 </p>
               )}

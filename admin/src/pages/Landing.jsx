@@ -1,70 +1,117 @@
+/* Hallmark · genre: modern-minimal · macrostructure: Split Studio
+ * design-system: DESIGN.md (locked) · designed-as-app
+ * H2 hero knobs: ratio=7/5, right=proof column, divider=negative space
+ * Split knobs: 4 movements, alternating direction, artifact per movement
+ * nav: N1b (shared component, unchanged) · footer: Ft5 Statement
+ * enrichment: Tier-A hand-built artifact panels (LoopArtifacts.jsx)
+ * pre-emit critique: P5 H5 E5 S5 R4 V5
+ * contrast: pass (40–41) · honest: pass (46) · chrome: pass (47) · tokens: pass (48)
+ * responsive: pass (49–53) · icons: pass (30) · eyebrow/section-head: pass (54)
+ *
+ * Replaces: Narrative Workflow — six stacked text cards of equal weight, which
+ * carried the right argument in the most monotonous form available. Each stage
+ * now pairs with the artifact it actually produces, because a product whose
+ * claim is "look at the evidence" should show the evidence rather than describe
+ * it in a sixth consecutive paragraph.
+ *
+ * Deliberately NOT carried over from the supplied reference: the dark neural
+ * backdrop and glow wave (DESIGN.md § Don't — looking futuristic undermines the
+ * claim that a code path computed the score), the borrowed logo wall (gate 46 —
+ * fabricated endorsement), and the three equal icon-above-heading-above-body
+ * cards (a named critical tell in its own right). The reference's *structure* —
+ * visual anchor, 3-up strip, visual-per-step — is what was worth taking.
+ *
+ * Motion is down from four revealed sections to one: the diptych halves
+ * cross-fade in staggered, per the Split Studio reveal spec. Everything else on
+ * the page is simply there.
+ */
+
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import {
-  ArrowRight,
-  Sparkles,
-  ScanSearch,
-  Bot,
-  Users,
-  BarChart3,
-  MailCheck,
-  Video,
-  LineChart,
-  LayoutDashboard,
-  Clock,
-  ThumbsUp,
-  Workflow,
-  DollarSign,
-  Cpu,
-  Mail,
-  Phone,
-  CheckCircle2,
-} from "lucide-react";
+import { ArrowRight, Scale } from "lucide-react";
 import api from "../api/client.js";
+import EventNetwork from "../components/marketing/EventNetwork.jsx";
 import MarketingNavbar from "../components/marketing/MarketingNavbar.jsx";
+import { ClaimsPanel, LedgerPanel, ProbePanel, RubricPanel } from "../components/marketing/LoopArtifacts.jsx";
 import Button from "../components/ui/Button.jsx";
-import { Card } from "../components/ui/Card.jsx";
+import Reveal from "../motion/Reveal.jsx";
+import Tilt from "../motion/Tilt.jsx";
 
-const FEATURES = [
-  { icon: ScanSearch, title: "AI Resume Screening", desc: "Every resume is parsed and scored against the job's real requirements in seconds — not skimmed by a tired recruiter." },
-  { icon: Bot, title: "AI Technical Interviews", desc: "A live conversational AI runs adaptive technical and behavioral interviews, no scheduling back-and-forth required." },
-  { icon: Users, title: "Live Candidate Tracking", desc: "See every applicant's stage — applied, screened, queued, interviewed — updated in real time across your pipeline." },
-  { icon: BarChart3, title: "AI Reports", desc: "Structured, evidence-based interview reports for every candidate, ready to share with hiring managers." },
-  { icon: MailCheck, title: "Automatic Email Invitations", desc: "Passing candidates are invited automatically with a secure link, schedule, and instructions — zero manual emails." },
-  { icon: Video, title: "Real-Time Interview Monitoring", desc: "Watch interview status live: device checks, identity verification, and session progress as it happens." },
-  { icon: LineChart, title: "Interview Analytics", desc: "Track pass rates, time-to-hire, and score distributions to keep improving your hiring bar." },
-  { icon: LayoutDashboard, title: "Hiring Dashboard", desc: "One workspace for jobs, candidates, interviews, and reports — built for teams that hire on repeat." },
+// The honest replacement for the reference's "trusted by 99,000+ brands" logo
+// wall. We have no customer logos to show, and inventing them is the fastest
+// way to lose the argument this page is making. What we do have is the record
+// the product leaves behind — which is the thing a buyer is actually shopping
+// for when their legal team is in the room.
+const EVIDENCE = [
+  {
+    title: "A record for a bias audit",
+    body: "Every assessment can be re-run with identity signals removed and the two results compared. A divergence flags the assessment for human review rather than burying it.",
+  },
+  {
+    title: "A decision you can re-derive",
+    body: "Each assessment stores a hash of its inputs, its prompt versions, and its scorer version — so a decision made today can be reproduced, line for line, months from now.",
+  },
+  {
+    title: "A person on every adverse action",
+    body: "Automatic rejection is opt-in and off by default, and the deterministic fallback can never emit an adverse recommendation on its own.",
+  },
 ];
 
-const FLOW = [
-  "Company Registers",
-  "Creates Job",
-  "Candidates Apply",
-  "ATS Analysis",
-  "AI Interview",
-  "Evaluation",
-  "Hiring Decision",
+// The Claim → Probe → Verdict loop, as four movements. Each one pairs with the
+// artifact it produces — the sequence IS the differentiator, so the page's
+// shape is the sequence.
+const LOOP = [
+  {
+    stage: "1.0",
+    title: "The rubric is frozen before anyone is scored",
+    body: "A job description is compiled once into a versioned rubric — must-haves, nice-to-haves, disqualifiers, weights — and a recruiter approves it. Every candidate for that role is then measured against the identical frozen rubric, which is what makes comparing two of them legitimate and a bias audit possible at all.",
+    Artifact: RubricPanel,
+  },
+  {
+    stage: "2.0",
+    title: "The résumé becomes cited claims, not keywords",
+    body: "Each assertion is extracted as an individual claim carrying the verbatim span it came from, and code checks that the quoted span is a literal substring of the source document. A claim that cannot be quoted is dropped rather than trusted — which is how hallucination is removed structurally instead of hoped away.",
+    Artifact: ClaimsPanel,
+  },
+  {
+    stage: "3.0",
+    title: "Code computes the score, from evidence it had to cite",
+    body: "Each criterion becomes a line item: its weight, the evidence behind it, and the points it earned. The line items sum to the total by construction, and a criterion with no cited evidence scores zero instead of being estimated. No model is ever asked to produce a number.",
+    Artifact: LedgerPanel,
+  },
+  {
+    stage: "4.0",
+    title: "Screening ends in a test plan, and the interview closes it",
+    body: "High-weight claims the résumé asserts but cannot prove become interview probes, and the AI interview tests exactly those. Each one comes back marked verified, contradicted, or still unverified. This is the join competitors do not have: screening and interviewing stop being two disconnected products.",
+    Artifact: ProbePanel,
+  },
 ];
 
-const WHY_US = [
-  { icon: Clock, title: "Reduce Hiring Time", desc: "Cut weeks of manual screening down to hours with automated ATS scoring and instant interview scheduling." },
-  { icon: ThumbsUp, title: "Better Candidate Quality", desc: "Structured AI evaluation surfaces the candidates who actually match the role — not just the loudest resume." },
-  { icon: Workflow, title: "Automated Recruitment", desc: "From application to interview invite to report, the pipeline runs itself so your team can focus on decisions." },
-  { icon: Users, title: "Scalable Hiring", desc: "Run one interview or ten thousand concurrently — the platform is built to scale with your hiring volume." },
-  { icon: DollarSign, title: "Cost Effective", desc: "Replace hours of recruiter screening time with automated, consistent evaluation at a fraction of the cost." },
-  { icon: Cpu, title: "AI Powered", desc: "Every stage — resume, interview, report — is backed by purpose-built AI, not generic keyword matching." },
+// Capability index. Each row maps to a shipped surface — nothing aspirational.
+const CAPABILITIES = [
+  ["Résumé screening", "Every application is parsed and scored against the role's approved rubric, with the evidence for each criterion attached to the result."],
+  ["AI interviews", "Adaptive technical and behavioural interviews over a secure expiring link, targeted at the claims screening could not verify."],
+  ["Candidate pipeline", "Fourteen stages from applied through to joined, updated live across every recruiter's view without a refresh."],
+  ["Evidence reports", "Each report names the criterion, the quoted evidence, and the confidence behind every judgement it records."],
+  ["Review queue", "Anything the engine is honestly unsure about is routed to a person, carrying the reason it was routed and the evidence behind it."],
+  ["Automatic invitations", "Candidates who pass are invited automatically with a secure link, a schedule, and instructions. No manual scheduling thread."],
+  ["Reproducibility", "Every assessment carries a hash of its inputs, prompt versions, and scorer version, so a decision can be re-derived months later."],
+  ["Bias counterfactuals", "Assessments are re-run with identity signals removed and the two results compared. A divergence flags the assessment for human review."],
+];
+
+// The refusals. Stated plainly because they are the product position, and
+// because each one is a constraint the codebase actually enforces.
+const REFUSALS = [
+  ["No number without a source", "Every fact behind a score carries the verbatim line it came from. Facts that cannot be cited are discarded, not estimated."],
+  ["No automatic rejection", "Auto-reject is opt-in and off by default, and the deterministic fallback can never emit an adverse recommendation. A person signs every adverse action."],
+  ["No generic benchmark", "Nobody is scored against a global average or a model's opinion of a good résumé — only against this role's approved rubric, naming the criterion that drove each judgement."],
+  ["No borrowed confidence", "Degraded, fallback, and estimated results are labelled as such everywhere they surface — on screen, in the PDF, and in the API. A placeholder is never dressed as a measurement."],
 ];
 
 function formatPrice(amount) {
   if (amount === 0) return "Free";
   return `₹${amount.toLocaleString("en-IN")}`;
 }
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 24 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.5 } },
-};
 
 export default function Landing() {
   const [plans, setPlans] = useState([]);
@@ -84,242 +131,244 @@ export default function Landing() {
     <div className="min-h-screen bg-white">
       <MarketingNavbar />
 
-      {/* Hero */}
-      <section className="relative overflow-hidden bg-grid">
-        <div className="absolute inset-x-0 top-0 -z-10 h-[560px] bg-gradient-to-b from-brand-50 via-white to-white" />
-        <div className="mx-auto grid max-w-7xl items-center gap-12 px-5 py-20 sm:px-8 lg:grid-cols-2 lg:py-28">
-          <motion.div initial="hidden" animate="show" variants={fadeUp}>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-700">
-              <Sparkles className="h-3.5 w-3.5" /> AI-Native Recruitment Platform
-            </span>
-            <h1 className="mt-5 text-4xl font-extrabold leading-[1.1] text-slate-900 sm:text-5xl lg:text-[3.4rem]">
-              Automate Your Entire Recruitment Process with AI.
-            </h1>
-            <p className="mt-5 max-w-xl text-lg text-slate-600">
-              AI interviews, ATS screening, resume analysis, and candidate tracking — all wired into one workspace
-              so your team hires faster, with less manual work at every step.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button as={Link} to="/register-company" size="lg">
-                Start Free Trial <ArrowRight className="h-4 w-4" />
-              </Button>
-              <Button as={Link} to="/demo" variant="secondary" size="lg">
-                Request Demo
-              </Button>
-            </div>
-            <div className="mt-8 flex items-center gap-6 text-sm text-slate-500">
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" /> No credit card for trial
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" /> Setup in minutes
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, scale: 0.94 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-            className="relative"
-          >
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
-              <div className="flex items-center gap-1.5 border-b border-slate-100 pb-3">
-                <span className="h-2.5 w-2.5 rounded-full bg-red-300" />
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-300" />
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-300" />
-                <span className="ml-3 text-xs font-medium text-slate-400">Hiring Dashboard</span>
-              </div>
-              <div className="grid grid-cols-3 gap-3 py-4">
-                {[
-                  ["Open Jobs", "12"],
-                  ["In ATS Review", "48"],
-                  ["AI Interviews", "23"],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-xl bg-slate-50 p-3 text-center">
-                    <div className="text-xl font-bold text-brand-700">{value}</div>
-                    <div className="text-[11px] text-slate-500">{label}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="space-y-2.5">
-                {[
-                  ["Priya Sharma", "Backend Engineer", 92],
-                  ["Aman Verma", "Product Designer", 81],
-                  ["Ritika Rao", "Data Analyst", 74],
-                ].map(([name, role, score]) => (
-                  <div key={name} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-800">{name}</div>
-                      <div className="text-xs text-slate-500">{role}</div>
-                    </div>
-                    <div className="text-sm font-bold text-emerald-600">{score}%</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="absolute -bottom-6 -left-6 hidden rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-soft sm:block">
-              <div className="text-xs text-slate-500">AI Interview Live</div>
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" /> In progress
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      </section>
-
-      {/* Features */}
-      <section id="features" className="mx-auto max-w-7xl px-5 py-24 sm:px-8">
-        <motion.div initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-bold text-slate-900 sm:text-4xl">Everything hiring teams need, in one place</h2>
-          <p className="mt-3 text-slate-600">Purpose-built tools that replace a dozen disconnected spreadsheets and inboxes.</p>
-        </motion.div>
-        <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {FEATURES.map((f, i) => (
-            <motion.div
-              key={f.title}
-              initial="hidden"
-              whileInView="show"
-              viewport={{ once: true, amount: 0.3 }}
-              variants={fadeUp}
-              transition={{ delay: (i % 4) * 0.06 }}
-            >
-              <Card className="group h-full transition hover:-translate-y-1 hover:shadow-soft">
-                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50 text-brand-600 transition group-hover:bg-brand-600 group-hover:text-white">
-                  <f.icon className="h-5.5 w-5.5" />
-                </div>
-                <h3 className="text-base font-semibold text-slate-900">{f.title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{f.desc}</p>
-              </Card>
-            </motion.div>
-          ))}
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section id="how-it-works" className="bg-slate-50 py-24">
-        <div className="mx-auto max-w-5xl px-5 sm:px-8">
-          <motion.div initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} className="mx-auto max-w-2xl text-center">
-            <h2 className="text-3xl font-bold text-slate-900 sm:text-4xl">How it works</h2>
-            <p className="mt-3 text-slate-600">From registration to hiring decision — a fully connected flow.</p>
-          </motion.div>
-          <div className="mt-16 flex flex-col gap-0 lg:flex-row lg:items-center lg:justify-between">
-            {FLOW.map((step, i) => (
-              <motion.div
-                key={step}
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, amount: 0.5 }}
-                transition={{ delay: i * 0.08 }}
-                className="relative flex flex-1 items-center gap-4 lg:flex-col lg:gap-3 lg:text-center"
-              >
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white shadow-soft">
-                  {i + 1}
-                </div>
-                <p className="text-sm font-semibold text-slate-800 lg:mt-1">{step}</p>
-                {i < FLOW.length - 1 && (
-                  <div className="hidden h-px flex-1 bg-gradient-to-r from-brand-300 to-brand-100 lg:block" />
-                )}
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Why choose us */}
-      <section id="why-us" className="mx-auto max-w-7xl px-5 py-24 sm:px-8">
-        <motion.div initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} className="mx-auto max-w-2xl text-center">
-          <h2 className="text-3xl font-bold text-slate-900 sm:text-4xl">Why choose HireFlow AI</h2>
-        </motion.div>
-        <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {WHY_US.map((f, i) => (
-            <motion.div key={f.title} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} transition={{ delay: (i % 3) * 0.08 }}>
-              <Card className="h-full">
-                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-600 text-white">
-                  <f.icon className="h-5.5 w-5.5" />
-                </div>
-                <h3 className="text-base font-semibold text-slate-900">{f.title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{f.desc}</p>
-              </Card>
-            </motion.div>
-          ))}
-        </div>
-      </section>
-
-      {/* Pricing teaser */}
-      <section className="bg-slate-50 py-24">
-        <div className="mx-auto max-w-7xl px-5 sm:px-8">
-          <motion.div initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} className="mx-auto max-w-2xl text-center">
-            <h2 className="text-3xl font-bold text-slate-900 sm:text-4xl">Simple, transparent pricing</h2>
-            <p className="mt-3 text-slate-600">Start free. Upgrade as your hiring volume grows.</p>
-          </motion.div>
-          <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {plans.map((plan, i) => (
-              <motion.div key={plan.key} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} transition={{ delay: i * 0.06 }}>
-                <Card className="flex h-full flex-col">
-                  <h3 className="text-base font-semibold text-slate-900">{plan.name}</h3>
-                  <p className="mt-1 text-xs text-slate-500">{plan.description}</p>
-                  <div className="mt-4 text-2xl font-extrabold text-slate-900">
-                    {formatPrice(plan.pricing.monthly)}
-                    {plan.pricing.monthly > 0 && <span className="text-sm font-medium text-slate-400"> /mo</span>}
-                  </div>
-                  <ul className="mt-4 flex-1 space-y-1.5 text-xs text-slate-500">
-                    <li>{plan.limits.maxJobs.toLocaleString()} active jobs</li>
-                    <li>{plan.limits.maxAiInterviews.toLocaleString()} AI interviews / mo</li>
-                    <li>{plan.limits.maxRecruiters.toLocaleString()} recruiter seats</li>
-                  </ul>
-                  <Button as={Link} to="/register-company" variant="secondary" className="mt-5 w-full">
-                    Get Started
-                  </Button>
-                </Card>
-              </motion.div>
-            ))}
-            {plans.length === 0 && (
-              <p className="col-span-full text-center text-sm text-slate-400">Loading plans…</p>
-            )}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="mx-auto max-w-7xl px-5 py-20 sm:px-8">
-        <div className="rounded-3xl bg-brand-600 px-8 py-16 text-center shadow-soft">
-          <h2 className="text-3xl font-bold text-white sm:text-4xl">Ready to hire smarter?</h2>
-          <p className="mx-auto mt-3 max-w-xl text-brand-100">
-            Register your company and have a fully working AI hiring pipeline running in minutes.
+      {/* Hero — H2 split diptych at 7/5. Never wrapped in Reveal: above-the-fold
+          content paints immediately rather than waiting on an observer. */}
+      {/* Bottom padding runs ≥1.4× the top so the hero pulls into the next
+          section's rhythm rather than floating above it (gate 44a). */}
+      <section className="mx-auto grid max-w-7xl items-center gap-x-12 gap-y-16 px-5 pt-20 pb-28 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,32rem)] lg:pt-24 lg:pb-36">
+        <div className="max-w-2xl">
+          <p className="flex items-center gap-2 text-sm font-semibold text-slate-500">
+            <Scale className="h-4 w-4 text-brand-600" aria-hidden="true" />
+            Evidence-bound hiring intelligence
           </p>
-          <Button as={Link} to="/register-company" variant="secondary" size="lg" className="mt-8">
-            Start Free Trial <ArrowRight className="h-4 w-4" />
-          </Button>
+          {/* Two-tone display: the second line carries the accent. Solid colour,
+              never a gradient fill — gradient text is the most-recognised AI
+              headline tell there is. */}
+          <h1 className="mt-5 text-4xl leading-[1.08] font-extrabold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-5xl lg:text-[3.4rem]">
+            Every score traces
+            <span className="block text-brand-600">to a quoted line.</span>
+          </h1>
+          <p className="mt-6 text-xl font-semibold text-slate-800 sm:text-2xl">
+            The model never emits the score. Code computes it — from evidence it was required to cite.
+          </p>
+          <p className="mt-5 max-w-prose text-lg text-slate-600">
+            HireFlow AI screens candidates against a frozen, recruiter-approved rubric for the role, then shows you
+            the criterion, the quoted evidence, and the arithmetic behind every number it produces. The kind of
+            record you can hand to a hiring manager, an auditor, or a candidate who asks why.
+          </p>
+
+          <div className="mt-9 flex flex-wrap gap-3">
+            <Button as={Link} to="/register-company" size="lg" className="whitespace-nowrap">
+              Start free trial <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button as={Link} to="/demo" variant="secondary" size="lg" className="whitespace-nowrap">
+              Request a demo
+            </Button>
+          </div>
+
+          <p className="mt-6 text-sm text-slate-500">
+            No credit card for the trial. Automatic rejection is off by default.
+          </p>
+        </div>
+
+        {/* Hidden below lg: at phone widths the network has no room to read as a
+            network, and a cramped illustration is worse than none. The hero is
+            typographically complete without it. */}
+        <div className="hidden lg:block">
+          <EventNetwork />
         </div>
       </section>
 
-      {/* Footer / contact */}
+      {/* Evidence strip — the honest occupant of the reference's logo-wall slot.
+          Asymmetric tracks and hairline dividers, deliberately not three equal
+          icon-tile cards. Tight vertical padding so it reads as a strip between
+          two large sections rather than as a section of its own. */}
+      <section className="border-y border-slate-200 bg-slate-50">
+        <div className="mx-auto max-w-7xl px-5 py-10 sm:px-8 lg:py-12">
+          <p className="max-w-2xl text-lg font-semibold text-slate-800 [overflow-wrap:anywhere]">
+            What you hand to the people who ask how a decision was made.
+          </p>
+
+          <div className="mt-8 grid gap-x-10 divide-y divide-slate-200 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,0.95fr)] lg:divide-x lg:divide-y-0">
+            {EVIDENCE.map((item) => (
+              <div key={item.title} className="py-5 first:pt-0 lg:py-0 lg:pl-10 lg:first:pl-0">
+                <h2 className="font-semibold text-slate-900 [overflow-wrap:anywhere]">{item.title}</h2>
+                <p className="mt-2 max-w-prose text-sm text-slate-600">{item.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* 1.0 → 4.0 — the loop, as Split Studio diptychs. Each movement pairs the
+          argument with the artifact it produces; the pairing alternates
+          direction so the page has a gait instead of a stack. */}
+      <section id="how-it-works" className="mx-auto max-w-7xl px-5 py-24 sm:px-8 lg:py-32">
+        {/* Single-column section head. Never tag-left/heading-right — that
+            two-column head is the most reliable templated-editorial tell. */}
+        <div className="max-w-2xl">
+          <h2 className="text-3xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-4xl">
+            One loop, from job description to defensible decision
+          </h2>
+          <p className="mt-4 text-lg text-slate-600">
+            Most platforms bolt a language model onto an applicant tracker and return a number. This is the sequence
+            that replaces it — and the artifact each stage leaves behind.
+          </p>
+          <p className="mt-4 text-sm text-slate-500">
+            The panels show the shape of each artifact. They illustrate the format; none of them is a candidate
+            record, and no figure on this page is a measurement of a real person.
+          </p>
+        </div>
+
+        <ol className="mt-16 space-y-20 lg:mt-20 lg:space-y-28">
+          {LOOP.map((step, i) => {
+            const flip = i % 2 === 1;
+            return (
+              <li key={step.stage} className="grid items-center gap-x-14 gap-y-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <Reveal className={flip ? "lg:order-2" : undefined}>
+                  {/* Stage number stacks above its heading in the same column —
+                      it is genuinely ordinal here, and it is the only numbering
+                      on the page. */}
+                  <p className="text-sm font-semibold tabular-nums text-brand-700">{step.stage}</p>
+                  <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900 [overflow-wrap:anywhere]">
+                    {step.title}
+                  </h3>
+                  <p className="mt-4 max-w-prose text-slate-600">{step.body}</p>
+                </Reveal>
+
+                <Reveal delay={90} className={flip ? "lg:order-1" : undefined}>
+                  <step.Artifact />
+                </Reveal>
+              </li>
+            );
+          })}
+        </ol>
+      </section>
+
+      {/* Capability index — F3 spec sheet. A dense tabular read, deliberately
+          unlike the diptychs above it. */}
+      <section id="features" className="border-t border-slate-200 bg-slate-50">
+        <div className="mx-auto max-w-5xl px-5 py-24 sm:px-8">
+          <h2 className="max-w-2xl text-3xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-4xl">
+            What the platform does
+          </h2>
+          <p className="mt-4 max-w-prose text-lg text-slate-600">
+            One workspace for jobs, candidates, interviews, and the record of how each decision was reached.
+          </p>
+
+          <dl className="mt-12 border-t border-slate-200">
+            {CAPABILITIES.map(([name, behaviour]) => (
+              <div
+                key={name}
+                className="grid gap-x-10 gap-y-1.5 border-b border-slate-200 py-5 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]"
+              >
+                <dt className="font-semibold text-slate-900 [overflow-wrap:anywhere]">{name}</dt>
+                <dd className="max-w-prose text-slate-600">{behaviour}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      </section>
+
+      {/* The refusals — the position, stated plainly. */}
+      <section id="why-us" className="mx-auto max-w-5xl px-5 py-24 sm:px-8">
+        <h2 className="max-w-2xl text-3xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-4xl">
+          What this platform will not do
+        </h2>
+        <p className="mt-4 max-w-prose text-lg text-slate-600">
+          These are constraints in the code, not promises in a brochure. They are also the reason the output holds up
+          when someone asks how a decision was made.
+        </p>
+
+        <div className="mt-12 grid gap-x-12 gap-y-10 sm:grid-cols-2">
+          {REFUSALS.map(([title, body]) => (
+            <div key={title}>
+              <h3 className="text-lg font-semibold tracking-tight text-slate-900 [overflow-wrap:anywhere]">{title}</h3>
+              <p className="mt-2 max-w-prose text-slate-600">{body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Pricing — real plan data from the API. */}
+      <section className="border-t border-slate-200 bg-slate-50">
+        <div className="mx-auto max-w-7xl px-5 py-20 sm:px-8">
+          <h2 className="max-w-2xl text-3xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-4xl">
+            Pricing
+          </h2>
+          <p className="mt-4 max-w-prose text-lg text-slate-600">Start free. Move up as your hiring volume grows.</p>
+
+          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {plans.map((plan) => (
+              <Tilt key={plan.key} className="flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-card">
+                <h3 className="font-semibold text-slate-900 [overflow-wrap:anywhere]">{plan.name}</h3>
+                <p className="mt-1 text-sm text-slate-500">{plan.description}</p>
+                <p className="mt-5 text-2xl font-extrabold tabular-nums text-slate-900">
+                  {formatPrice(plan.pricing.monthly)}
+                  {plan.pricing.monthly > 0 && <span className="text-sm font-medium text-slate-500"> /mo</span>}
+                </p>
+                <ul className="mt-5 flex-1 space-y-2 border-t border-slate-100 pt-5 text-sm tabular-nums text-slate-600">
+                  <li>{plan.limits.maxJobs.toLocaleString()} active jobs</li>
+                  <li>{plan.limits.maxAiInterviews.toLocaleString()} AI interviews / month</li>
+                  <li>{plan.limits.maxRecruiters.toLocaleString()} recruiter seats</li>
+                </ul>
+                <Button as={Link} to="/register-company" variant="secondary" className="mt-6 w-full whitespace-nowrap">
+                  Get started
+                </Button>
+              </Tilt>
+            ))}
+            {plans.length === 0 && <p className="col-span-full text-sm text-slate-500">Loading plans…</p>}
+          </div>
+        </div>
+      </section>
+
+      {/* Closing CTA — one button. The repetition is the call to action. */}
+      <section className="mx-auto max-w-5xl px-5 py-20 sm:px-8">
+        <h2 className="max-w-2xl text-3xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-4xl">
+          Run one role through it and read the record.
+        </h2>
+        <p className="mt-4 max-w-prose text-lg text-slate-600">
+          Register your company, publish a job, and look at what comes back — the criteria, the quoted evidence, and
+          the points behind the number.
+        </p>
+        <Button as={Link} to="/register-company" size="lg" className="mt-8 whitespace-nowrap">
+          Start free trial <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </section>
+
+      {/* Ft5 Statement — a closing line, not a sitemap. */}
       <footer id="contact" className="border-t border-slate-200 bg-white">
-        <div className="mx-auto max-w-7xl px-5 py-12 sm:px-8">
-          <div className="flex flex-col justify-between gap-8 sm:flex-row">
+        <div className="mx-auto max-w-5xl px-5 py-16 sm:px-8">
+          <p className="max-w-[38ch] text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-3xl">
+            Hiring decisions are about people. They should be defensible in writing.
+          </p>
+
+          <div className="mt-12 flex flex-col justify-between gap-6 border-t border-slate-200 pt-6 text-sm sm:flex-row sm:items-end">
             <div>
-              <div className="flex items-center gap-2 font-display text-lg font-bold text-slate-900">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">
-                  <Sparkles className="h-4.5 w-4.5" />
+              <span className="flex items-center gap-2 font-display font-bold text-slate-900">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-xs text-white">
+                  H
                 </span>
                 HireFlow AI
-              </div>
-              <p className="mt-3 max-w-xs text-sm text-slate-500">
-                The AI-native recruitment platform for teams who want to hire faster, without hiring worse.
-              </p>
+              </span>
+              <p className="mt-3 text-slate-500">© {new Date().getFullYear()} HireFlow AI. All rights reserved.</p>
             </div>
-            <div className="text-sm text-slate-600">
-              <div className="font-semibold text-slate-800">Contact Sales</div>
-              <a href="mailto:sales@hireflow.ai" className="mt-2 flex items-center gap-2 hover:text-brand-700">
-                <Mail className="h-4 w-4" /> sales@hireflow.ai
+
+            <div className="flex flex-col gap-1.5 text-slate-600 sm:items-end">
+              <a
+                href="mailto:sales@hireflow.ai"
+                className="rounded-lg whitespace-nowrap hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+              >
+                sales@hireflow.ai
               </a>
-              <a href="tel:+911140001234" className="mt-2 flex items-center gap-2 hover:text-brand-700">
-                <Phone className="h-4 w-4" /> +91 11 4000 1234
+              <a
+                href="tel:+911140001234"
+                className="rounded-lg whitespace-nowrap tabular-nums hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+              >
+                +91 11 4000 1234
               </a>
             </div>
           </div>
-          <p className="mt-10 text-xs text-slate-400">© {new Date().getFullYear()} HireFlow AI. All rights reserved.</p>
         </div>
       </footer>
     </div>

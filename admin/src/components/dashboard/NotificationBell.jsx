@@ -23,7 +23,7 @@ export default function NotificationBell() {
     <div className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="relative rounded-full p-2 text-slate-500 transition hover:bg-slate-100"
+        className="relative rounded-full p-2 text-slate-500 transition-colors duration-150 hover:bg-slate-100"
         aria-label="Notifications"
       >
         <Bell className="h-5 w-5" />
@@ -57,7 +57,7 @@ export default function NotificationBell() {
 
               <div className="max-h-80 overflow-y-auto">
                 {(!recent || recent.length === 0) && (
-                  <p className="px-4 py-6 text-center text-sm text-slate-400">No notifications yet.</p>
+                  <p className="px-4 py-6 text-center text-sm text-slate-500">No notifications yet.</p>
                 )}
                 {recent?.map((n) => (
                   <button
@@ -69,7 +69,7 @@ export default function NotificationBell() {
                   >
                     <p className="text-sm font-semibold text-slate-800">{n.title}</p>
                     <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{n.message}</p>
-                    <p className="mt-1 text-[11px] text-slate-400">{timeAgo(n.createdAt)}</p>
+                    <p className="mt-1 text-[11px] text-slate-500">{timeAgo(n.createdAt)}</p>
                   </button>
                 ))}
               </div>

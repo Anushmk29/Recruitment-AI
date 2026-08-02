@@ -24,6 +24,11 @@ services:
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
+      # Pinned, not left to Render's rolling default — an unpinned runtime can change
+      # under you between two deploys of the same commit. package.json `engines` states
+      # the supported range; this picks a point inside it.
+      - key: NODE_VERSION
+        value: "22"
       - key: NODE_ENV
         value: production
       - key: RUN_WORKERS_IN_API
@@ -116,7 +121,10 @@ services:
     name: recruitment-user
     runtime: static
     rootDir: user
-    buildCommand: npm ci && npm run build
+    # --include=dev is load-bearing: vite and the tailwind plugin are devDependencies,
+    # and a plain `npm ci` omits them whenever NODE_ENV=production reaches the build,
+    # which fails with "vite: not found". Do not depend on the platform default here.
+    buildCommand: npm ci --include=dev && npm run build
     staticPublishPath: dist
     routes:
       # React Router owns /interview/:token etc. Without this rewrite, a candidate
@@ -135,7 +143,10 @@ services:
     name: recruitment-admin
     runtime: static
     rootDir: admin
-    buildCommand: npm ci && npm run build
+    # --include=dev is load-bearing: vite and the tailwind plugin are devDependencies,
+    # and a plain `npm ci` omits them whenever NODE_ENV=production reaches the build,
+    # which fails with "vite: not found". Do not depend on the platform default here.
+    buildCommand: npm ci --include=dev && npm run build
     staticPublishPath: dist
     routes:
       - type: rewrite
@@ -153,3 +164,9 @@ services:
     region: singapore
     plan: free
     ipAllowList: []   # private network only — no public access
+    # MUST be noeviction. Render defaults new instances to allkeys-lru, under which Redis
+    # evicts BullMQ's own bookkeeping keys when memory tightens — jobs then disappear
+    # WITHOUT emitting a `failed` event, so emailWorker's final-attempt alert never fires
+    # and the EmailLog row sits at "queued" forever while the UI reports success. That is
+    # registration OTPs, verification links and interview invitations silently not sent.
+    maxmemoryPolicy: noeviction

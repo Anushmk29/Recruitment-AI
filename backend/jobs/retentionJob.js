@@ -10,7 +10,7 @@
 // be disabled with RETENTION_JOB_ENABLED=false. A per-company summary is written to the
 // audit log.
 
-const cron = require("node-cron");
+const { schedule, cronTimezone } = require("../utils/cronSchedule");
 const CompanySettings = require("../models/CompanySettings");
 const Candidate = require("../models/Candidate");
 const tenantContext = require("../utils/tenantContext");
@@ -72,12 +72,12 @@ function startRetentionJob() {
   }
   // Daily at 03:00 — off-peak. runAsSystem so tenant scoping is bypassed and every query
   // below carries its own explicit { company } filter.
-  cron.schedule("0 3 * * *", () => {
+  schedule("0 3 * * *", () => {
     tenantContext
       .runAsSystem(() => runRetention())
       .catch((err) => console.error("[retentionJob] run failed:", err.message));
   });
-  console.log("[retentionJob] scheduled daily at 03:00");
+  console.log(`[retentionJob] scheduled daily at 03:00 ${cronTimezone()}`);
 }
 
 module.exports = { startRetentionJob, runRetention };

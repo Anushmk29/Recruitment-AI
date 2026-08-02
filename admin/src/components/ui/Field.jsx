@@ -1,7 +1,7 @@
 import { forwardRef } from "react";
 
 const fieldClass =
-  "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-400";
+  "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 shadow-sm transition-colors duration-150 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-500";
 
 export const Input = forwardRef(function Input({ className = "", error, ...props }, ref) {
   return (
@@ -17,7 +17,10 @@ export const Textarea = forwardRef(function Textarea({ className = "", error, ..
   return (
     <textarea
       ref={ref}
-      className={`${fieldClass} ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
+      // `resize-y`, not the browser default `resize: both` — a textarea the user
+      // can drag wider than its column silently breaks the form grid, and the
+      // horizontal handle has no legitimate use inside a fixed-width field.
+      className={`${fieldClass} resize-y ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
       {...props}
     />
   );

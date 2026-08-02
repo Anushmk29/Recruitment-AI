@@ -218,14 +218,14 @@ function IntegrationsSection() {
             { label: "Jobs sitemap", value: careers.sitemapUrl },
           ].map((row) => (
             <div key={row.label} className="flex items-center justify-between gap-3">
-              <span className="shrink-0 text-slate-400">{row.label}</span>
+              <span className="shrink-0 text-slate-500">{row.label}</span>
               <span className="truncate font-mono text-xs text-slate-600">{row.value}</span>
-              <button onClick={() => copyText(row.value, row.label)} className="shrink-0 text-slate-400 hover:text-brand-700" title="Copy">
+              <button onClick={() => copyText(row.value, row.label)} className="shrink-0 text-slate-500 hover:text-brand-700" title="Copy">
                 <Copy className="h-3.5 w-3.5" />
               </button>
             </div>
           ))}
-          <p className="pt-1 text-xs text-slate-400">
+          <p className="pt-1 text-xs text-slate-500">
             Submit the feed once to Adzuna, Jooble, Talent.com and Careerjet — no contract needed; they crawl it from
             then on.
           </p>
@@ -340,7 +340,7 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">Settings</h1>
         <p className="mt-1 text-sm text-slate-500">Your account, company details, and how the platform runs for your team.</p>
       </div>
 
@@ -352,23 +352,23 @@ export default function SettingsPage() {
           </h2>
           <dl className="space-y-3 text-sm">
             <div className="flex items-center justify-between">
-              <dt className="text-slate-400">Name</dt>
+              <dt className="text-slate-500">Name</dt>
               <dd className="font-medium text-slate-800">{user?.name || "—"}</dd>
             </div>
             <div className="flex items-center justify-between">
-              <dt className="flex items-center gap-1.5 text-slate-400">
+              <dt className="flex items-center gap-1.5 text-slate-500">
                 <Mail className="h-3.5 w-3.5" /> Email
               </dt>
               <dd className="font-medium text-slate-800">{user?.email || "—"}</dd>
             </div>
             <div className="flex items-center justify-between">
-              <dt className="flex items-center gap-1.5 text-slate-400">
+              <dt className="flex items-center gap-1.5 text-slate-500">
                 <Phone className="h-3.5 w-3.5" /> Phone
               </dt>
               <dd className="font-medium text-slate-800">{user?.phone || "—"}</dd>
             </div>
             <div className="flex items-center justify-between">
-              <dt className="text-slate-400">Role</dt>
+              <dt className="text-slate-500">Role</dt>
               <dd><Badge tone="brand">{user?.role}</Badge></dd>
             </div>
           </dl>
@@ -383,15 +383,15 @@ export default function SettingsPage() {
           ) : (
             <dl className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
-                <dt className="text-slate-400">Company Name</dt>
+                <dt className="text-slate-500">Company Name</dt>
                 <dd className="font-medium text-slate-800">{company?.name || "—"}</dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-400">Company Code</dt>
+                <dt className="text-slate-500">Company Code</dt>
                 <dd className="font-mono text-xs font-medium text-slate-800">{company?.companyCode || "—"}</dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-slate-400">Status</dt>
+                <dt className="text-slate-500">Status</dt>
                 <dd><Badge tone={company?.status === "active" ? "green" : "amber"}>{company?.status || "—"}</Badge></dd>
               </div>
             </dl>
@@ -422,7 +422,7 @@ export default function SettingsPage() {
                 <option value="shadow">Shadow — evidence engine runs silently for comparison</option>
                 <option value="live">Live — evidence engine scores candidates</option>
               </Select>
-              <p className="mt-2 text-xs text-slate-400">
+              <p className="mt-2 text-xs text-slate-500">
                 {form.atsEngine === "shadow" &&
                   "Shadow mode: candidates are still scored and decided by the keyword engine, while the evidence engine runs in parallel and records what it would have scored. Use this to compare the two before going live — nothing changes for candidates."}
                 {form.atsEngine === "live" &&
@@ -453,7 +453,7 @@ export default function SettingsPage() {
               <FormGroup className="mb-0">
                 <Label>Monthly AI budget (USD)</Label>
                 <Input type="number" min="0" step="0.01" value={form.aiBudgetUsd} onChange={onInput("aiBudgetUsd")} />
-                <p className="mt-1 text-xs text-slate-400">0 = uncapped. Interview LLM spend is metered against this each month.</p>
+                <p className="mt-1 text-xs text-slate-500">0 = uncapped. Interview LLM spend is metered against this each month.</p>
               </FormGroup>
               <div className="flex items-center">
                 <ToggleRow
@@ -496,7 +496,7 @@ export default function SettingsPage() {
             <FormGroup className="mb-0 mt-4 max-w-xs">
               <Label>Data retention (days)</Label>
               <Input type="number" min="1" max="3650" step="1" value={form.retentionDays} onChange={onInput("retentionDays")} />
-              <p className="mt-1 text-xs text-slate-400">Interview & resume data untouched for longer than this is permanently deleted by the nightly job.</p>
+              <p className="mt-1 text-xs text-slate-500">Interview & resume data untouched for longer than this is permanently deleted by the nightly job.</p>
             </FormGroup>
           </Card>
 

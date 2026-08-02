@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Bot, ExternalLink, Sparkles } from "lucide-react";
+import { Bot, ExternalLink, Cpu } from "lucide-react";
 import api from "../../api/client.js";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
@@ -28,7 +28,7 @@ export default function AIInterviews() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">AI Interviews</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">AI Interviews</h1>
         <p className="mt-1 text-sm text-slate-500">Candidates who passed ATS screening and are queued for an AI interview.</p>
       </div>
 
@@ -50,13 +50,13 @@ export default function AIInterviews() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-400">
+              <thead className="border-b border-slate-200 text-xs font-semibold text-slate-600">
                 <tr>
-                  <th className="px-6 py-3 font-medium">Candidate</th>
-                  <th className="px-6 py-3 font-medium">Job</th>
-                  <th className="px-6 py-3 font-medium">ATS Score</th>
-                  <th className="px-6 py-3 font-medium">Queued</th>
-                  <th className="px-6 py-3 font-medium">Actions</th>
+                  <th className="px-6 py-3 font-semibold">Candidate</th>
+                  <th className="px-6 py-3 font-semibold">Job</th>
+                  <th className="px-6 py-3 font-semibold">ATS Score</th>
+                  <th className="px-6 py-3 font-semibold">Queued</th>
+                  <th className="px-6 py-3 font-semibold">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -71,7 +71,7 @@ export default function AIInterviews() {
                     <td className="px-6 py-3">
                       <Badge tone="brand">{entry.atsScore ?? entry.candidate?.ats?.overallScore ?? "—"}%</Badge>
                     </td>
-                    <td className="px-6 py-3 text-slate-400">{new Date(entry.createdAt).toLocaleDateString()}</td>
+                    <td className="px-6 py-3 text-slate-500">{new Date(entry.createdAt).toLocaleDateString()}</td>
                     <td className="px-6 py-3">
                       <div className="flex items-center gap-2">
                         <Button
@@ -88,7 +88,7 @@ export default function AIInterviews() {
                           variant="ghost"
                           size="sm"
                         >
-                          <Sparkles className="h-3.5 w-3.5" /> Report
+                          <Cpu className="h-3.5 w-3.5" /> Report
                         </Button>
                         <Button
                           variant="ghost"

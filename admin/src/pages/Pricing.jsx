@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Check, Sparkles } from "lucide-react";
+import { Check, Cpu } from "lucide-react";
 import api from "../api/client.js";
 import { getAdminAuth } from "../auth/adminAuth.js";
 import MarketingNavbar from "../components/marketing/MarketingNavbar.jsx";
@@ -110,7 +110,7 @@ export default function Pricing() {
                 >
                   {popular && (
                     <span className="absolute -top-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-brand-600 px-3 py-1 text-[11px] font-bold text-white">
-                      <Sparkles className="h-3 w-3" /> Most Popular
+                      <Cpu className="h-3 w-3" /> Most Popular
                     </span>
                   )}
                   <h3 className="text-base font-semibold text-slate-900">{plan.name}</h3>
@@ -118,7 +118,7 @@ export default function Pricing() {
                   <div className="mt-5 text-3xl font-extrabold text-slate-900">
                     {formatPrice(plan.pricing[billingCycle])}
                     {plan.pricing[billingCycle] > 0 && (
-                      <span className="text-sm font-medium text-slate-400"> / {billingCycle === "monthly" ? "mo" : "yr"}</span>
+                      <span className="text-sm font-medium text-slate-500"> / {billingCycle === "monthly" ? "mo" : "yr"}</span>
                     )}
                   </div>
                   <ul className="mt-5 flex-1 space-y-2.5 text-sm text-slate-600">
