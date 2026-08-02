@@ -29,7 +29,10 @@ const Button = forwardRef(function Button(
       // Properties are named rather than `transition-all` so the focus ring
       // (a box-shadow) appears instantly — a ring that fades in leaves keyboard
       // users with no indicator at the start of the transition.
-      className={`inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-[background-color,border-color,color,transform] duration-150 focus-visible:outline-none focus-visible:ring-4 active:scale-[0.98] disabled:cursor-not-allowed disabled:active:scale-100 ${variants[variant]} ${sizes[size]} ${className}`}
+      // `tap-target` (index.css) raises this to the 44px comfort floor only on
+      // coarse pointers. On a mouse the sm/md heights stay 32/40px, which is
+      // what makes a dense toolbar readable.
+      className={`tap-target inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-[background-color,border-color,color,transform] duration-150 focus-visible:outline-none focus-visible:ring-4 active:scale-[0.98] disabled:cursor-not-allowed disabled:active:scale-100 ${variants[variant]} ${sizes[size]} ${className}`}
       {...props}
     >
       {loading && <Loader2 className="h-4 w-4 animate-spin" />}

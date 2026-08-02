@@ -5,6 +5,7 @@ const Job = require("../models/Job");
 const Resume = require("../models/Resume");
 const InterviewSession = require("../models/InterviewSession");
 const AssessmentSession = require("../models/AssessmentSession");
+const AssessmentPaper = require("../models/AssessmentPaper");
 const Notification = require("../models/Notification");
 const CandidateProfile = require("../models/CandidateProfile");
 const CandidateDashboard = require("../models/CandidateDashboard");
@@ -16,7 +17,12 @@ const {
 } = require("../utils/candidateSerializers");
 const { buildNextActions } = require("../utils/candidateNextActions");
 const { resendOrRescheduleInterview } = require("../services/interviewInvitationService");
-const { resendAssessment } = require("../services/assessmentService");
+const assessmentService = require("../services/assessmentService");
+const { resendAssessment } = assessmentService;
+// The interview portal owns the cancelled/expired gate and the session-token
+// signing. Importing it (rather than restating either here) is what keeps the
+// dashboard's "open my interview" identical to the magic link's.
+const { openSessionForOwner } = require("./interviewPortalController");
 
 async function getOrCreateProfile(userId) {
   let profile = await CandidateProfile.findOne({ user: userId });
@@ -179,6 +185,77 @@ async function toggleSavedJob(req, res) {
   res.json({ saved: index < 0, savedJobs: profile.savedJobs });
 }
 
+// Locate an interview/assessment session that belongs to the authenticated
+// account, with its candidate and job populated. Shared by every candidate-side
+// session route so the ownership rule has exactly one implementation.
+//
+// Ownership is the application's email matching the account's — a session id
+// alone grants nothing. An unknown id, a malformed id and someone else's
+// session all return the SAME 404, so probing ids reveals nothing about which
+// ones exist.
+async function loadOwnSession(req) {
+  const { kind, id } = req.params;
+  const notFound = () => Object.assign(new Error("Session not found"), { status: 404 });
+
+  if (kind !== "assessment" && kind !== "interview") {
+    throw Object.assign(new Error("Unknown session type"), { status: 404 });
+  }
+  if (!mongoose.isValidObjectId(id)) throw notFound();
+
+  const Model = kind === "assessment" ? AssessmentSession : InterviewSession;
+  const session = await Model.findById(id).populate("candidate").populate("job");
+  if (!session) throw notFound();
+  if (session.candidate?.basicDetails?.email !== req.user.email) throw notFound();
+  if (!session.job) throw Object.assign(new Error("Job not found"), { status: 404 });
+
+  return { kind, session, candidate: session.candidate, job: session.job };
+}
+
+// POST /candidate-dashboard/sessions/:kind/:id/open
+//
+// Start (or resume) the candidate's own interview/assessment straight from the
+// dashboard, with no emailed link involved.
+//
+// Why this exists rather than "show them the link": only the token HASH is
+// stored, so the magic link is unrecoverable by design — a dashboard could
+// never display it, and the only alternative was to mint a NEW token, which
+// silently breaks the link already sitting in the candidate's inbox. Instead
+// the account itself is treated as a second, equally valid proof of the same
+// identity: the mailbox proves you can read the invitation, the login proves
+// you own the address it was sent to. Both mint the same session-scoped portal
+// token through the same gate (openSessionForOwner / assessmentService.
+// openSession), and neither invalidates the other.
+//
+// The consequence that matters to a candidate: a lost, spam-filtered, or
+// dead-hostname invitation no longer costs them the opportunity, and nothing
+// they hold stops working because they used the dashboard instead.
+async function openOwnSession(req, res) {
+  let ctx;
+  try {
+    ctx = await loadOwnSession(req);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+
+  try {
+    if (ctx.kind === "interview") {
+      return res.json(await openSessionForOwner(ctx.session));
+    }
+    const { token, session } = await assessmentService.openSession(ctx.session);
+    const paper = await AssessmentPaper.findById(session.paper);
+    return res.json({
+      token,
+      session: assessmentService.dashboardPayload(session, session.candidate, session.job, paper),
+    });
+  } catch (err) {
+    // Cancelled/expired are the gate's own refusals, not faults — surface their
+    // wording verbatim so the dashboard says the same thing the portal would.
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+}
+
 // POST /candidate-dashboard/sessions/:kind/:id/resend
 //
 // Self-serve recovery of the candidate's own access link. Until now, resend was
@@ -198,26 +275,16 @@ async function toggleSavedJob(req, res) {
 //     reused rather than restated, so candidate and recruiter recovery can
 //     never drift apart.
 async function resendOwnSessionLink(req, res) {
-  const { kind, id } = req.params;
-  if (kind !== "assessment" && kind !== "interview") {
-    return res.status(404).json({ error: "Unknown session type" });
+  let kind;
+  let session;
+  let candidate;
+  let job;
+  try {
+    ({ kind, session, candidate, job } = await loadOwnSession(req));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    throw err;
   }
-  if (!mongoose.isValidObjectId(id)) return res.status(404).json({ error: "Session not found" });
-
-  const Model = kind === "assessment" ? AssessmentSession : InterviewSession;
-  const session = await Model.findById(id);
-  if (!session) return res.status(404).json({ error: "Session not found" });
-
-  // Ownership: the session's application must belong to this account's email.
-  const candidate = await Candidate.findById(session.candidate);
-  if (!candidate || candidate.basicDetails?.email !== req.user.email) {
-    // Deliberately the same 404 as a missing session — an attacker probing ids
-    // learns nothing about which ones exist.
-    return res.status(404).json({ error: "Session not found" });
-  }
-
-  const job = await Job.findById(session.job);
-  if (!job) return res.status(404).json({ error: "Job not found" });
 
   try {
     if (kind === "assessment") {
@@ -266,4 +333,11 @@ async function initializeDashboard(userId, userName, userEmail) {
   return dashboard;
 }
 
-module.exports = { getDashboard, updateProfile, toggleSavedJob, resendOwnSessionLink, initializeDashboard };
+module.exports = {
+  getDashboard,
+  updateProfile,
+  toggleSavedJob,
+  openOwnSession,
+  resendOwnSessionLink,
+  initializeDashboard,
+};

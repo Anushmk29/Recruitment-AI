@@ -7,9 +7,101 @@
 
 const crypto = require("crypto");
 
+// `disqualifier` stays in this list because rubrics FROZEN before importance
+// tiers landed contain them, and a frozen rubric must keep scoring exactly as it
+// did the day it was approved (evidenceScorer still honours the gate). Nothing
+// authors one any more — see AUTHORABLE_KINDS.
 const CRITERION_KINDS = ["must_have", "nice_to_have", "disqualifier"];
+const AUTHORABLE_KINDS = ["must_have", "nice_to_have"];
 const EVIDENCE_TYPES = ["skill", "experience", "education", "project", "certification", "outcome"];
 const MAX_CRITERIA = 20;
+
+// ---- Importance tiers --------------------------------------------------------
+// The one weight control anybody touches — a recruiter picks a WORD and code
+// turns the word into the number. This is engineering rule 1 applied to the
+// human as well as the model: nobody types a weight, so no rubric can carry a
+// number nobody can defend. Ask "why is this 35%?" of a typed slider and there
+// is no answer; ask it here and the answer is "it is Critical, and Critical
+// means 8× a Bonus in every rubric this tenant has ever approved".
+//
+// The multipliers are a geometric ladder (8/4/2/1), so a tier's meaning RELATIVE
+// to the others is constant no matter how many criteria the rubric ends up with.
+// `kind` is derived, not chosen: the must-have / nice-to-have distinction the
+// evidence matcher needs falls out of the tier instead of being a second
+// question the recruiter has to answer.
+const IMPORTANCE_TIERS = [
+  {
+    key: "critical",
+    label: "Critical",
+    multiplier: 8,
+    kind: "must_have",
+    blurb: "Weak here and the candidate is not hireable for this role.",
+  },
+  {
+    key: "important",
+    label: "Important",
+    multiplier: 4,
+    kind: "must_have",
+    blurb: "Expected of the role. Counts heavily, but one gap is survivable.",
+  },
+  {
+    key: "helpful",
+    label: "Helpful",
+    multiplier: 2,
+    kind: "nice_to_have",
+    blurb: "Genuinely useful; someone without it can still advance.",
+  },
+  {
+    key: "bonus",
+    label: "Bonus",
+    multiplier: 1,
+    kind: "nice_to_have",
+    blurb: "A tiebreaker. Barely moves the score on its own.",
+  },
+];
+
+const IMPORTANCE_KEYS = IMPORTANCE_TIERS.map((t) => t.key);
+const DEFAULT_IMPORTANCE = "important";
+
+function tierFor(key) {
+  return IMPORTANCE_TIERS.find((t) => t.key === key) || null;
+}
+
+/**
+ * The tier word to SHOW for a criterion. Criteria compiled before tiers existed
+ * carry no `importance`, so fall back to the kind they were authored with rather
+ * than inventing a precision the original author never expressed. Legacy
+ * disqualifiers return null — they are gates, not rungs on this ladder.
+ */
+function importanceOf(criterion) {
+  if (criterion?.importance && tierFor(criterion.importance)) return criterion.importance;
+  if (criterion?.kind === "must_have") return "critical";
+  if (criterion?.kind === "nice_to_have") return "helpful";
+  return null;
+}
+
+/**
+ * Stamp `kind` and the RELATIVE weight onto a criterion from its tier word.
+ * Mutates and returns it. The relative weight is the tier multiplier;
+ * normaliseWeights turns the set of multipliers into fractions summing to 1.
+ */
+function applyImportance(criterion) {
+  const tier = tierFor(criterion?.importance);
+  if (!tier) return criterion; // legacy gate — left exactly as it was authored
+  criterion.kind = tier.kind;
+  criterion.weight = tier.multiplier;
+  return criterion;
+}
+
+// Back-compat only: map a pre-tier proposal (kind + 0-100 relativeImportance)
+// onto the ladder, so recorded LLM fixtures and any in-flight draft still land
+// somewhere honest instead of being dropped.
+function tierFromLegacyProposal(kind, relativeImportance) {
+  const n = Number(relativeImportance);
+  const score = Number.isFinite(n) ? n : 0;
+  if (kind === "nice_to_have") return score >= 50 ? "helpful" : "bonus";
+  return score >= 70 ? "critical" : "important";
+}
 
 // ---- Source text + hash ------------------------------------------------------
 
@@ -228,8 +320,13 @@ function verifyModelFlags(modelFlags, sourceText) {
 /**
  * Turn raw model criteria into schema-safe criteria. Invalid entries are DROPPED
  * (never repaired into something the model didn't say): missing label/rationale,
- * unknown kind. Evidence types are filtered to the known enum. Relative weights
- * clamp to [0, 100] ahead of normalisation. Ids are assigned here (c1..cN).
+ * unrecognisable importance. Evidence types are filtered to the known enum. Ids
+ * are assigned here (c1..cN).
+ *
+ * The model now proposes a tier WORD, never a number — code owns the arithmetic
+ * end to end (engineering rule 1). A pre-tier proposal (kind + relativeImportance)
+ * is mapped onto the ladder so recorded fixtures keep working; a proposal that
+ * fits neither shape is dropped.
  */
 function sanitiseAiCriteria(rawCriteria) {
   const out = [];
@@ -237,21 +334,34 @@ function sanitiseAiCriteria(rawCriteria) {
     if (!raw || typeof raw !== "object") continue;
     const label = typeof raw.label === "string" ? raw.label.trim() : "";
     const rationale = typeof raw.rationale === "string" ? raw.rationale.trim() : "";
-    if (!label || !rationale || !CRITERION_KINDS.includes(raw.kind)) continue;
+    if (!label || !rationale) continue;
+
+    let importance = IMPORTANCE_KEYS.includes(raw.importance) ? raw.importance : null;
+    if (!importance) {
+      // Legacy shape. Knock-out gates are no longer authored at all, so a
+      // proposed disqualifier is dropped rather than silently reweighted into a
+      // scoreable criterion it was never meant to be.
+      if (!AUTHORABLE_KINDS.includes(raw.kind)) continue;
+      importance = tierFromLegacyProposal(raw.kind, raw.relativeImportance);
+    }
+
     const evidenceTypes = (Array.isArray(raw.evidenceTypes) ? raw.evidenceTypes : []).filter((t) => EVIDENCE_TYPES.includes(t));
-    out.push({
-      id: `c${out.length + 1}`,
-      label,
-      kind: raw.kind,
-      weight: Math.min(100, Math.max(0, Number(raw.relativeImportance) || 0)),
-      rationale,
-      evidenceTypes: evidenceTypes.length ? evidenceTypes : ["experience"],
-      acceptableEvidence: (Array.isArray(raw.acceptableEvidence) ? raw.acceptableEvidence : [])
-        .filter((s) => typeof s === "string" && s.trim())
-        .map((s) => s.trim()),
-      probeHint: typeof raw.probeHint === "string" ? raw.probeHint.trim() : "",
-      seniorityFloor: typeof raw.seniorityFloor === "string" ? raw.seniorityFloor.trim() : "",
-    });
+    out.push(
+      applyImportance({
+        id: `c${out.length + 1}`,
+        label,
+        importance,
+        kind: null, // derived from the tier below
+        weight: 0, // derived from the tier below
+        rationale,
+        evidenceTypes: evidenceTypes.length ? evidenceTypes : ["experience"],
+        acceptableEvidence: (Array.isArray(raw.acceptableEvidence) ? raw.acceptableEvidence : [])
+          .filter((s) => typeof s === "string" && s.trim())
+          .map((s) => s.trim()),
+        probeHint: typeof raw.probeHint === "string" ? raw.probeHint.trim() : "",
+        seniorityFloor: typeof raw.seniorityFloor === "string" ? raw.seniorityFloor.trim() : "",
+      })
+    );
   }
   return normaliseWeights(out);
 }
@@ -272,46 +382,49 @@ function deterministicDraft(job) {
   for (const skill of job.requiredSkills || []) {
     const s = String(skill).trim();
     if (!s) continue;
-    criteria.push({
-      id: `c${criteria.length + 1}`,
-      label: `Working proficiency in ${s}`,
-      kind: "must_have",
-      weight: 1,
-      rationale: `"${s}" is listed as a required skill on the job posting.`,
-      evidenceTypes: ["skill", "experience", "project"],
-      acceptableEvidence: [`Hands-on work experience using ${s}`, `A project or deliverable built with ${s}`],
-      probeHint: `Ask for a specific task the candidate completed with ${s}, then probe one detail only hands-on use would teach.`,
-      seniorityFloor: "",
-    });
+    criteria.push(
+      applyImportance({
+        id: `c${criteria.length + 1}`,
+        label: `Working proficiency in ${s}`,
+        importance: "important",
+        rationale: `"${s}" is listed as a required skill on the job posting.`,
+        evidenceTypes: ["skill", "experience", "project"],
+        acceptableEvidence: [`Hands-on work experience using ${s}`, `A project or deliverable built with ${s}`],
+        probeHint: `Ask for a specific task the candidate completed with ${s}, then probe one detail only hands-on use would teach.`,
+        seniorityFloor: "",
+      })
+    );
   }
 
   if (Number(job.minExperienceYears) > 0) {
-    criteria.push({
-      id: `c${criteria.length + 1}`,
-      label: `At least ${job.minExperienceYears} year(s) of relevant professional experience`,
-      kind: "must_have",
-      weight: 1.5,
-      rationale: `The posting sets a minimum of ${job.minExperienceYears} year(s) of experience.`,
-      evidenceTypes: ["experience"],
-      acceptableEvidence: ["Employment history in a relevant role covering the required duration"],
-      probeHint: "Ask the candidate to walk through the scope and ownership of their most recent relevant role.",
-      seniorityFloor: "",
-    });
+    criteria.push(
+      applyImportance({
+        id: `c${criteria.length + 1}`,
+        label: `At least ${job.minExperienceYears} year(s) of relevant professional experience`,
+        importance: "critical",
+        rationale: `The posting sets a minimum of ${job.minExperienceYears} year(s) of experience.`,
+        evidenceTypes: ["experience"],
+        acceptableEvidence: ["Employment history in a relevant role covering the required duration"],
+        probeHint: "Ask the candidate to walk through the scope and ownership of their most recent relevant role.",
+        seniorityFloor: "",
+      })
+    );
   }
 
   if (job.requiredEducation && String(job.requiredEducation).trim()) {
     const edu = String(job.requiredEducation).trim();
-    criteria.push({
-      id: `c${criteria.length + 1}`,
-      label: `Education: ${edu}`,
-      kind: "must_have",
-      weight: 0.75,
-      rationale: `The posting lists "${edu}" as required education.`,
-      evidenceTypes: ["education"],
-      acceptableEvidence: [edu],
-      probeHint: "",
-      seniorityFloor: "",
-    });
+    criteria.push(
+      applyImportance({
+        id: `c${criteria.length + 1}`,
+        label: `Education: ${edu}`,
+        importance: "helpful",
+        rationale: `The posting lists "${edu}" as required education.`,
+        evidenceTypes: ["education"],
+        acceptableEvidence: [edu],
+        probeHint: "",
+        seniorityFloor: "",
+      })
+    );
     flags.push({
       code: "EDUCATION_REQUIREMENT",
       severity: "info",
@@ -353,11 +466,41 @@ function defaultThresholds(job) {
   return { advance, review: Math.max(0, advance - 15) };
 }
 
+// Named cut-off settings, so "how selective is this role" is also a word rather
+// than two numbers a recruiter has to invent and then justify. Custom numbers
+// stay available for anyone who genuinely needs them — the preset is the default
+// path, not a cage. Every preset keeps a review BAND (advance − review = 15):
+// the whole point of two thresholds is that ambiguity reaches a person.
+const THRESHOLD_PRESETS = [
+  { key: "wide", label: "Wide net", advance: 50, review: 35, blurb: "Interview generously; let the interview do the filtering." },
+  { key: "balanced", label: "Balanced", advance: 60, review: 45, blurb: "The default. Clear passes advance, clear misses decline." },
+  { key: "selective", label: "Selective", advance: 70, review: 55, blurb: "Only strong evidence advances without a human read." },
+  { key: "very_selective", label: "Very selective", advance: 80, review: 65, blurb: "Senior or scarce roles where a weak hire costs more than a slow one." },
+];
+
+/** Which preset a threshold pair corresponds to, or "custom" if it matches none. */
+function thresholdPresetKey(thresholds) {
+  const advance = Number(thresholds?.advance);
+  const review = Number(thresholds?.review);
+  const hit = THRESHOLD_PRESETS.find((p) => p.advance === advance && p.review === review);
+  return hit ? hit.key : "custom";
+}
+
 module.exports = {
   CRITERION_KINDS,
+  AUTHORABLE_KINDS,
   EVIDENCE_TYPES,
   MAX_CRITERIA,
   TECH_BIRTH_YEARS,
+  IMPORTANCE_TIERS,
+  IMPORTANCE_KEYS,
+  DEFAULT_IMPORTANCE,
+  THRESHOLD_PRESETS,
+  tierFor,
+  importanceOf,
+  applyImportance,
+  tierFromLegacyProposal,
+  thresholdPresetKey,
   buildSourceText,
   sourceHashOf,
   normaliseWeights,

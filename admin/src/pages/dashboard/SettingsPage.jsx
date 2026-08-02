@@ -559,7 +559,9 @@ export default function SettingsPage() {
           <IntegrationsSection />
 
           <div className="sticky bottom-4 flex justify-end">
-            <Button onClick={save} loading={saving} className="shadow-lg">
+            {/* shadow-soft, not shadow-lg: DESIGN.md defines four elevation
+                planes and a raw Tailwind shadow is none of them. */}
+            <Button onClick={save} loading={saving} className="shadow-soft">
               <Save className="h-4 w-4" /> Save changes
             </Button>
           </div>

@@ -126,8 +126,12 @@ _Last updated: 2026-07-31._
       qualityFlags. **Immutability**: frozen docs reject every change except status→archived
       (post-init capture + pre-save guard, pure `frozenViolation` checker unit-pinned); query-level
       updates are banned model-wide so middleware can't be bypassed — both verified live.
-      **Engine** (`utils/rubricEngine.js`, pure): weight normalisation in code (property-tested to
-      sum exactly 1.0; disqualifiers are unweighted gates); six deterministic JD-quality detectors
+      **Engine** (`utils/rubricEngine.js`, pure): the **importance ladder** — Critical / Important /
+      Helpful / Bonus, geometric multipliers 8/4/2/1 — is the only weight control; a criterion's
+      `kind` and relative weight are *derived* from the tier word, never chosen separately, so no
+      number in a rubric traces to anything but a named tier (rule 1 extended to the human).
+      Weight normalisation in code (property-tested to sum exactly 1.0; legacy disqualifiers are
+      unweighted gates, still scored but no longer authorable); six deterministic JD-quality detectors
       with verbatim evidence (elite-university proxy, native-speaker, digital-native,
       continuous-employment, hype adjectives, years-exceeding-tech-age vs a 25-tech birth-year table
       — honest: feasible asks don't fire); must-have overload; cite-or-drop for model-proposed flags
@@ -135,15 +139,24 @@ _Last updated: 2026-07-31._
       from structured Job fields, labelled `engine:"fallback"` + FALLBACK_COMPILE flag.
       **Service** (`services/rubricService.js`): compile (idempotent per sourceHash; AI via
       `reasoning` registry role, metered kind `rubric_compile`, temp 0, versioned prompt
-      `2026-07-25.1`), updateDraft (re-normalises), approve (freezes + archives predecessor + audit
+      `2026-08-03.1` — the model returns an importance WORD, never a number), updateDraft (accepts
+      tier words + named threshold presets; a client-sent `weight` is ignored outright, so no figure
+      chosen outside the engine can reach a score), approve (freezes + archives predecessor + audit
       via `rubric.approve`), getActiveRubric, supersede (JD edit → new draft v2; old approved stays
       active and historical scores keep pointing at it). Wired into `jobController.updateJob` via
       sourceHash comparison (fire-and-forget). Rollback `RUBRIC_ENGINE_ENABLED=false`.
       **API**: `/api/rubrics/job/:jobId` (get/compile), `/api/rubrics/:id` (get/patch/approve) —
       admin-only. **UI**: `admin/src/pages/dashboard/RubricEditor.jsx` (from JobForm → "Scoring
       Rubric"): version tabs, provenance banners (AI vs amber "Compiled without AI"), quality-flag
-      panel with severity + JD quotes, weight sliders (relative — server normalises), threshold
-      editor, confirm-gated **Approve & Freeze**; frozen versions render read-only.
+      panel with severity + JD quotes, **no numeric input anywhere** — one importance dropdown per
+      criterion and a named selectivity preset (Wide net / Balanced / Selective / Very selective,
+      Custom still available); percentages are rendered as derived output only. Click-to-add criteria
+      (suggestions built from the job's own required skills / experience / education, plus a common-
+      criteria library, each arriving with its reason, evidence types and interview probe pre-filled;
+      typing is the fallback path). Placeholder reasons are visibly nudged before freeze. The tier
+      ladder and threshold presets are served by the API (`vocab` on `GET /api/rubrics/job/:jobId`)
+      so the SPA can't drift from the engine. Confirm-gated **Approve & Freeze**; frozen versions
+      render read-only against their STORED weights, not a recomputation.
       **Backfill**: `scripts/backfillRubrics.js` — unapproved fallback drafts for existing jobs
       (deterministic by default, `--ai` opt-in so bulk runs can't surprise-spend).
       `scripts/smokeRubric.js` = repeatable live lifecycle proof (zero LLM spend).

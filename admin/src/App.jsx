@@ -1,41 +1,68 @@
+import { lazy, Suspense } from "react";
 import { Routes, Route, Outlet, useLocation } from "react-router-dom";
-import JobList from "./pages/JobList.jsx";
-import JobForm from "./pages/JobForm.jsx";
-import CandidateList from "./pages/CandidateList.jsx";
-import CandidateDetail from "./pages/CandidateDetail.jsx";
-import InterviewReport from "./pages/InterviewReport.jsx";
-import Login from "./pages/Login.jsx";
-import ForgotPassword from "./pages/ForgotPassword.jsx";
-import ResetPassword from "./pages/ResetPassword.jsx";
 import Landing from "./pages/Landing.jsx";
-import Demo from "./pages/Demo.jsx";
-import RegisterCompany from "./pages/RegisterCompany.jsx";
-import VerifyCompanyOtp from "./pages/VerifyCompanyOtp.jsx";
-import Pricing from "./pages/Pricing.jsx";
-import Checkout from "./pages/Checkout.jsx";
-import PaymentSuccess from "./pages/PaymentSuccess.jsx";
-import PaymentFailed from "./pages/PaymentFailed.jsx";
-import DashboardHome from "./pages/dashboard/DashboardHome.jsx";
-import CandidatesAll from "./pages/dashboard/CandidatesAll.jsx";
-import HiringPipeline from "./pages/dashboard/HiringPipeline.jsx";
-import AIInterviews from "./pages/dashboard/AIInterviews.jsx";
-import Reports from "./pages/dashboard/Reports.jsx";
-import SubscriptionPage from "./pages/dashboard/SubscriptionPage.jsx";
-import Notifications from "./pages/dashboard/Notifications.jsx";
-import SettingsPage from "./pages/dashboard/SettingsPage.jsx";
-import RubricEditor from "./pages/dashboard/RubricEditor.jsx";
-import PaperEditor from "./pages/dashboard/PaperEditor.jsx";
-import AssessmentTracker from "./pages/dashboard/AssessmentTracker.jsx";
-import ScoreExplanation from "./pages/dashboard/ScoreExplanation.jsx";
-import ReviewQueue from "./pages/dashboard/ReviewQueue.jsx";
-import AuditTrail from "./pages/dashboard/AuditTrail.jsx";
+import Login from "./pages/Login.jsx";
 import DashboardShell from "./components/dashboard/DashboardShell.jsx";
-import NotFound from "./pages/NotFound.jsx";
-import PlatformConsole from "./pages/platform/PlatformConsole.jsx";
 import RequireAdmin from "./auth/RequireAdmin.jsx";
 import RequirePlatform from "./auth/RequirePlatform.jsx";
 import { useAdminAuth } from "./auth/useAdminAuth.js";
 import SmoothScroll from "./motion/SmoothScroll.jsx";
+
+// Every page used to be a static import, so one 863 kB chunk had to arrive
+// before anything rendered: a recruiter opening their queue downloaded the
+// marketing site, the superadmin console, the rubric and paper editors and the
+// interview report first. Only the two entry points stay eager — Landing (the
+// signed-out "/") and Login — because a Suspense flash on the first paint of an
+// entry point is a worse trade than the extra request. Everything else is
+// fetched when its route is actually visited.
+const Demo = lazy(() => import("./pages/Demo.jsx"));
+const Pricing = lazy(() => import("./pages/Pricing.jsx"));
+const RegisterCompany = lazy(() => import("./pages/RegisterCompany.jsx"));
+const VerifyCompanyOtp = lazy(() => import("./pages/VerifyCompanyOtp.jsx"));
+const Checkout = lazy(() => import("./pages/Checkout.jsx"));
+const PaymentSuccess = lazy(() => import("./pages/PaymentSuccess.jsx"));
+const PaymentFailed = lazy(() => import("./pages/PaymentFailed.jsx"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword.jsx"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword.jsx"));
+
+const JobList = lazy(() => import("./pages/JobList.jsx"));
+const JobForm = lazy(() => import("./pages/JobForm.jsx"));
+const CandidateList = lazy(() => import("./pages/CandidateList.jsx"));
+const CandidateDetail = lazy(() => import("./pages/CandidateDetail.jsx"));
+const InterviewReport = lazy(() => import("./pages/InterviewReport.jsx"));
+const NotFound = lazy(() => import("./pages/NotFound.jsx"));
+
+const DashboardHome = lazy(() => import("./pages/dashboard/DashboardHome.jsx"));
+const CandidatesAll = lazy(() => import("./pages/dashboard/CandidatesAll.jsx"));
+const HiringPipeline = lazy(() => import("./pages/dashboard/HiringPipeline.jsx"));
+const AIInterviews = lazy(() => import("./pages/dashboard/AIInterviews.jsx"));
+const Reports = lazy(() => import("./pages/dashboard/Reports.jsx"));
+const SubscriptionPage = lazy(() => import("./pages/dashboard/SubscriptionPage.jsx"));
+const Notifications = lazy(() => import("./pages/dashboard/Notifications.jsx"));
+const SettingsPage = lazy(() => import("./pages/dashboard/SettingsPage.jsx"));
+const RubricEditor = lazy(() => import("./pages/dashboard/RubricEditor.jsx"));
+const PaperEditor = lazy(() => import("./pages/dashboard/PaperEditor.jsx"));
+const AssessmentTracker = lazy(() => import("./pages/dashboard/AssessmentTracker.jsx"));
+const ScoreExplanation = lazy(() => import("./pages/dashboard/ScoreExplanation.jsx"));
+const ReviewQueue = lazy(() => import("./pages/dashboard/ReviewQueue.jsx"));
+const AuditTrail = lazy(() => import("./pages/dashboard/AuditTrail.jsx"));
+
+const PlatformConsole = lazy(() => import("./pages/platform/PlatformConsole.jsx"));
+
+// A spinner announces "something is happening"; this announces the shape of
+// what is arriving, which is the difference between a wait that feels like a
+// stall and one that feels like a page.
+function RouteFallback() {
+  return (
+    <div role="status" aria-label="Loading page" className="mx-auto w-full max-w-5xl px-4 py-10">
+      <div aria-hidden="true">
+        <div className="h-7 w-56 animate-pulse rounded-lg bg-slate-200" />
+        <div className="mt-3 h-4 w-80 animate-pulse rounded bg-slate-200/70" />
+        <div className="mt-8 h-64 w-full animate-pulse rounded-2xl bg-slate-200/60" />
+      </div>
+    </div>
+  );
+}
 
 // Phase 13 fix: the dashboard shell is now ONE layout route. Previously "/"
 // rendered its own <DashboardShell> while "/*" rendered a second one, so
@@ -51,7 +78,11 @@ function ShellLayout() {
   return (
     <RequireAdmin>
       <DashboardShell>
-        <Outlet />
+        {/* Inside the shell, so a route chunk arriving late swaps only the page
+            body — the sidebar, header and notification socket stay put. */}
+        <Suspense fallback={<RouteFallback />}>
+          <Outlet />
+        </Suspense>
       </DashboardShell>
     </RequireAdmin>
   );
@@ -65,52 +96,54 @@ export default function App() {
   return (
     <>
       <SmoothScroll allowRoot={!isAuthenticated} />
-      <Routes>
-      <Route path="/welcome" element={<Landing />} />
-      <Route path="/demo" element={<Demo />} />
-      <Route path="/register-company" element={<RegisterCompany />} />
-      <Route path="/verify-otp" element={<VerifyCompanyOtp />} />
-      <Route path="/pricing" element={<Pricing />} />
-      <Route path="/checkout" element={<Checkout />} />
-      <Route path="/payment-success" element={<PaymentSuccess />} />
-      <Route path="/payment-failed" element={<PaymentFailed />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password/:token" element={<ResetPassword />} />
-      {/* Phase 16 — platform console (superadmin only; a distinct top-level
-          route so it never nests inside the tenant dashboard shell). */}
-      <Route
-        path="/platform"
-        element={
-          <RequirePlatform>
-            <PlatformConsole />
-          </RequirePlatform>
-        }
-      />
-      <Route path="/" element={<ShellLayout />}>
-        <Route index element={<DashboardHome />} />
-        <Route path="jobs" element={<JobList />} />
-        <Route path="jobs/new" element={<JobForm />} />
-        <Route path="jobs/:id/edit" element={<JobForm />} />
-        <Route path="jobs/:id/rubric" element={<RubricEditor />} />
-        <Route path="jobs/:id/assessment" element={<PaperEditor />} />
-        <Route path="jobs/:id/assessments" element={<AssessmentTracker />} />
-        <Route path="jobs/:id/candidates" element={<CandidateList />} />
-        <Route path="candidates" element={<CandidatesAll />} />
-        <Route path="pipeline" element={<HiringPipeline />} />
-        <Route path="candidates/:id" element={<CandidateDetail />} />
-        <Route path="candidates/:id/score" element={<ScoreExplanation />} />
-        <Route path="candidates/:id/interview-report" element={<InterviewReport />} />
-        <Route path="review-queue" element={<ReviewQueue />} />
-        <Route path="ai-interviews" element={<AIInterviews />} />
-        <Route path="reports" element={<Reports />} />
-        <Route path="subscription" element={<SubscriptionPage />} />
-        <Route path="notifications" element={<Notifications />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="audit-trail" element={<AuditTrail />} />
-        <Route path="*" element={<NotFound />} />
-      </Route>
-      </Routes>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/welcome" element={<Landing />} />
+          <Route path="/demo" element={<Demo />} />
+          <Route path="/register-company" element={<RegisterCompany />} />
+          <Route path="/verify-otp" element={<VerifyCompanyOtp />} />
+          <Route path="/pricing" element={<Pricing />} />
+          <Route path="/checkout" element={<Checkout />} />
+          <Route path="/payment-success" element={<PaymentSuccess />} />
+          <Route path="/payment-failed" element={<PaymentFailed />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password/:token" element={<ResetPassword />} />
+          {/* Phase 16 — platform console (superadmin only; a distinct top-level
+              route so it never nests inside the tenant dashboard shell). */}
+          <Route
+            path="/platform"
+            element={
+              <RequirePlatform>
+                <PlatformConsole />
+              </RequirePlatform>
+            }
+          />
+          <Route path="/" element={<ShellLayout />}>
+            <Route index element={<DashboardHome />} />
+            <Route path="jobs" element={<JobList />} />
+            <Route path="jobs/new" element={<JobForm />} />
+            <Route path="jobs/:id/edit" element={<JobForm />} />
+            <Route path="jobs/:id/rubric" element={<RubricEditor />} />
+            <Route path="jobs/:id/assessment" element={<PaperEditor />} />
+            <Route path="jobs/:id/assessments" element={<AssessmentTracker />} />
+            <Route path="jobs/:id/candidates" element={<CandidateList />} />
+            <Route path="candidates" element={<CandidatesAll />} />
+            <Route path="pipeline" element={<HiringPipeline />} />
+            <Route path="candidates/:id" element={<CandidateDetail />} />
+            <Route path="candidates/:id/score" element={<ScoreExplanation />} />
+            <Route path="candidates/:id/interview-report" element={<InterviewReport />} />
+            <Route path="review-queue" element={<ReviewQueue />} />
+            <Route path="ai-interviews" element={<AIInterviews />} />
+            <Route path="reports" element={<Reports />} />
+            <Route path="subscription" element={<SubscriptionPage />} />
+            <Route path="notifications" element={<Notifications />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="audit-trail" element={<AuditTrail />} />
+            <Route path="*" element={<NotFound />} />
+          </Route>
+        </Routes>
+      </Suspense>
     </>
   );
 }

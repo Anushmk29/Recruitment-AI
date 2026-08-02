@@ -64,7 +64,7 @@ const LOOP = [
   {
     stage: "1.0",
     title: "The rubric is frozen before anyone is scored",
-    body: "A job description is compiled once into a versioned rubric — must-haves, nice-to-haves, disqualifiers, weights — and a recruiter approves it. Every candidate for that role is then measured against the identical frozen rubric, which is what makes comparing two of them legitimate and a bias audit possible at all.",
+    body: "A job description is compiled once into a versioned rubric — explicit criteria, each set to Critical, Important, Helpful or Bonus — and a recruiter approves it. Nobody types a percentage: the word sets the weight, so every number in the rubric traces to a named tier rather than someone's guess. Every candidate for that role is then measured against the identical frozen rubric, which is what makes comparing two of them legitimate and a bias audit possible at all.",
     Artifact: RubricPanel,
   },
   {

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Users, Pencil, Trash2, UploadCloud, Briefcase, Link2, Globe2, X } from "lucide-react";
+import { Plus, Users, Pencil, Trash2, UploadCloud, Briefcase, Link2, Globe2 } from "lucide-react";
 import api from "../api/client.js";
 import { useToast } from "../components/ui/Toast.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
+import Modal from "../components/ui/Modal.jsx";
 import PageHeader from "../components/ui/PageHeader.jsx";
 import { TableWrap, Table, THead, TH, TBody, TR, TD, RowAction } from "../components/ui/DataTable.jsx";
 
@@ -90,15 +91,8 @@ function PublishBoardsModal({ job, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={onClose}>
-      <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">Publish "{job.title}" to boards</h3>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-600" aria-label="Close">
-            <X className="h-4.5 w-4.5" />
-          </button>
-        </div>
-
+    <Modal open onClose={onClose} title={`Publish "${job.title}" to boards`} size="lg">
+      <>
         {!boards ? (
           <Skeleton className="h-32 w-full" />
         ) : (
@@ -156,8 +150,8 @@ function PublishBoardsModal({ job, onClose }) {
             Publish Selected
           </Button>
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }
 

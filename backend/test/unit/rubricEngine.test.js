@@ -65,6 +65,52 @@ test("an all-disqualifier rubric carries zero weight everywhere", () => {
   for (const c of criteria) assert.equal(c.weight, 0);
 });
 
+// ---- Importance tiers (the recruiter picks a word, code picks the number) ----
+
+test("applyImportance derives kind and relative weight from the tier word — nothing else sets them", () => {
+  for (const tier of engine.IMPORTANCE_TIERS) {
+    const c = engine.applyImportance({ importance: tier.key, kind: "nonsense", weight: 999 });
+    assert.equal(c.kind, tier.kind);
+    assert.equal(c.weight, tier.multiplier);
+  }
+});
+
+test("the ladder is geometric: Critical is worth exactly 2 Important, 4 Helpful, 8 Bonus", () => {
+  const m = Object.fromEntries(engine.IMPORTANCE_TIERS.map((t) => [t.key, t.multiplier]));
+  assert.equal(m.critical, m.important * 2);
+  assert.equal(m.important, m.helpful * 2);
+  assert.equal(m.helpful, m.bonus * 2);
+});
+
+test("a Critical criterion ends up weighing exactly twice an Important one after normalisation", () => {
+  const criteria = [
+    engine.applyImportance({ id: "c1", importance: "critical" }),
+    engine.applyImportance({ id: "c2", importance: "important" }),
+    engine.applyImportance({ id: "c3", importance: "bonus" }),
+  ];
+  engine.normaliseWeights(criteria);
+  assert.ok(Math.abs(criteria[0].weight - 2 * criteria[1].weight) < 1e-12);
+  assert.ok(Math.abs(criteria[0].weight - 8 / 13) < 1e-12);
+  assert.ok(Math.abs(criteria.reduce((s, c) => s + c.weight, 0) - 1) < 1e-12);
+});
+
+test("importanceOf falls back to the authored kind for pre-tier criteria, and refuses to rank a gate", () => {
+  assert.equal(engine.importanceOf({ importance: "helpful", kind: "must_have" }), "helpful", "an explicit tier always wins");
+  assert.equal(engine.importanceOf({ kind: "must_have" }), "critical");
+  assert.equal(engine.importanceOf({ kind: "nice_to_have" }), "helpful");
+  assert.equal(engine.importanceOf({ kind: "disqualifier" }), null);
+  assert.equal(engine.importanceOf({ importance: "made_up" }), null);
+});
+
+test("thresholdPresetKey names a preset pair and admits when a pair is custom", () => {
+  assert.equal(engine.thresholdPresetKey({ advance: 60, review: 45 }), "balanced");
+  assert.equal(engine.thresholdPresetKey({ advance: 80, review: 65 }), "very_selective");
+  assert.equal(engine.thresholdPresetKey({ advance: 63, review: 41 }), "custom");
+  for (const p of engine.THRESHOLD_PRESETS) {
+    assert.ok(p.review < p.advance, `preset ${p.key} must leave a review band — ambiguity has to reach a human`);
+  }
+});
+
 // ---- JD quality detectors (acceptance gate: bad-JD fixture) ------------------
 
 const BAD_JD = [
@@ -135,18 +181,43 @@ test("model flags survive ONLY with an allow-listed code and a verbatim citation
 
 test("sanitiseAiCriteria drops invalid entries, never repairs them into things the model didn't say", () => {
   const out = engine.sanitiseAiCriteria([
-    { label: "Node.js APIs", kind: "must_have", relativeImportance: 80, rationale: "JD requires it.", evidenceTypes: ["skill", "bogus"], acceptableEvidence: ["built APIs", ""], probeHint: "Ask about routing.", seniorityFloor: "mid" },
-    { label: "", kind: "must_have", relativeImportance: 50, rationale: "No label." }, // dropped
-    { label: "No rationale", kind: "must_have", relativeImportance: 50, rationale: "" }, // dropped
-    { label: "Bad kind", kind: "critical_thing", relativeImportance: 50, rationale: "x" }, // dropped
-    { label: "Degree", kind: "nice_to_have", relativeImportance: -10, rationale: "Listed as preferred." }, // importance clamps to 0
+    { label: "Node.js APIs", importance: "critical", rationale: "JD requires it.", evidenceTypes: ["skill", "bogus"], acceptableEvidence: ["built APIs", ""], probeHint: "Ask about routing.", seniorityFloor: "mid" },
+    { label: "", importance: "critical", rationale: "No label." }, // dropped
+    { label: "No rationale", importance: "critical", rationale: "" }, // dropped
+    { label: "Unrankable", importance: "extremely_critical", rationale: "x" }, // dropped: no tier, no legacy kind
+    { label: "Degree", importance: "bonus", rationale: "Listed as preferred." },
   ]);
   assert.equal(out.length, 2);
   assert.deepEqual(out.map((c) => c.id), ["c1", "c2"]);
   assert.deepEqual(out[0].evidenceTypes, ["skill"], "unknown evidence types are filtered");
   assert.deepEqual(out[0].acceptableEvidence, ["built APIs"]);
-  const sum = out.filter((c) => c.kind !== "disqualifier").reduce((s, c) => s + c.weight, 0);
+  assert.equal(out[0].kind, "must_have", "kind is derived from the tier, not taken from the model");
+  const sum = out.reduce((s, c) => s + c.weight, 0);
   assert.ok(Math.abs(sum - 1) < 1e-12);
+});
+
+test("sanitiseAiCriteria ignores any number the model volunteers — only the tier word sets the weight", () => {
+  const out = engine.sanitiseAiCriteria([
+    { label: "A", importance: "bonus", relativeImportance: 100, weight: 0.99, rationale: "r" },
+    { label: "B", importance: "critical", relativeImportance: 1, weight: 0.01, rationale: "r" },
+  ]);
+  assert.ok(out[1].weight > out[0].weight, "the word wins over the number, every time");
+  assert.ok(Math.abs(out[1].weight - 8 / 9) < 1e-12);
+});
+
+test("a pre-tier proposal still lands on the ladder, but a proposed knock-out gate is dropped", () => {
+  const out = engine.sanitiseAiCriteria([
+    { label: "Legacy must", kind: "must_have", relativeImportance: 90, rationale: "r" },
+    { label: "Legacy must, softer", kind: "must_have", relativeImportance: 30, rationale: "r" },
+    { label: "Legacy nice", kind: "nice_to_have", relativeImportance: 60, rationale: "r" },
+    { label: "Legacy nice, minor", kind: "nice_to_have", relativeImportance: 5, rationale: "r" },
+    { label: "No right to work", kind: "disqualifier", relativeImportance: 0, rationale: "r" }, // dropped
+  ]);
+  assert.deepEqual(
+    out.map((c) => c.importance),
+    ["critical", "important", "helpful", "bonus"]
+  );
+  assert.equal(out.some((c) => c.kind === "disqualifier"), false, "knock-out gates are no longer authored");
 });
 
 // ---- Deterministic fallback (acceptance gate: usable + labelled) -------------
@@ -165,7 +236,8 @@ test("ACCEPTANCE GATE: with no LLM, the fallback drafts a usable, labelled rubri
   assert.equal(criteria.length, 4); // 2 skills + experience + education
   for (const c of criteria) {
     assert.ok(c.label && c.rationale, "every criterion carries a label and a non-empty rationale");
-    assert.ok(engine.CRITERION_KINDS.includes(c.kind));
+    assert.ok(engine.AUTHORABLE_KINDS.includes(c.kind), "the fallback never drafts a knock-out gate");
+    assert.ok(engine.IMPORTANCE_KEYS.includes(c.importance), "every drafted criterion carries a tier word");
   }
   const sum = criteria.reduce((s, c) => s + c.weight, 0);
   assert.ok(Math.abs(sum - 1) < 1e-12);

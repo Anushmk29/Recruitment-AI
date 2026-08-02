@@ -57,7 +57,8 @@ export function TD({ children, align = "left", className = "" }) {
 
 /**
  * Icon-only row action. The previous inline version had no accessible name, no
- * focus ring, and a 16px hit target — below the 44px floor on touch.
+ * focus ring, and a 16px hit target. 36px on a mouse keeps a row scannable;
+ * `tap-target` takes it to 44px wherever the pointer is coarse.
  */
 export function RowAction({ as: Component = "button", label, icon: Icon, tone = "brand", className = "", ...props }) {
   const tones = {
@@ -69,7 +70,7 @@ export function RowAction({ as: Component = "button", label, icon: Icon, tone = 
     <Component
       title={label}
       aria-label={label}
-      className={`inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors duration-150 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 ${tones[tone]} ${className}`}
+      className={`tap-target inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors duration-150 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 ${tones[tone]} ${className}`}
       {...props}
     >
       <Icon className="h-4 w-4" aria-hidden="true" />

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import api from "../api/client.js";
 import { authHeader } from "./portalAuth.js";
 import { MIC_CONSTRAINTS } from "./audioIsolation.js";
+import { classify, detectFinish, normalizeEndpointing } from "./endpointing.js";
 
 // Real-time voice pipeline for the AI interview.
 //
@@ -14,8 +15,12 @@ import { MIC_CONSTRAINTS } from "./audioIsolation.js";
 //    server-side later.
 //  - Turn-taking is hands-free AND conversational: silence no longer ends the turn on a timer.
 //    It first buys the candidate reassurance out loud ("take your time — I'm here") and a much
-//    longer window, and only becomes the end of the turn once that patience is spent. A manual
+//    longer window; once that patience is spent the interviewer ASKS ("anything you'd like to
+//    add?") rather than simply stopping, and only then does silence end the turn. A manual
 //    "Done" override is always available.
+//    The asking step exists because candidates reported the timer-only ending as being cut off
+//    mid-thought — which it was. It costs a few seconds and makes the end of a turn the
+//    candidate's decision instead of a countdown's.
 //
 // What the interviewer may SAY is never decided here. The phrases and the timings arrive from
 // the server (backend/utils/backchannel.js — a fixed, human-approved bank); this file owns only
@@ -42,12 +47,24 @@ function normalizePolicy(c) {
   const acknowledgements = Array.isArray(c?.acknowledgements) ? c.acknowledgements.filter(Boolean) : [];
   const repeatTriggers = Array.isArray(c?.repeatTriggers) ? c.repeatTriggers.filter(Boolean) : [];
   const repeatPreambles = Array.isArray(c?.repeatPreambles) ? c.repeatPreambles.filter(Boolean) : [];
+  const confirmations = Array.isArray(c?.confirmations) ? c.confirmations.filter(Boolean) : [];
+  const finishTriggers = Array.isArray(c?.finishTriggers) ? c.finishTriggers.filter(Boolean) : [];
   const num = (v, fallback) => (Number(v) > 0 ? Number(v) : fallback);
   return {
     reassurances,
     acknowledgements,
     repeatTriggers,
     repeatPreambles,
+    confirmations,
+    confirmGraceMs: num(c?.confirmGraceMs, 5000),
+    // How long to keep listening after the provider reports silence, decided from the SHAPE of
+    // what was just said rather than from a fixed timer. See endpointing.js.
+    endpointing: normalizeEndpointing(c?.endpointing),
+    // No triggers from the server ⇒ explicit-finish detection is off, exactly like repeat: what
+    // counts as "I'm done" is server-owned and the client never invents it.
+    finishTriggers,
+    finishMinAnswerWords: Math.max(0, Number(c?.finishMinAnswerWords ?? 12)),
+    finishMaxTrailingWords: Math.max(0, Number(c?.finishMaxTrailingWords ?? 2)),
     maxReassurancesPerTurn: reassurances.length ? Math.max(0, Number(c?.maxReassurancesPerTurn ?? 2)) : 0,
     postReassuranceGraceMs: num(c?.postReassuranceGraceMs, 9000),
     initialSilenceMs: num(c?.initialSilenceMs, 6000),
@@ -162,6 +179,10 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
 
   const policyRef = useRef(NO_POLICY);
   const reassureRef = useRef(0); // reassurances spent on THIS turn
+  // "Anything you'd like to add?" is offered at most ONCE per turn. Asking again every time the
+  // candidate pauses would stop reading as attentive and start reading as nagging — and a turn
+  // that can never end is worse than one that ends slightly early.
+  const confirmedRef = useRef(false);
   const bcEventsRef = useRef([]); // backchannels played during this turn, reported on submit
   const turnCounterRef = useRef(0); // rotates phrasing across questions so it isn't robotic
   const bcCacheRef = useRef(new Map()); // phrase -> Promise<objectURL>, one synthesis per session
@@ -328,11 +349,14 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     [fetchAudioUrl, playUrl]
   );
 
-  const armSilence = useCallback((ms) => {
+  // `state` is the endpointing verdict this wait was chosen for ("holding" | "ambiguous" |
+  // "complete"), carried through so the handler that eventually fires knows whether the
+  // candidate was mid-thought or finished — and therefore whether to offer time or move on.
+  const armSilence = useCallback((ms, state = "ambiguous") => {
     if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
     graceTimerRef.current = setTimeout(() => {
       graceTimerRef.current = null;
-      handleSilenceRef.current?.();
+      handleSilenceRef.current?.(state);
     }, ms);
   }, []);
 
@@ -346,7 +370,7 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
   //
   // The budget is per TURN, not per pause: speaking again does not refill it. Otherwise a
   // candidate who pauses often would be reassured indefinitely and the turn could never end.
-  const handleSilence = useCallback(async () => {
+  const handleSilence = useCallback(async (endState = "ambiguous") => {
     const acc = sessionRef.current;
     if (!acc || endedRef.current) return;
     // A reassurance is already mid-playback. Don't stack another on top of it — the in-flight
@@ -355,7 +379,13 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     const policy = policyRef.current;
     const spokeSomething = Boolean((acc.finalText || "").trim());
 
-    if (reassureRef.current < policy.maxReassurancesPerTurn) {
+    // The classifier says this answer FINISHED — a completed clause, the voice falling away.
+    // Offering "take your time" now would be answering a question they did not ask, and it is
+    // the single thing that makes an interviewer feel slow: the candidate is done, and the
+    // machine is still reassuring them. Skip straight to the confirmation.
+    const finished = endState === "complete" && spokeSomething;
+
+    if (!finished && reassureRef.current < policy.maxReassurancesPerTurn) {
       const index = reassureRef.current;
       reassureRef.current += 1;
       setEndingSoon(false);
@@ -364,7 +394,7 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       bcEventsRef.current.push({ kind: "reassure", phrase, at: Date.now() });
       if (endedRef.current || !sessionRef.current) return;
       // Having just told the candidate to take their time, wait long enough to mean it.
-      armSilence(spokeSomething ? policy.postReassuranceGraceMs : policy.initialSilenceMs * 2);
+      armSilence(spokeSomething ? policy.postReassuranceGraceMs : policy.initialSilenceMs * 2, endState);
       return;
     }
 
@@ -372,6 +402,32 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     // that was never started must NOT be auto-submitted as empty. That candidate keeps the mic
     // and the visible "Done" button for as long as they need, and is not nagged further.
     if (!spokeSomething) return;
+
+    // Ask before ending rather than just ending. Candidates report the old behaviour as being
+    // cut off — the turn stopped on a timer while they were still gathering the rest of their
+    // answer. Asking hands the decision back to them, and any new speech cancels the ending
+    // outright (the socket handler clears this timer on the next transcript). It costs a few
+    // seconds instead of the fixed minute-long wait that would otherwise be needed to feel
+    // unhurried, and unlike a silent countdown the candidate can hear it happening.
+    const confirmations = policy.confirmations;
+    if (confirmations.length && !confirmedRef.current) {
+      confirmedRef.current = true;
+      const phrase = confirmations[turnCounterRef.current % confirmations.length];
+      await playBackchannel(phrase);
+      bcEventsRef.current.push({ kind: "confirm", phrase, at: Date.now() });
+      if (endedRef.current || !sessionRef.current) return;
+      setEndingSoon(true);
+      if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
+      graceTimerRef.current = setTimeout(() => {
+        graceTimerRef.current = null;
+        if (!endedRef.current) {
+          endedRef.current = true;
+          autoEndRef.current?.();
+        }
+      }, policy.confirmGraceMs);
+      return;
+    }
+
     setEndingSoon(true);
     if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
     graceTimerRef.current = setTimeout(() => {
@@ -483,6 +539,7 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
     setEndingSoon(false);
     endedRef.current = false;
     reassureRef.current = 0;
+    confirmedRef.current = false;
     bcEventsRef.current = [];
     turnCounterRef.current += 1;
     // Clears any interviewer audio still playing before the mic opens. On the barge-in path the
@@ -498,6 +555,7 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       ...policyRef.current.reassurances,
       ...policyRef.current.acknowledgements,
       ...policyRef.current.repeatPreambles,
+      ...policyRef.current.confirmations,
     ]);
 
     // Echo cancellation requested explicitly, not left to the browser default. It is the reason
@@ -564,10 +622,20 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       let msg;
       try { msg = JSON.parse(evt.data); } catch { return; }
       if (msg.type === "UtteranceEnd") {
-        // The provider has seen utterance_end_ms of silence after speech. Don't submit — hand it
-        // to the conversational silence handler, which offers time first and only ends the turn
-        // once it has run out of patience to offer.
-        if (!endedRef.current) handleSilenceRef.current?.();
+        // The provider has seen a short burst of silence after speech. That is a PROMPT to
+        // decide, not the decision: classify what was just said and pick the waiting window from
+        // its shape. Trailing on "and…" or a filler waits generously; a completed sentence with
+        // the voice falling away responds in under a second. Replaces the flat timer that was
+        // cutting candidates off mid-thought (and, on finished answers, leaving them in silence).
+        if (endedRef.current) return;
+        const verdict = classify(acc.finalText || acc.lastInterim, {
+          energy: acc.energy,
+          policy: policyRef.current.endpointing,
+        });
+        // Recorded so "why did my turn end there?" is answerable from the session afterwards.
+        acc.endOfTurn = { state: verdict.state, reason: verdict.reason };
+        setEndingSoon(false);
+        armSilence(verdict.waitMs, verdict.state);
         return;
       }
       if (msg.type !== "Results") return;
@@ -607,11 +675,35 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
           }
         }
 
+        const policy = policyRef.current;
+
+        // "That's my answer." The fastest end-of-turn signal there is, and the pipeline used to
+        // ignore it entirely — a candidate who said they were done then sat through a timer they
+        // could not see. Honoured only as the tail of a substantive answer (see finishIntent.js),
+        // and it ends the turn outright: no reassurance, no "anything to add?", no countdown.
+        // They already answered that question.
+        if (policy.finishTriggers.length && !endedRef.current) {
+          const fin = detectFinish(acc.finalText, {
+            triggers: policy.finishTriggers,
+            minAnswerWords: policy.finishMinAnswerWords,
+            maxTrailingWords: policy.finishMaxTrailingWords,
+          });
+          if (fin.honour) {
+            acc.endOfTurn = { state: "complete", reason: "candidate_said_finished", trigger: fin.matchedTrigger };
+            if (graceTimerRef.current) {
+              clearTimeout(graceTimerRef.current);
+              graceTimerRef.current = null;
+            }
+            endedRef.current = true;
+            autoEndRef.current?.();
+            return;
+          }
+        }
+
         // "Sorry, could you repeat that?" — checked on FINAL transcripts only, never interim: a
         // partial can be revised, and acting on one risks discarding an answer that was never a
         // request. Only honoured while the candidate has said nothing substantive yet; past that
         // they are mid-answer and we leave their words alone.
-        const policy = policyRef.current;
         if (
           policy.maxRepeatsPerQuestion > 0 &&
           repeatsRef.current < policy.maxRepeatsPerQuestion &&
@@ -761,6 +853,10 @@ export function useVoiceInterview({ onAutoEndOfTurn } = {}) {
       // A condition of the interview, not a signal about the candidate — the server records it on
       // the question turn and no scorer ever reads it.
       repeatCount: repeatsRef.current,
+      // Why this turn ended: the endpointing verdict, or that the candidate said so outright.
+      // Recorded so "it cut me off" is answerable from the session rather than from memory.
+      // Never a scoring input — how someone paces their speech is not a measure of competence.
+      endOfTurn: acc?.endOfTurn || { state: "manual", reason: "candidate_pressed_done" },
       // Whether the question was actually finished before the candidate started answering. The
       // server uses this to decide whether the question really covered its claim-probe.
       questionDelivery: { ...deliveryRef.current },

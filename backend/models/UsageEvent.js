@@ -21,7 +21,7 @@ const usageEventSchema = new mongoose.Schema(
     // finish applying.
     kind: {
       type: String,
-      enum: ["plan", "question", "evaluation", "rubric_compile", "claim_extract", "match", "probe_gen", "verdict", "report", "stt", "tts", "autofill", "other"],
+      enum: ["plan", "question", "evaluation", "rubric_compile", "question_set_compile", "claim_extract", "match", "probe_gen", "verdict", "report", "stt", "tts", "autofill", "other"],
       default: "other",
     },
     provider: { type: String, trim: true },

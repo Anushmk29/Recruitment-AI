@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import Lenis from "lenis";
 import "lenis/dist/lenis.css";
 import { useReducedMotion } from "./useReducedMotion.js";
 
@@ -42,19 +41,32 @@ export default function SmoothScroll({ allowRoot = false }) {
   useEffect(() => {
     if (!active) return undefined;
 
-    const lenis = new Lenis({
-      autoRaf: true,
-      duration: 1.1,
-      // Exponential ease-out — the decelerate-into-place curve. No overshoot:
-      // bounce on scroll reads as a toy, and this product is not one.
-      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
-      smoothWheel: true,
-      // Native touch scrolling is already smooth and already has momentum the
-      // user's OS tuned. Overriding it makes phones feel laggy.
-      syncTouch: false,
+    let lenis;
+    let cancelled = false;
+
+    // Loaded on demand rather than imported at module scope. The engine is
+    // marketing-surface only by rule (2 above), so a signed-in recruiter should
+    // never download it — and with a static import they did, on every page of
+    // the dashboard, for a behaviour that is switched off there.
+    import("lenis").then(({ default: Lenis }) => {
+      if (cancelled) return;
+      lenis = new Lenis({
+        autoRaf: true,
+        duration: 1.1,
+        // Exponential ease-out — the decelerate-into-place curve. No overshoot:
+        // bounce on scroll reads as a toy, and this product is not one.
+        easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+        smoothWheel: true,
+        // Native touch scrolling is already smooth and already has momentum the
+        // user's OS tuned. Overriding it makes phones feel laggy.
+        syncTouch: false,
+      });
     });
 
-    return () => lenis.destroy();
+    return () => {
+      cancelled = true;
+      lenis?.destroy();
+    };
   }, [active]);
 
   // Anchor links (#how-it-works) must still land when Lenis owns the scroll.

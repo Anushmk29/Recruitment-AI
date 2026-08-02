@@ -133,9 +133,17 @@ async function compile(job, { forceFallback = false } = {}) {
 }
 
 /**
- * Apply recruiter edits to a DRAFT: criteria (relabel, rekind, reweight, add,
- * remove) and thresholds. Weights are re-normalised in code after every edit —
- * the UI's sliders express relative importance, never final arithmetic.
+ * Apply recruiter edits to a DRAFT: criteria (relabel, retier, add, remove) and
+ * thresholds.
+ *
+ * The client sends an importance WORD and never a weight — a client-supplied
+ * `weight` is ignored outright, so there is no request shape in which a number
+ * chosen outside this file can become part of a candidate's score. The tier is
+ * turned into a relative multiplier here and re-normalised on every edit.
+ *
+ * Legacy knock-out gates (`kind: "disqualifier"`, compiled before importance
+ * tiers) are carried through untouched so an in-flight draft keeps meaning what
+ * it meant — they can be deleted, never created.
  */
 async function updateDraft(rubricId, companyId, changes = {}) {
   const rubric = await RoleRubric.findOne({ _id: rubricId, company: companyId });
@@ -150,14 +158,16 @@ async function updateDraft(rubricId, companyId, changes = {}) {
       if (!raw || typeof raw !== "object") continue;
       const label = typeof raw.label === "string" ? raw.label.trim() : "";
       const rationale = typeof raw.rationale === "string" ? raw.rationale.trim() : "";
-      if (!label || !rationale || !engine.CRITERION_KINDS.includes(raw.kind)) {
-        throw httpError(400, "Every criterion needs a label, a non-empty rationale, and a valid kind");
+      if (!label || !rationale) {
+        throw httpError(400, "Every criterion needs a label and a reason it exists");
       }
-      cleaned.push({
+      const isLegacyGate = raw.kind === "disqualifier";
+      if (!isLegacyGate && !engine.IMPORTANCE_KEYS.includes(raw.importance)) {
+        throw httpError(400, `Every criterion needs an importance of: ${engine.IMPORTANCE_KEYS.join(", ")}`);
+      }
+      const base = {
         id: `c${cleaned.length + 1}`,
         label,
-        kind: raw.kind,
-        weight: Math.max(0, Number(raw.weight) || 0),
         rationale,
         evidenceTypes: (Array.isArray(raw.evidenceTypes) ? raw.evidenceTypes : []).filter((t) => engine.EVIDENCE_TYPES.includes(t)),
         acceptableEvidence: (Array.isArray(raw.acceptableEvidence) ? raw.acceptableEvidence : [])
@@ -165,12 +175,22 @@ async function updateDraft(rubricId, companyId, changes = {}) {
           .map((s) => s.trim()),
         probeHint: typeof raw.probeHint === "string" ? raw.probeHint.trim() : "",
         seniorityFloor: typeof raw.seniorityFloor === "string" ? raw.seniorityFloor.trim() : "",
-      });
+      };
+      cleaned.push(
+        isLegacyGate
+          ? { ...base, kind: "disqualifier", weight: 0 }
+          : engine.applyImportance({ ...base, importance: raw.importance })
+      );
     }
     rubric.criteria = engine.normaliseWeights(cleaned);
   }
 
-  if (changes.thresholds && typeof changes.thresholds === "object") {
+  // Selectivity is normally a named preset too, so nobody has to invent a
+  // cut-off. Explicit numbers stay accepted for the "custom" escape hatch.
+  const preset = engine.THRESHOLD_PRESETS.find((p) => p.key === changes.thresholdPreset);
+  if (preset) {
+    rubric.thresholds = { advance: preset.advance, review: preset.review };
+  } else if (changes.thresholds && typeof changes.thresholds === "object") {
     const advance = Math.min(100, Math.max(0, Number(changes.thresholds.advance)));
     const review = Math.min(100, Math.max(0, Number(changes.thresholds.review)));
     if (!Number.isFinite(advance) || !Number.isFinite(review)) throw httpError(400, "Thresholds must be numbers between 0 and 100");

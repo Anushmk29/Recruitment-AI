@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -22,6 +22,7 @@ import { clearAdminAuth, getAdminRefreshToken } from "../../auth/adminAuth.js";
 import api, { getViewAsCompany, setViewAsCompany } from "../../api/client.js";
 import { CompanyDataProvider, useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { NotificationProvider } from "../../context/NotificationContext.jsx";
+import Modal from "../ui/Modal.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 
 const NAV_ITEMS = [
@@ -146,9 +147,43 @@ function ShellInner({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { pathname } = useLocation();
   const viewAs = getViewAsCompany();
+  const mainRef = useRef(null);
+  const firstRender = useRef(true);
+
+  // The drawer is a dialog that locks body scroll while it is open. If the
+  // viewport crosses into `lg` while it is open, its own close button goes
+  // display:none with it — and the lock would outlive the only way to release
+  // it. Close on the breakpoint instead of hiding the drawer at it.
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const close = () => mq.matches && setMobileOpen(false);
+    close();
+    mq.addEventListener("change", close);
+    return () => mq.removeEventListener("change", close);
+  }, [mobileOpen]);
+
+  // Route change moves focus into the new page. Without this, following a link
+  // *inside* the page unmounts the focused element, focus falls back to <body>,
+  // and the next Tab restarts at the top of the document — past the whole
+  // sidebar — on a surface built around constant navigation. Skipped on first
+  // render so arriving at the app does not steal focus from the address bar.
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    mainRef.current?.focus({ preventScroll: true });
+  }, [pathname]);
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-xl focus:bg-brand-600 focus:px-4 focus:py-2.5 focus:text-sm focus:font-semibold focus:text-white focus:shadow-deep"
+      >
+        Skip to main content
+      </a>
       {/* Phase 16.5 — view-as banner: platform staff looking at a tenant.
           Read-only is enforced SERVER-side; this banner is honesty, not the guard. */}
       {viewAs && (
@@ -173,28 +208,39 @@ function ShellInner({ children }) {
         <SidebarContent />
       </aside>
 
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="absolute inset-0 bg-slate-900/50" onClick={() => setMobileOpen(false)} />
-          <aside className="absolute inset-y-0 left-0 flex w-64 flex-col bg-slate-900">
-            <button
-              className="absolute right-3 top-4 rounded-lg p-1 text-slate-300 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400"
-              onClick={() => setMobileOpen(false)}
-              aria-label="Close menu"
-            >
-              <X className="h-5 w-5" />
-            </button>
-            <SidebarContent onNavigate={() => setMobileOpen(false)} />
-          </aside>
-        </div>
-      )}
+      <Modal
+        open={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        placement="left"
+        label="Navigation menu"
+        panelClassName="w-64 bg-slate-900"
+      >
+        <button
+          className="absolute right-3 top-4 inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400"
+          onClick={() => setMobileOpen(false)}
+          aria-label="Close menu"
+        >
+          <X className="h-5 w-5" aria-hidden="true" />
+        </button>
+        <SidebarContent onNavigate={() => setMobileOpen(false)} />
+      </Modal>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopNav onMenuClick={() => setMobileOpen(true)} />
         {/* Keyed on the route so every dashboard screen gets the same quiet
             entrance — one place, twenty pages. Reduced motion neutralises the
             keyframe in index.css rather than here. */}
-        <main key={pathname} data-page-enter="" className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <main
+          key={pathname}
+          ref={mainRef}
+          id="main-content"
+          // tabIndex -1 makes this a programmatic focus target for the skip link
+          // and the route-change effect; it never enters the tab order itself,
+          // so the outline is suppressed rather than shown on a whole region.
+          tabIndex={-1}
+          data-page-enter=""
+          className="flex-1 px-4 py-6 focus:outline-none sm:px-6 lg:px-8"
+        >
           {children}
         </main>
       </div>

@@ -15,6 +15,8 @@ const PersonaProfile = require("../models/PersonaProfile");
 const InterviewSession = require("../models/InterviewSession");
 const backchannel = require("../utils/backchannel");
 const repeatIntent = require("../utils/repeatIntent");
+const endpointing = require("../utils/endpointing");
+const finishIntent = require("../utils/finishIntent");
 const { PATIENCE_BOUNDS } = PersonaProfile;
 
 // The deployment default, used when a tenant has approved no persona of its own. Deliberately
@@ -81,7 +83,15 @@ async function resolveForSession(session) {
 // patience. The WORDS never come from the persona (utils/backchannel.js owns those, checked at
 // boot for evaluative language) — only how long the interviewer is willing to wait.
 function conversationPolicy(persona) {
-  const base = { ...backchannel.clientPolicy(), ...repeatIntent.clientPolicy() };
+  const base = {
+    ...backchannel.clientPolicy(),
+    ...repeatIntent.clientPolicy(),
+    // When a turn has ENDED (utils/endpointing) and when the candidate has said so outright
+    // (utils/finishIntent). Both run in the browser because only it knows in real time, and both
+    // are configured here so a tenant's interview conditions stay in one place.
+    ...endpointing.clientPolicy(),
+    ...finishIntent.clientPolicy(),
+  };
   const p = normalizePatience(persona?.patience);
   return {
     ...base,

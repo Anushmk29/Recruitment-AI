@@ -9,6 +9,7 @@ const speech = require("../services/speechService");
 const asrVocabulary = require("../services/asrVocabularyService");
 const backchannel = require("../utils/backchannel");
 const speechAuth = require("../utils/speechAuthorization");
+const speakable = require("../utils/speakable");
 const personaService = require("../services/personaService");
 const proctoring = require("../utils/proctoring");
 const evidenceClipService = require("../services/evidenceClipService");
@@ -64,6 +65,42 @@ function signSession(session) {
   );
 }
 
+// The gate between "this is the right person" and a live portal token.
+//
+// It is deliberately separate from the magic-link lookup because there are now
+// TWO independent ways to prove the same thing: possession of the mailbox (the
+// emailed token) and possession of the account whose email owns the application
+// (the candidate dashboard). Both must clear the SAME cancelled/expired checks
+// and mint the SAME session-scoped JWT, so this lives in one place — a second
+// copy of these rules would eventually disagree with this one about whether an
+// interview is still open, and that disagreement decides someone's outcome.
+//
+// `session` must arrive with `candidate` and `job` populated. Throws with a
+// `status` so both callers surface the service's own wording.
+async function openSessionForOwner(session) {
+  if (session.status === "cancelled") {
+    throw Object.assign(new Error("This interview has been cancelled"), { status: 410 });
+  }
+  if (new Date() > session.expiresAt) {
+    if (session.status !== "expired") {
+      session.status = "expired";
+      await session.save();
+    }
+    throw Object.assign(new Error("This interview link has expired"), { status: 410 });
+  }
+
+  if (!session.accessedAt) {
+    session.accessedAt = new Date();
+    await session.save();
+  }
+
+  const settings = await CompanySettings.findOne({ company: session.company }).select("proctoring");
+  return {
+    token: signSession(session),
+    session: dashboardPayload(session, session.candidate, session.job, settings),
+  };
+}
+
 async function login(req, res) {
   const { token } = req.body;
   if (!token) return res.status(400).json({ error: "token is required" });
@@ -72,23 +109,13 @@ async function login(req, res) {
     .populate("candidate")
     .populate("job");
   if (!session) return res.status(404).json({ error: "Invalid interview link" });
-  if (session.status === "cancelled") return res.status(410).json({ error: "This interview has been cancelled" });
-  if (new Date() > session.expiresAt) {
-    if (session.status !== "expired") {
-      session.status = "expired";
-      await session.save();
-    }
-    return res.status(410).json({ error: "This interview link has expired" });
-  }
 
-  if (!session.accessedAt) {
-    session.accessedAt = new Date();
-    await session.save();
+  try {
+    res.json(await openSessionForOwner(session));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    throw err;
   }
-
-  const jwtToken = signSession(session);
-  const settings = await CompanySettings.findOne({ company: session.company }).select("proctoring");
-  res.json({ token: jwtToken, session: dashboardPayload(session, session.candidate, session.job, settings) });
 }
 
 async function me(req, res) {
@@ -271,6 +298,22 @@ function sanitizeQuestionDelivery(d) {
   return { deliveredFully: false, interruptedAtChar: clampNum(d.interruptedAtChar, 0, 100000) };
 }
 
+// Why the candidate's turn ended. Recorded as a CONDITION of the interview so "it cut me off"
+// can be answered from the session rather than from memory — and, like repeatCount, structurally
+// excluded from every score: how someone paces their speech tracks nerves, accent and connection
+// quality far more closely than it tracks whether they can do the job.
+const END_OF_TURN_STATES = ["complete", "ambiguous", "holding", "manual"];
+
+function sanitizeEndOfTurn(e) {
+  if (!e || typeof e !== "object") return undefined;
+  const state = END_OF_TURN_STATES.includes(e.state) ? e.state : undefined;
+  if (!state) return undefined;
+  const reason = String(e.reason || "").trim().slice(0, 60);
+  const out = { state };
+  if (reason) out.reason = reason;
+  return out;
+}
+
 // Candidate submits an answer (typed OR the transcript of a spoken answer, with optional voice
 // metadata). Returns the next question or completion.
 async function submitAnswer(req, res) {
@@ -286,6 +329,10 @@ async function submitAnswer(req, res) {
     // to gain by lying about it. Clamped only so a bad value can't land in the document.
     repeatCount: clampNum(b.repeatCount, 0, 20),
     questionDelivery: sanitizeQuestionDelivery(b.questionDelivery),
+    // Why the turn ended (utils/endpointing.js). Trusted for the same reason as repeatCount: it
+    // feeds no score, so there is nothing to gain by lying about it. Constrained to the known
+    // states so a bad value can't land in the document.
+    endOfTurn: sanitizeEndOfTurn(b.endOfTurn),
   };
   const state = await aiInterview.submitAnswer(session, b.text, opts);
 
@@ -516,14 +563,21 @@ async function voiceSpeak(req, res) {
     }
   }
 
+  // Written form -> spoken form, AFTER authorization and never before it: the authored text is
+  // what gets checked and what stays on the record, and this is only how it is pronounced. A
+  // question reading "5+ years of CI/CD" is clear in print and unintelligible aloud, which is
+  // what candidates report as an unclear voice. See utils/speakable.js.
+  const spoken = speakable.toSpeakable(verdict.spoken);
+
   // Speak in the session's persona voice, not the deployment default (services/personaService).
   const persona = await personaService.resolveForSession(session);
-  const { audio, contentType, model } = await speech.synthesize(req.body?.text, { voice: persona.voice.model });
+  const { audio, contentType, model } = await speech.synthesize(spoken.text, { voice: persona.voice.model });
 
   // Phase 9.4 — meter TTS spend (characters synthesized). Best-effort. `model` is the voice that
   // actually spoke, which may be the persona's or the configured fallback — record what happened,
-  // not what was requested.
-  const chars = String(req.body?.text || "").trim().slice(0, 2000).length;
+  // not what was requested. Characters are counted on what was SENT to the provider, since that
+  // is what the provider bills for.
+  const chars = spoken.text.length;
   const usageService = require("../services/usageService");
   await usageService.recordUsage({
     company: session.company,
@@ -662,6 +716,10 @@ async function phoneEvents(req, res) {
 
 module.exports = {
   login,
+  // Exported for the candidate dashboard's "open my own interview" route, which
+  // proves ownership by account instead of by emailed token but must pass the
+  // identical gate. See openSessionForOwner.
+  openSessionForOwner,
   me,
   speedTestFile,
   submitChecks,

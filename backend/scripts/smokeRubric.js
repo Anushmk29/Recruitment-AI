@@ -66,15 +66,20 @@ async function main() {
       assert.equal(String(again._id), String(v1._id));
       ok("recompiling an unchanged JD returns the same draft (no version churn)");
 
-      // edit draft
+      // edit draft: the caller sends importance WORDS and a bogus weight; the
+      // weight must be ignored and the words must drive the arithmetic.
       const edited = await rubricService.updateDraft(v1._id, companyId, {
-        criteria: v1.criteria.map((c, i) => ({ ...c.toObject(), weight: i === 0 ? 80 : 10 })),
+        criteria: v1.criteria.map((c, i) => ({ ...c.toObject(), importance: i === 0 ? "critical" : "bonus", weight: 999 })),
         thresholds: { advance: 70, review: 50 },
       });
       assert.equal(edited.thresholds.advance, 70);
       const editedSum = edited.criteria.filter((c) => c.kind !== "disqualifier").reduce((s, c) => s + c.weight, 0);
       assert.ok(Math.abs(editedSum - 1) < 1e-9);
-      ok("draft edits re-normalise weights in code");
+      const others = edited.criteria.length - 1;
+      // critical=8, bonus=1 each ⇒ first criterion is 8/(8+others).
+      assert.ok(Math.abs(edited.criteria[0].weight - 8 / (8 + others)) < 1e-9, "importance drives the weight, not the client's number");
+      assert.equal(edited.criteria[0].importance, "critical");
+      ok("draft edits set importance by word; client-sent weights are ignored");
 
       // approve & freeze
       const approved = await rubricService.approve(v1._id, companyId, { _id: userId });

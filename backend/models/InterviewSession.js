@@ -126,16 +126,39 @@ const acousticSchema = new mongoose.Schema(
 // classifies the turn so the UI and evaluator can distinguish intro/question/
 // answer/closing. `answerScore` is the AI's per-answer 0-100 judgement (only on
 // candidate answers).
+//
+// "warmup" / "warmup_answer" are the opening "tell me a bit about yourself" exchange. They are
+// a real turn a reviewer should see, but deliberately NOT a question of the instrument: a
+// self-introduction is not scoreable against a role rubric, it is not tied to a claim-probe,
+// and it does not consume the question budget. The kind is what keeps it out of the score —
+// see aiInterviewService (scoreUnscoredAnswers skips it, and submitAnswer never assigns it an
+// answerScore).
 const interviewTurnSchema = new mongoose.Schema(
   {
     role: { type: String, enum: ["ai", "candidate"], required: true },
-    kind: { type: String, enum: ["intro", "question", "answer", "closing"], default: "question" },
+    kind: {
+      type: String,
+      enum: ["intro", "warmup", "warmup_answer", "question", "answer", "closing"],
+      default: "question",
+    },
     text: { type: String, required: true },
     topic: { type: String, trim: true },
     difficulty: { type: String, enum: ["easy", "medium", "hard"] },
     answerScore: { type: Number },
     // Which claim-probe this question addresses (Phase 8), when any.
     probeId: { type: String },
+    // Which approved must-ask question this turn delivered, when any. Stamped so "which approved
+    // question produced this answer" is a lookup rather than a string comparison against text
+    // that may since have been superseded by a newer version of the set.
+    mustAskId: { type: String },
+    // On a candidate ANSWER: why the turn ended (utils/endpointing.js). "complete" means the
+    // answer was classified as finished, "holding"/"ambiguous" that the interviewer waited and
+    // eventually moved on, "manual" that the candidate ended it themselves. A condition of the
+    // interview, never an input to a score — see the sanitizer in interviewPortalController.
+    endOfTurn: {
+      state: { type: String, enum: ["complete", "ambiguous", "holding", "manual"] },
+      reason: { type: String, trim: true },
+    },
     // How many times the candidate asked to hear THIS question again (set on the question turn).
     //
     // RECORDED, NEVER SCORED — and that exclusion is deliberate, not an oversight. Repeat requests
@@ -178,6 +201,21 @@ const interviewTurnSchema = new mongoose.Schema(
 // at generation time so the post-interview verdict is judged against stated
 // criteria. A `contradicted` verdict NEVER auto-rejects — it surfaces to a
 // human with the resume quote and the answer quote side by side.
+// One recruiter-approved must-ask question, copied onto the session at start. Coverage state
+// mirrors interviewProbeSchema: pending until delivered, and back to pending if the candidate
+// talked over it, so a half-heard question never counts as asked.
+const interviewMustAskSchema = new mongoose.Schema(
+  {
+    questionId: { type: String, required: true }, // id within the approved set version
+    text: { type: String, required: true },
+    topic: { type: String, default: "" },
+    status: { type: String, enum: ["pending", "asked"], default: "pending" },
+    turnIndex: { type: Number },
+    askedAt: { type: Date },
+  },
+  { _id: false }
+);
+
 const interviewProbeSchema = new mongoose.Schema(
   {
     claimId: { type: String, required: true },
@@ -245,7 +283,7 @@ const interviewEvaluationSchema = new mongoose.Schema(
 // scored, never counted as a question, never shown to a reviewer as one.
 const backchannelSchema = new mongoose.Schema(
   {
-    kind: { type: String, enum: ["reassure", "repeat", "acknowledge"], required: true },
+    kind: { type: String, enum: ["reassure", "repeat", "acknowledge", "confirm"], required: true },
     phrase: { type: String, required: true },
     turnIndex: { type: Number }, // index in `turns` of the answer this happened during
     at: { type: Date, default: Date.now },
@@ -304,6 +342,25 @@ const aiInterviewSchema = new mongoose.Schema(
       voiceProvider: { type: String, trim: true },
       voiceModel: { type: String, trim: true },
       source: { type: String, enum: ["tenant", "default"] },
+      at: { type: Date },
+    },
+    // The recruiter-approved must-ask questions for this job (models/QuestionSet.js), copied
+    // onto the session at start. Copied rather than referenced on purpose: the set is frozen
+    // once approved, but a session must be able to state exactly what it asked even if the set
+    // is later archived — and coverage is per-session state, not per-set.
+    //
+    // Required coverage in the same sense as `probes`: the interview cannot close while any of
+    // these is still pending. Unlike probes, they are asked VERBATIM and selected by code — a
+    // reworded approved question is a different question, and "we asked everyone the same thing"
+    // stops being true the moment a model paraphrases for one candidate and not another.
+    mustAsk: { type: [interviewMustAskSchema], default: () => [] },
+    // Which approved set this session ran under. `source: "none"` means the job had no approved
+    // set and the interview ran on claim-probes plus adaptive questions — surfaced as such,
+    // never passed off as a recruiter's choice.
+    questionSet: {
+      id: { type: mongoose.Schema.Types.ObjectId, ref: "QuestionSet" },
+      version: { type: Number },
+      source: { type: String, enum: ["approved_set", "none", "lookup_failed"] },
       at: { type: Date },
     },
     // Claim-probes this interview must cover (Phase 8.2 — required coverage).

@@ -38,7 +38,25 @@ const BANK = {
   repeat: ["Of course — here it is again.", "No problem. Let me read that again."],
   // Spoken after an answer lands, while the next question is being prepared. Fills the dead
   // air that otherwise makes the interviewer feel like a machine between turns.
-  acknowledge: ["Thank you.", "Thanks — one moment.", "Thank you. Let me move on."],
+  //
+  // Warmer than a bare "Thank you." — candidates report the old wording as talking into a void —
+  // but still saying NOTHING about the answer. Note what is deliberately absent: no "that's
+  // helpful", no "well answered", no "you sound experienced". Warmth here is UNIFORM (the same
+  // rotation for every candidate at the same turn index, see phraseFor) which is what keeps it a
+  // constant of the test conditions. Warmth that varied with how well someone answered would be
+  // differential encouragement — a bias vector, a contamination of the measurement, and an
+  // assessment delivered to the candidate with no human in the loop.
+  acknowledge: [
+    "Thank you.",
+    "Got it — thank you.",
+    "Thank you, I've noted that.",
+    "Thanks. Let me move on to the next one.",
+  ],
+  // Spoken when the candidate has gone quiet and we believe the answer is finished, BEFORE
+  // treating it as finished. Candidates consistently report being cut off mid-thought; this
+  // makes the end of a turn their decision rather than a timer's, and it costs ~3 seconds
+  // instead of the fixed minute-long wait that would otherwise be needed to feel unhurried.
+  confirm: ["Anything you'd like to add?", "Is there anything else you'd like to add?"],
 };
 
 const KINDS = Object.keys(BANK);
@@ -56,6 +74,15 @@ const EVALUATIVE_WORDS = [
   "great", "good", "excellent", "perfect", "interesting", "impressive", "nice", "well done",
   "exactly", "right", "correct", "wrong", "strong", "weak", "brilliant", "amazing", "wow",
   "love", "clever", "smart", "poor", "unfortunately", "concerning",
+  // Added after a candidate asked for exactly this ("Well answered — you seem very experienced
+  // on this project"). It is the most natural-sounding request in the world and it is an
+  // assessment delivered to the candidate mid-interview with no human in the loop: it varies
+  // with the answer, it changes what they say next, and it contradicts the report if they are
+  // later rejected. Warmth ships as UNIFORM phrasing instead (see the acknowledge bank).
+  // "helpful" is here for the same reason — "that's helpful" sounds harmless and still rates
+  // the answer.
+  "well answered", "helpful", "experienced", "thorough", "solid", "detailed", "insightful",
+  "thoughtful", "compelling",
 ];
 
 function findEvaluativeWord(phrase) {
@@ -162,6 +189,11 @@ function clientPolicy() {
     reassurances: phrases("reassure"),
     acknowledgements: phrases("acknowledge"),
     repeatPreambles: phrases("repeat"),
+    confirmations: phrases("confirm"),
+    // How long the candidate has to answer "anything you'd like to add?" before the turn really
+    // ends. Long enough to draw breath and start a sentence — any new speech cancels the ending
+    // outright and hands the floor straight back.
+    confirmGraceMs: Number(process.env.VOICE_CONFIRM_GRACE_MS || 5000),
     // How many times one turn may be reassured before silence is finally taken as "finished".
     // Beyond this, more reassurance stops being supportive and starts being a loop.
     maxReassurancesPerTurn: Number(process.env.VOICE_MAX_REASSURANCES || 2),

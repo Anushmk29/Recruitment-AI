@@ -1,11 +1,13 @@
 // Prompt + JSON schema for the Rubric Compiler (BUILD-PLAN Phase 3). Pure —
 // llmService consumes these via rubricService. The model proposes criteria and
-// RELATIVE importance (0–100); all arithmetic (weight normalisation, thresholds)
-// happens in code (rubricEngine). The model never emits a candidate's score.
+// an importance TIER WORD; all arithmetic (weight normalisation, thresholds)
+// happens in code (rubricEngine). The model never emits a number at all here —
+// not a score, not a weight — which removes the last place a model-authored
+// figure could leak into a candidate's result.
 
 // Bump on any wording change: promptVersion is part of the LLM cache key and is
 // persisted on every rubric this prompt compiles (reproducibility/audit).
-const RUBRIC_PROMPT_VERSION = "2026-07-25.1";
+const RUBRIC_PROMPT_VERSION = "2026-08-03.1";
 
 const RUBRIC_SYSTEM =
   "You are a rigorous hiring-criteria analyst. Decompose a job description into explicit, individually-testable " +
@@ -27,8 +29,9 @@ const RUBRIC_SCHEMA = {
         additionalProperties: false,
         properties: {
           label: { type: "string" },
-          kind: { type: "string", enum: ["must_have", "nice_to_have", "disqualifier"] },
-          relativeImportance: { type: "integer" }, // 0-100, RELATIVE — code normalises to weights
+          // A WORD, not a number. rubricEngine.IMPORTANCE_TIERS turns it into
+          // the criterion's kind and its relative weight.
+          importance: { type: "string", enum: ["critical", "important", "helpful", "bonus"] },
           rationale: { type: "string" }, // why this criterion exists, tied to the JD
           evidenceTypes: {
             type: "array",
@@ -38,7 +41,7 @@ const RUBRIC_SCHEMA = {
           probeHint: { type: "string" }, // how an interviewer would test this claim
           seniorityFloor: { type: "string" },
         },
-        required: ["label", "kind", "relativeImportance", "rationale", "evidenceTypes", "acceptableEvidence", "probeHint", "seniorityFloor"],
+        required: ["label", "importance", "rationale", "evidenceTypes", "acceptableEvidence", "probeHint", "seniorityFloor"],
       },
     },
     qualityFlags: {
@@ -69,8 +72,12 @@ function rubricPrompt(sourceText) {
     "\n</job_description>\n\n" +
     "Rules:\n" +
     "- 5 to 12 criteria. Each must be individually testable against a résumé or interview answer.\n" +
-    "- kind: must_have = the JD treats it as required; nice_to_have = preferred/bonus; disqualifier = an explicit knock-out the JD states.\n" +
-    "- relativeImportance: 0-100 relative to the other criteria. Do NOT try to make them sum to anything — they are relative.\n" +
+    "- importance — pick exactly one word per criterion, based on how the JD itself treats it:\n" +
+    "    critical  = the JD treats it as non-negotiable; someone weak here cannot do the job.\n" +
+    "    important = the JD requires it, but a candidate strong elsewhere could still be worth interviewing.\n" +
+    "    helpful   = the JD lists it as preferred or advantageous.\n" +
+    "    bonus     = a minor plus the JD mentions in passing.\n" +
+    "  Do NOT return numbers or percentages anywhere — weighting is computed downstream.\n" +
     "- rationale: one sentence tying the criterion to the JD's own words.\n" +
     "- acceptableEvidence: 1-3 concrete things on a résumé that would satisfy it.\n" +
     "- probeHint: one interview question that would test the criterion if the résumé merely asserts it.\n" +

@@ -171,6 +171,106 @@ test("a missed window outranks a merely-due one", () => {
   assert.equal(out[0].actions.length, 2, "the other obligation is still listed, just not primary");
 });
 
+// --- can this be entered from the dashboard right now? ----------------------
+//
+// `canOpen` is what puts a "Start interview" button in front of a candidate, so
+// it decides whether someone can sit their interview without the invitation
+// email. Two ways to get it wrong, both costly: withhold it while the window is
+// open (the candidate is stuck waiting on mail that may never arrive), or offer
+// it after the window shut (a button that can only produce a 410, told to
+// someone who is already locked out).
+
+test("a live interview is openable straight from the dashboard", () => {
+  const out = buildNextActions({
+    applications: [application({ status: "interview_scheduled" })],
+    interviewSessions: [
+      { _id: "is1", candidate: "app1", status: "scheduled", interviewAt: hours(1), expiresAt: hours(49) },
+    ],
+    now: NOW,
+  });
+  const p = primaryOf(out);
+  assert.equal(p.canOpen, true);
+  assert.equal(p.sessionId, "is1", "the id the open route needs must travel with the flag");
+  // The copy must not send them hunting for an email when there is a button.
+  assert.match(p.detail, /start it here/i);
+  // …nor invent a start time. interviewAt is an hour away here, but the portal
+  // admits the session now and the invitation email says so — copy that told
+  // them to wait would be a rule the system does not enforce.
+  assert.ok(!/at the scheduled time/i.test(p.detail), `must not imply a gated start: ${p.detail}`);
+});
+
+test("an interview is openable before its scheduled time, matching what the link does", () => {
+  // The magic-link login gates on expiresAt only — never on interviewAt. If the
+  // dashboard gated on the slot, the same session would be enterable by email
+  // and refused here, and the candidate would be told two different things.
+  const out = buildNextActions({
+    applications: [application({ status: "interview_scheduled" })],
+    interviewSessions: [
+      { _id: "is1", candidate: "app1", status: "scheduled", interviewAt: hours(48), expiresAt: hours(96) },
+    ],
+    now: NOW,
+  });
+  const p = primaryOf(out);
+  assert.equal(p.canOpen, true, "a future slot is not a closed door — the link would already work");
+  assert.equal(p.scheduledAt, hours(48), "the slot is still reported, just not enforced");
+});
+
+test("a live assessment is openable straight from the dashboard", () => {
+  const out = buildNextActions({
+    applications: [application({ status: "assessment_scheduled" })],
+    assessmentSessions: [
+      { _id: "as1", candidate: "app1", status: "scheduled", startDeadline: hours(6), expiresAt: hours(30) },
+    ],
+    now: NOW,
+  });
+  const p = primaryOf(out);
+  assert.equal(p.canOpen, true);
+  assert.equal(p.sessionId, "as1");
+});
+
+test("a started session stays openable so a dropped connection is resumable", () => {
+  const out = buildNextActions({
+    applications: [application({ status: "interview_scheduled" })],
+    interviewSessions: [
+      { _id: "is1", candidate: "app1", status: "in_progress", startedAt: hours(-1), interviewAt: hours(-1), expiresAt: hours(4) },
+    ],
+    now: NOW,
+  });
+  const p = primaryOf(out);
+  assert.equal(p.state, "in_progress");
+  assert.equal(p.canOpen, true, "losing the tab mid-interview must not end the interview");
+});
+
+test("a closed window is never openable — for either kind", () => {
+  const out = buildNextActions({
+    applications: [application({ _id: "app1", status: "interview_scheduled" }), application({ _id: "app2", status: "assessment_scheduled" })],
+    interviewSessions: [
+      { _id: "is1", candidate: "app1", status: "scheduled", interviewAt: hours(-50), expiresAt: hours(-2) },
+    ],
+    assessmentSessions: [
+      { _id: "as1", candidate: "app2", status: "scheduled", startDeadline: hours(-3), expiresAt: hours(-3) },
+    ],
+    now: NOW,
+  });
+  for (const entry of out) {
+    assert.equal(entry.primary.state, "missed");
+    assert.ok(!entry.primary.canOpen, `a ${entry.primary.kind} whose window shut must not offer a way in`);
+  }
+});
+
+test("nothing the company owes is openable", () => {
+  // Only the candidate's own live obligations get a door. A completed interview
+  // sitting with the hiring team is not something to re-enter.
+  const out = buildNextActions({
+    applications: [application({ status: "ai_interview_completed" })],
+    interviewSessions: [
+      { _id: "is1", candidate: "app1", status: "completed", completedAt: hours(-2), expiresAt: hours(10) },
+    ],
+    now: NOW,
+  });
+  assert.ok(!out[0].actions.some((a) => a.canOpen), "a completed session must not be re-enterable");
+});
+
 test("an offer is an obligation on the candidate", () => {
   const out = buildNextActions({
     applications: [application({ status: "offer_sent", offer: { status: "sent", sentAt: hours(-20) } })],

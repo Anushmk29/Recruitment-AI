@@ -256,11 +256,13 @@ function signPortalToken(session) {
   );
 }
 
-async function loginWithToken(token) {
-  const session = await AssessmentSession.findOne({ tokenHash: hashToken(token) })
-    .populate("candidate")
-    .populate("job");
-  if (!session) throw httpError(404, "Invalid assessment link");
+// The gate between "this is the right person" and a live portal token, split
+// out from the magic-link lookup because ownership can now be proved two ways:
+// possession of the mailbox (the emailed token) or possession of the account
+// whose email owns the application (the candidate dashboard). Both clear the
+// same cancelled/expired rules here, so the two entry points can never disagree
+// about whether an assessment is still open.
+async function openSession(session) {
   if (session.status === "cancelled") throw httpError(410, "This assessment has been cancelled");
   if (new Date() > session.expiresAt) {
     await expireSession(session);
@@ -271,6 +273,14 @@ async function loginWithToken(token) {
     await session.save();
   }
   return { token: signPortalToken(session), session };
+}
+
+async function loginWithToken(token) {
+  const session = await AssessmentSession.findOne({ tokenHash: hashToken(token) })
+    .populate("candidate")
+    .populate("job");
+  if (!session) throw httpError(404, "Invalid assessment link");
+  return openSession(session);
 }
 
 // The candidate-facing session payload. ALLOW-LIST ONLY — and structurally no
@@ -827,6 +837,7 @@ module.exports = {
   autoAssignAfterAtsPass,
   resendAssessment,
   loginWithToken,
+  openSession,
   dashboardPayload,
   itemsPayload,
   startAssessment,

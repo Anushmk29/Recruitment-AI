@@ -39,6 +39,8 @@ const {
 
 const probeService = require("./probeService");
 const backchannel = require("../utils/backchannel");
+const personaService = require("./personaService");
+const questionSetService = require("./questionSetService");
 
 const PROVIDER = "openrouter";
 const MAX_ANSWER_CHARS = 4000;
@@ -48,7 +50,11 @@ const MAX_ANSWER_CHARS = 4000;
 // reached. maxQuestions stays the hard ceiling (enforced in submitAnswer).
 function closingAllowed(ai) {
   const uncovered = (ai.probes || []).filter((p) => p.status === "pending");
-  return uncovered.length === 0 && ai.questionCount >= (ai.minQuestions || 1);
+  // An approved question the candidate was never asked means this interview did not run the
+  // instrument the recruiter approved. The model may propose closing; it cannot close over an
+  // uncovered approved question any more than it can over an uncovered claim-probe.
+  const unasked = (ai.mustAsk || []).filter((q) => q.status === "pending");
+  return uncovered.length === 0 && unasked.length === 0 && ai.questionCount >= (ai.minQuestions || 1);
 }
 
 function pendingProbes(ai) {
@@ -79,6 +85,58 @@ function markProbeAsked(ai, probeId) {
   probe.status = "asked";
   probe.turnIndex = ai.turns.length - 1; // the question turn just pushed
   probe.askedAt = new Date();
+}
+
+// ---- Recruiter-approved must-ask questions (models/QuestionSet.js) ----------
+//
+// Required coverage in the same sense as claim-probes, with one difference that is the whole
+// point of the feature: these are delivered VERBATIM by code. The model is never asked to
+// produce them and never given the chance to reword one — a paraphrase is a different question,
+// and "every candidate for this role was asked the same thing" stops being true the moment one
+// candidate gets the recruiter's wording and the next gets the model's.
+
+function pendingMustAsk(ai) {
+  return (ai.mustAsk || []).filter((q) => q.status === "pending");
+}
+
+function markMustAskAsked(ai, questionId) {
+  if (!questionId) return;
+  const q = (ai.mustAsk || []).find((m) => m.questionId === questionId && m.status === "pending");
+  if (!q) return;
+  q.status = "asked";
+  q.turnIndex = ai.turns.length - 1; // the question turn just pushed
+  q.askedAt = new Date();
+}
+
+// Same rule as a probe: a question the candidate talked over was not really asked.
+function mustAskUncoveredByInterruption(questionTurn) {
+  if (!questionTurn?.mustAskId) return false;
+  const total = String(questionTurn.text || "").length;
+  if (!total) return true;
+  const spoken = Number(questionTurn.interruptedAtChar);
+  if (!Number.isFinite(spoken)) return true;
+  return spoken / total < DELIVERY_COVERAGE_MIN;
+}
+
+// Which approved question to deliver next, or null to hand the turn to the adaptive engine.
+//
+// The cadence alternates — approved question, then one adaptive follow-up on whatever the
+// candidate just said, then the next approved question. That is what keeps the set from being a
+// form read end to end: the recruiter's questions anchor the comparison, the follow-ups do the
+// actual probing. When the remaining budget no longer covers what still has to be asked, the
+// alternation stops and coverage wins: an approved question is the part that must not be
+// dropped.
+function chooseMustAsk(ai) {
+  const pending = pendingMustAsk(ai);
+  if (!pending.length) return null;
+
+  const remaining = (ai.maxQuestions || 0) - (ai.questionCount || 0);
+  const reserved = pending.length + pendingProbes(ai).length;
+  if (remaining <= reserved) return pending[0];
+
+  const lastQuestion = [...(ai.turns || [])].reverse().find((t) => t.role === "ai" && t.kind === "question");
+  if (lastQuestion?.mustAskId) return null; // the last turn was an approved one — follow up on it
+  return pending[0];
 }
 
 function clampScore(n) {
@@ -213,6 +271,46 @@ function fallbackEvaluation(ai) {
   };
 }
 
+// ---- The opening (authored in code, never by the model) ----
+//
+// Candidates were previously dropped straight into question one. Nobody was greeted by name,
+// nobody was told how long it would take, and nobody was told they could ask for a question to
+// be repeated — an affordance the portal has always had and never mentioned. That is most of
+// what makes a spoken interview feel like a form being read at you, and none of it needs a
+// model: it is the same for every candidate for a role, so it is a constant, written here.
+
+// A voice question plus its answer runs roughly two minutes. Rounded up to the nearest five so
+// it reads as the estimate it is rather than as a promise we then break.
+function estimatedMinutes(maxQuestions) {
+  return Math.max(5, Math.ceil((maxQuestions * 2) / 5) * 5);
+}
+
+function openingScript({ candidate, job, persona, maxQuestions }) {
+  const first = String(candidate?.basicDetails?.name || "").trim().split(/\s+/)[0] || "there";
+  const interviewer = String(persona?.name || "").trim() || "your interviewer";
+  const role = job?.title ? ` for the ${job.title} role` : "";
+  return {
+    intro:
+      `Hi ${first} — my name is ${interviewer}, and I'll be running your interview${role} today. ` +
+      `Here's how this will go. I'll start by asking you to introduce yourself, and then I'll ask you around ` +
+      `${maxQuestions} questions covering your background and your experience. It usually takes about ` +
+      `${estimatedMinutes(maxQuestions)} minutes in total. ` +
+      `There's no rush on any of it — take the time you need to think before you answer, and if you'd like me ` +
+      `to repeat a question at any point, just ask.`,
+    warmup:
+      `So, whenever you're ready — could you start with a short introduction? ` +
+      `Just who you are, and what you've been working on recently.`,
+  };
+}
+
+function closingScript(candidate) {
+  const first = String(candidate?.basicDetails?.name || "").trim().split(/\s+/)[0];
+  return (
+    `That's everything I wanted to cover${first ? `, ${first}` : ""} — thank you for taking the time today. ` +
+    `Your answers have been recorded, and the team will be in touch about the next steps. All the best.`
+  );
+}
+
 // ---- LLM steps (metered, with graceful fallback) ----
 async function makePlan({ session, candidate, job, settings, context, useAi }) {
   if (!useAi) return { plan: fallbackPlan(job), engine: "fallback" };
@@ -255,6 +353,7 @@ async function nextQuestion({ session, candidate, job, settings, ai, context, us
         minQuestions: ai.minQuestions,
         maxQuestions: ai.maxQuestions,
         probes: pendingProbes(ai),
+        mustAsk: pendingMustAsk(ai),
       }),
       schema: QUESTION_SCHEMA,
       maxTokens: 512,
@@ -280,6 +379,10 @@ async function scoreUnscoredAnswers({ session, candidate, job, settings, ai, use
   for (let i = 0; i < ai.turns.length; i += 1) {
     const turn = ai.turns[i];
     if (turn.role !== "candidate" || typeof turn.answerScore === "number") continue;
+    // The opening self-introduction is not part of the instrument and is never scored. The
+    // `questionTurn` lookup below would skip it anyway (no question precedes it), but stating it
+    // means a later change to turn ordering can't quietly start scoring it.
+    if (turn.kind === "warmup_answer") continue;
     const questionTurn = [...ai.turns.slice(0, i)].reverse().find((t) => t.role === "ai" && t.kind === "question");
     if (!questionTurn) continue;
 
@@ -355,7 +458,16 @@ function publicState(session) {
     questionCount: ai.questionCount,
     maxQuestions: ai.maxQuestions,
     turns: ai.turns.map((t) => ({ role: t.role, kind: t.kind, text: t.text, at: t.at })),
+    // The spoken greeting, surfaced separately from `turns` because the client speaks it ONCE,
+    // ahead of the first question. It used to be pushed as a turn and rendered on screen but
+    // never spoken by anything — so in a voice interview the candidate was never actually
+    // greeted. Kept out of `currentQuestion` because it is not a question and must not be
+    // re-spoken on every poll.
+    intro: ai.turns.find((t) => t.kind === "intro")?.text || null,
     currentQuestion: ai.status === "in_progress" ? lastAi?.text || null : null,
+    // The current turn is the opening self-introduction rather than a scored question, so the UI
+    // can label it honestly instead of counting it as "Question 0 of 8".
+    currentIsWarmup: ai.status === "in_progress" && lastAi?.kind === "warmup",
     awaitingAnswer: ai.status === "in_progress",
     completed: ai.status === "completed",
   };
@@ -390,20 +502,55 @@ async function beginInterview(session) {
     ai.probePromptVersion = PROBE_PROMPT_VERSION;
   }
 
+  // The recruiter-approved must-ask set for this job profile (services/questionSetService).
+  // Copied onto the session rather than referenced: this session must be able to state exactly
+  // what it asked even after the set is superseded, and coverage is per-session state.
+  // No approved set is a fully working interview — claim-probes plus adaptive questions, as
+  // before — so adopting one is opt-in per job and never a prerequisite for hiring.
+  const questionSet = await questionSetService.resolveForJob(session.company, job._id);
+  ai.mustAsk = questionSet.questions.map((q) => ({
+    questionId: q.id,
+    text: q.text,
+    topic: q.topic || "",
+    status: "pending",
+  }));
+  ai.questionSet = {
+    id: questionSet.id || undefined,
+    version: questionSet.version,
+    source: questionSet.source,
+    at: new Date(),
+  };
+
+  // The approved set is the instrument; the length cap must yield to it rather than silently
+  // dropping part of it. Without this, a set larger than maxQuestions would leave approved
+  // questions unasked — and closingAllowed would then refuse to end the interview at all.
+  const requiredCoverage = ai.mustAsk.length + (ai.probes || []).length;
+  if (requiredCoverage > ai.maxQuestions) {
+    console.warn(
+      `[aiInterview] raising maxQuestions ${ai.maxQuestions} → ${requiredCoverage} for session ${session._id}: ` +
+        `${ai.mustAsk.length} approved question(s) + ${(ai.probes || []).length} claim-probe(s) do not fit the configured cap`
+    );
+    ai.maxQuestions = requiredCoverage;
+  }
+  if (ai.minQuestions > ai.maxQuestions) ai.minQuestions = ai.maxQuestions;
+
   ai.status = "in_progress";
   ai.startedAt = new Date();
 
-  ai.turns.push({
-    role: "ai",
-    kind: "intro",
-    text: `Hi ${candidate.basicDetails.name.split(" ")[0]}, thanks for joining. I'll ask you a few questions about your background and the ${job.title} role. Take your time, and let's get started.`,
-  });
+  // Greeted by name, in the persona's name, before anything is asked of them.
+  const persona = await personaService.resolveForSession(session);
+  const script = openingScript({ candidate, job, persona, maxQuestions: ai.maxQuestions });
+  ai.turns.push({ role: "ai", kind: "intro", text: script.intro });
 
-  const first = await nextQuestion({ session, candidate, job, settings, ai, context, useAi });
-  ai.turns.push({ role: "ai", kind: "question", text: first.question, topic: first.topic, difficulty: first.difficulty, probeId: first.probeId || undefined, engine: first.engine, model: first.model, latencyMs: first.latencyMs });
-  ai.askedQuestions.push(first.question);
-  markProbeAsked(ai, first.probeId);
-  ai.questionCount = 1;
+  // The opening turn is a self-introduction, not a question of the instrument. It eases the
+  // candidate in and gives the first real question something to follow up on, but it is NOT
+  // scored, NOT tied to a claim-probe, and does NOT consume the question budget — questionCount
+  // stays at 0 until the first rubric-bound question is asked, on the next submit. Asking the
+  // model to open cold also produced worse first questions: it had nothing from the candidate
+  // to build on, so it fell back to reciting the résumé.
+  ai.turns.push({ role: "ai", kind: "warmup", text: script.warmup });
+  ai.askedQuestions.push(script.warmup);
+  ai.questionCount = 0;
 
   await session.save();
   return publicState(session);
@@ -428,7 +575,18 @@ async function submitAnswer(session, answerText, opts = {}) {
   const text = echo.text;
   if (!text) throw Object.assign(new Error("An answer is required"), { status: 400 });
 
-  const answerTurn = { role: "candidate", kind: "answer", text, inputMode: opts.inputMode === "voice" ? "voice" : "text" };
+  // An answer to the opening self-introduction is marked as such and stays out of every scoring
+  // path (see the score guard below and scoreUnscoredAnswers). "Tell me about yourself" has no
+  // rubric criterion behind it, so a number attached to it would be a judgement with nothing to
+  // justify it — and it would drag the mean that a real hiring decision reads.
+  const precedingAi = [...ai.turns].reverse().find((t) => t.role === "ai");
+  const isWarmupAnswer = precedingAi?.kind === "warmup";
+  const answerTurn = {
+    role: "candidate",
+    kind: isWarmupAnswer ? "warmup_answer" : "answer",
+    text,
+    inputMode: opts.inputMode === "voice" ? "voice" : "text",
+  };
   if (opts.inputMode === "voice") {
     ai.modality = "voice";
     if (opts.transcriptConfidence !== undefined) answerTurn.transcriptConfidence = opts.transcriptConfidence;
@@ -437,6 +595,9 @@ async function submitAnswer(session, answerText, opts = {}) {
       // Derive the per-answer delivery score server-side (never trust a client-sent score).
       answerTurn.acoustic = { ...opts.acoustic, deliveryScore: scoreDelivery(opts.acoustic) };
     }
+    // Why the turn ended. Recorded next to the answer it belongs to so a disputed "it cut me
+    // off" is checkable; read by no scorer.
+    if (opts.endOfTurn) answerTurn.endOfTurn = opts.endOfTurn;
     if (echo.removed.length) {
       answerTurn.backchannelEchoRemoved = echo.removed.length;
       console.warn(
@@ -472,6 +633,16 @@ async function submitAnswer(session, answerText, opts = {}) {
         probe.askedAt = undefined;
       }
     }
+    // Same for an approved question the candidate talked over: it was not really asked, so it
+    // goes back into the queue and closingAllowed will not let the interview end without it.
+    if (mustAskUncoveredByInterruption(lastQuestion)) {
+      const q = (ai.mustAsk || []).find((m) => m.questionId === lastQuestion.mustAskId && m.status === "asked");
+      if (q) {
+        q.status = "pending";
+        q.turnIndex = undefined;
+        q.askedAt = undefined;
+      }
+    }
   }
 
   ai.turns.push(answerTurn);
@@ -491,7 +662,7 @@ async function submitAnswer(session, answerText, opts = {}) {
   const useAi = await aiUsable(session, candidate, settings);
 
   if (ai.questionCount >= ai.maxQuestions) {
-    ai.turns.push({ role: "ai", kind: "closing", text: "That's everything I wanted to cover — thank you for your time. Your responses have been recorded and the team will be in touch." });
+    ai.turns.push({ role: "ai", kind: "closing", text: closingScript(candidate) });
     ai.status = "completed";
     ai.completedAt = new Date();
     session.status = "completed";
@@ -503,10 +674,37 @@ async function submitAnswer(session, answerText, opts = {}) {
     return publicState(session);
   }
 
+  // An approved must-ask question is delivered VERBATIM, by code, with no model call at all.
+  // That is both the guarantee (the recruiter's wording reaches every candidate unaltered) and,
+  // incidentally, free: these turns cost nothing and add no latency.
+  //
+  // The previous answer goes unscored on this path because scoring lived inside nextQuestion().
+  // That is safe and already designed for — finalisation scores every unscored answer through
+  // the dedicated bias-blinded prompt (scoreUnscoredAnswers, Phase 9.1) — and it is better than
+  // the alternative of making a model call purely to attach a number mid-interview.
+  const must = chooseMustAsk(ai);
+  if (must) {
+    ai.turns.push({
+      role: "ai",
+      kind: "question",
+      text: must.text,
+      topic: must.topic || "approved set",
+      mustAskId: must.questionId,
+      engine: "approved_set",
+    });
+    ai.askedQuestions.push(must.text);
+    markMustAskAsked(ai, must.questionId);
+    ai.questionCount += 1;
+    await session.save();
+    return publicState(session);
+  }
+
   const next = await nextQuestion({ session, candidate, job, settings, ai, context, useAi });
   const lastAnswer = [...ai.turns].reverse().find((t) => t.role === "candidate");
   const score = clampScore(next.answerScore);
-  if (lastAnswer && score !== undefined) lastAnswer.answerScore = score;
+  // The model scores "the previous answer" unconditionally, and on the first pass that answer is
+  // the self-introduction. Discard it rather than record it: nothing in the rubric backs it.
+  if (lastAnswer && lastAnswer.kind !== "warmup_answer" && score !== undefined) lastAnswer.answerScore = score;
   if (next.difficulty) ai.currentDifficulty = next.difficulty;
 
   // Phase 8.3 — early end, decided by CODE: the model may propose closing
@@ -607,4 +805,12 @@ module.exports = {
   scoreUnscoredAnswers,
   probeUncoveredByInterruption,
   fallbackEvaluation,
+  // exported for tests (the authored opening/closing)
+  openingScript,
+  closingScript,
+  estimatedMinutes,
+  // exported for tests (recruiter-approved must-ask coverage)
+  chooseMustAsk,
+  mustAskUncoveredByInterruption,
+  pendingMustAsk,
 };

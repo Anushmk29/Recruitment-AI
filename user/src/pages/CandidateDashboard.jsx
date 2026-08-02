@@ -11,15 +11,20 @@ import {
   AlertTriangle,
   CircleCheck,
   Hourglass,
-  Mail,
   ChevronDown,
   ClipboardList,
   Video,
   UserRound,
   CircleDot,
+  ArrowRight,
 } from "lucide-react";
 import api from "../api/client.js";
 import { accountAuthHeader, clearAccountAuth } from "../auth/accountAuth.js";
+// The two portals are separate identities from the account (see portalAuth.js),
+// so entering one from here means minting and storing ITS token — not reusing
+// the account's.
+import { saveAuth as savePortalAuth, clearAuth as clearPortalAuth } from "../portal/portalAuth.js";
+import { saveAuth as saveAssessmentAuth, clearAuth as clearAssessmentAuth } from "../portal/assessmentAuth.js";
 import { getSocket } from "../lib/socket.js";
 import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
 import { Input, Textarea, Label, FormGroup } from "../components/ui/Field.jsx";
@@ -136,10 +141,19 @@ function OwnerLine({ action, now }) {
   return null;
 }
 
-// One thing the candidate must do, with its real deadline and a route back in
-// if they have lost access. `onRecover` re-sends to the address on file — the
-// link itself never travels through this page.
-function ActionRow({ action, jobTitle, companyName, now, onRecover, recovering, recovered }) {
+// Label for the button that enters a session. Naming the thing beats a generic
+// "Open" — the candidate is deciding whether they have time for this right now.
+function openLabel(action) {
+  if (action.kind === "interview") return action.state === "in_progress" ? "Resume interview" : "Start interview";
+  return action.state === "in_progress" ? "Resume assessment" : "Start assessment";
+}
+
+// One thing the candidate must do, with its real deadline and — while the
+// window is open — the way in. The link itself is never displayed: only its
+// hash is stored server-side, so it cannot be reproduced, and minting a new one
+// would break the link already sitting in the candidate's inbox. The button
+// instead exchanges the account session for this session's portal token.
+function ActionRow({ action, jobTitle, companyName, now, onOpen, opening }) {
   const Icon = ACTION_ICONS[action.kind] || CircleDot;
   const tone = TONE_STYLES[actionTone(action, now)];
   const due = action.dueAt;
@@ -174,17 +188,11 @@ function ActionRow({ action, jobTitle, companyName, now, onRecover, recovering, 
             </p>
           )}
 
-          {action.canRecoverLink && (
+          {action.canOpen && (
             <div className="mt-3">
-              {recovered ? (
-                <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
-                  <CircleCheck className="h-3.5 w-3.5" /> Sent — check your inbox and spam folder.
-                </p>
-              ) : (
-                <Button variant="outline" size="sm" loading={recovering} onClick={onRecover}>
-                  <Mail className="h-3.5 w-3.5" /> Email me a fresh link
-                </Button>
-              )}
+              <Button size="sm" loading={opening} onClick={() => onOpen(action)}>
+                {openLabel(action)} <ArrowRight className="h-3.5 w-3.5" />
+              </Button>
             </div>
           )}
         </div>
@@ -247,7 +255,7 @@ function StageTrack({ status, stageHistory }) {
   );
 }
 
-function ApplicationCard({ application, next, now, onRecover, recoveringId, recoveredIds }) {
+function ApplicationCard({ application, next, now, onOpen, openingId }) {
   const [open, setOpen] = useState(false);
   const { job, status, stageHistory = [], offer } = application;
   const rejected = isRejected(status);
@@ -289,22 +297,11 @@ function ApplicationCard({ application, next, now, onRecover, recoveringId, reco
         </p>
       )}
 
-      {primary?.canRecoverLink && (
+      {primary?.canOpen && (
         <div className="mt-3">
-          {recoveredIds.has(primary.sessionId) ? (
-            <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
-              <CircleCheck className="h-3.5 w-3.5" /> Link sent to your email.
-            </p>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              loading={recoveringId === primary.sessionId}
-              onClick={() => onRecover(primary)}
-            >
-              <Mail className="h-3.5 w-3.5" /> Email me a fresh link
-            </Button>
-          )}
+          <Button size="sm" loading={openingId === primary.sessionId} onClick={() => onOpen(primary)}>
+            {openLabel(primary)} <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
         </div>
       )}
 
@@ -344,9 +341,8 @@ export default function CandidateDashboard() {
   const [error, setError] = useState("");
   const [profileForm, setProfileForm] = useState({ headline: "", location: "", bio: "", skills: "" });
   const [savingProfile, setSavingProfile] = useState(false);
-  const [recoveringId, setRecoveringId] = useState(null);
-  const [recoveredIds, setRecoveredIds] = useState(() => new Set());
-  const [recoverError, setRecoverError] = useState("");
+  const [openingId, setOpeningId] = useState(null);
+  const [openError, setOpenError] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -412,30 +408,65 @@ export default function CandidateDashboard() {
     await load();
   }
 
-  // Ask the server to re-send this session's link to the address on file. The
-  // link is never returned here — only the confirmation that it was sent.
-  async function recoverLink(action) {
+  // Enter this session's portal using the account as proof of ownership. The
+  // server re-checks that this account's email owns the application and applies
+  // the same expiry/cancellation rules the emailed link would, then returns the
+  // portal's own short-lived token. The emailed link keeps working: nothing is
+  // rotated here.
+  //
+  // The previous portal session is cleared first — the stored jobTitle/token may
+  // belong to a different interview, and carrying it over would label this one
+  // with the wrong job.
+  async function openSession(action) {
     if (!action?.sessionId) return;
-    setRecoveringId(action.sessionId);
-    setRecoverError("");
+    setOpeningId(action.sessionId);
+    setOpenError("");
     try {
-      await api.post(
-        `/candidate-dashboard/sessions/${action.kind}/${action.sessionId}/resend`,
+      const res = await api.post(
+        `/candidate-dashboard/sessions/${action.kind}/${action.sessionId}/open`,
         {},
         { headers: accountAuthHeader() }
       );
-      setRecoveredIds((prev) => new Set(prev).add(action.sessionId));
-      await load();
+      const identity = {
+        jwt: res.data.token,
+        jobTitle: res.data.session?.jobTitle,
+        candidateName: res.data.session?.candidateName,
+      };
+      if (action.kind === "interview") {
+        clearPortalAuth();
+        savePortalAuth(identity);
+        navigate("/portal/dashboard");
+      } else {
+        clearAssessmentAuth();
+        saveAssessmentAuth(identity);
+        navigate("/assessment-portal/hub");
+      }
     } catch (err) {
-      setRecoverError(err?.response?.data?.error || "We couldn't send that link. Please try again shortly.");
-    } finally {
-      setRecoveringId(null);
+      // Includes the honest refusals — expired, cancelled — in the portal's own
+      // words, so the dashboard never promises a way in that does not exist.
+      setOpenError(err?.response?.data?.error || "We couldn't open that right now. Please try again shortly.");
+      setOpeningId(null);
+      await load();
     }
   }
 
   const applicationsById = useMemo(() => {
     const map = new Map();
     for (const a of data?.appliedJobs || []) map.set(String(a._id), a);
+    return map;
+  }, [data]);
+
+  // Which sessions can be entered right now, keyed by session id. The server
+  // decides this (canOpen) rather than the browser re-deriving it from status +
+  // expiry — a device with a skewed clock must not be the thing that offers, or
+  // withholds, a way into an interview.
+  const openableSessions = useMemo(() => {
+    const map = new Map();
+    for (const entry of data?.nextActions || []) {
+      for (const action of entry.actions || []) {
+        if (action.canOpen && action.sessionId) map.set(String(action.sessionId), action);
+      }
+    }
     return map;
   }, [data]);
 
@@ -513,7 +544,7 @@ export default function CandidateDashboard() {
             These are waiting on you. Deadlines are shown in your local time.
           </p>
 
-          {recoverError && <p className="mb-3 text-sm font-medium text-red-600">{recoverError}</p>}
+          {openError && <p className="mb-3 text-sm font-medium text-red-600">{openError}</p>}
 
           <div className="space-y-3">
             {needsYou.map(({ action, application }) => (
@@ -523,9 +554,8 @@ export default function CandidateDashboard() {
                 jobTitle={application?.job?.title}
                 companyName={application?.job?.company?.name}
                 now={now}
-                onRecover={() => recoverLink(action)}
-                recovering={recoveringId === action.sessionId}
-                recovered={recoveredIds.has(action.sessionId)}
+                onOpen={openSession}
+                opening={openingId === action.sessionId}
               />
             ))}
           </div>
@@ -579,9 +609,8 @@ export default function CandidateDashboard() {
                 application={application}
                 next={nextByApplication.get(String(application._id))}
                 now={now}
-                onRecover={recoverLink}
-                recoveringId={recoveringId}
-                recoveredIds={recoveredIds}
+                onOpen={openSession}
+                openingId={openingId}
               />
             ))}
           </div>
@@ -617,6 +646,16 @@ export default function CandidateDashboard() {
                       Results are reviewed by the hiring team and aren't shown here.
                     </p>
                   )}
+                  {openableSessions.has(String(s._id)) && (
+                    <Button
+                      size="sm"
+                      className="mt-2"
+                      loading={openingId === s._id}
+                      onClick={() => openSession(openableSessions.get(String(s._id)))}
+                    >
+                      {openLabel(openableSessions.get(String(s._id)))} <ArrowRight className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>
@@ -639,6 +678,16 @@ export default function CandidateDashboard() {
                     </Badge>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">{formatAbsolute(s.interviewAt)}</p>
+                  {openableSessions.has(String(s._id)) && (
+                    <Button
+                      size="sm"
+                      className="mt-2"
+                      loading={openingId === s._id}
+                      onClick={() => openSession(openableSessions.get(String(s._id)))}
+                    >
+                      {openLabel(openableSessions.get(String(s._id)))} <ArrowRight className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>

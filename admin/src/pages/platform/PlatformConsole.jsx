@@ -21,6 +21,7 @@ import { clearAdminAuth } from "../../auth/adminAuth.js";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
 import Button from "../../components/ui/Button.jsx";
 import { Input, Label, FormGroup } from "../../components/ui/Field.jsx";
+import Modal from "../../components/ui/Modal.jsx";
 import { useToast } from "../../components/ui/Toast.jsx";
 
 const TABS = [
@@ -176,30 +177,28 @@ function TenantsTab() {
         </>
       )}
 
-      {reasonFor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setReasonFor(null)}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-semibold text-slate-900">
-              {reasonFor.action === "suspend" ? "Suspend" : "Reactivate"} {reasonFor.tenant.name}
-            </h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Every platform mutation requires a reason — it lands in the audit trail with your name on it.
-            </p>
-            <FormGroup className="mt-3">
-              <Label required>Reason</Label>
-              <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. non-payment escalation #4821" />
-            </FormGroup>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setReasonFor(null)}>
-                Cancel
-              </Button>
-              <Button size="sm" disabled={reason.trim().length < 4} onClick={submitStatusChange}>
-                Confirm
-              </Button>
-            </div>
-          </div>
+      <Modal
+        open={Boolean(reasonFor)}
+        onClose={() => setReasonFor(null)}
+        size="md"
+        title={
+          reasonFor ? `${reasonFor.action === "suspend" ? "Suspend" : "Reactivate"} ${reasonFor.tenant.name}` : ""
+        }
+        description="Every platform mutation requires a reason — it lands in the audit trail with your name on it."
+      >
+        <FormGroup className="mt-3">
+          <Label required>Reason</Label>
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. non-payment escalation #4821" />
+        </FormGroup>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={() => setReasonFor(null)}>
+            Cancel
+          </Button>
+          <Button size="sm" disabled={reason.trim().length < 4} onClick={submitStatusChange}>
+            Confirm
+          </Button>
         </div>
-      )}
+      </Modal>
     </Card>
   );
 }

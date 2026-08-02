@@ -15,6 +15,8 @@ const mongoose = require("mongoose");
 const { buildKeyterms, MAX_TERMS } = require("../../utils/keyterms");
 const backchannel = require("../../utils/backchannel");
 const repeatIntent = require("../../utils/repeatIntent");
+const endpointing = require("../../utils/endpointing");
+const finishIntent = require("../../utils/finishIntent");
 const prosody = require("../../utils/prosody");
 const speechAuth = require("../../utils/speechAuthorization");
 const speech = require("../../services/speechService");
@@ -351,7 +353,16 @@ test("3.5: the persona's patience overrides the deployment default, but never it
 });
 
 test("3.6: a persona with no patience set inherits the deployment policy unchanged", () => {
-  const base = { ...backchannel.clientPolicy(), ...repeatIntent.clientPolicy() };
+  // The deployment policy is the union of every server-owned conversational rule: the phrase
+  // bank and patience, what counts as a repeat request, when a turn has ENDED (endpointing), and
+  // what counts as the candidate saying so outright (finishIntent). A persona may override the
+  // patience numbers and nothing else — so with no patience set, the result is exactly the base.
+  const base = {
+    ...backchannel.clientPolicy(),
+    ...repeatIntent.clientPolicy(),
+    ...endpointing.clientPolicy(),
+    ...finishIntent.clientPolicy(),
+  };
   assert.deepEqual(personaService.conversationPolicy(personaService.defaultPersona()), base);
   assert.deepEqual(personaService.conversationPolicy(undefined), base);
 });

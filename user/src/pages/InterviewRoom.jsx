@@ -92,11 +92,17 @@ export default function InterviewRoom() {
     endingSoon,
     backchannel,
     personaName,
+    speak,
     askAndListen,
     acknowledge,
     finishListening,
     cancelListening,
   } = voice;
+
+  // Whether the spoken greeting has already played on this mount. Paired with a "no answers yet"
+  // check at the call site, because a ref resets on remount and a reload mid-interview must not
+  // re-introduce the interviewer.
+  const introSpokenRef = useRef(false);
 
   // Barge-in is only on where the pre-check MEASURED that this device's mic doesn't hear its own
   // speakers, and the decision came from the server, not from this page. Anywhere else the
@@ -309,6 +315,16 @@ export default function InterviewRoom() {
     handledRef.current = q;
     (async () => {
       try {
+        // Greet before asking, once. The intro turn has always existed and has always been
+        // rendered on screen, but nothing ever spoke it — so a voice candidate was dropped
+        // straight into question one by a stranger who never said who they were. Only while the
+        // candidate has yet to answer anything, so reloading the page mid-interview resumes at
+        // the current question instead of starting the introductions over.
+        const noAnswersYet = !state.turns?.some((t) => t.role === "candidate");
+        if (state.intro && noAnswersYet && !introSpokenRef.current) {
+          introSpokenRef.current = true;
+          await speak(state.intro);
+        }
         await askAndListen(q, { bargeIn });
       } catch {
         setError("Couldn't start the microphone — you can type your answer instead.");
@@ -317,7 +333,7 @@ export default function InterviewRoom() {
         busyRef.current = false;
       }
     })();
-  }, [mode, started, state, phase, askAndListen, bargeIn]);
+  }, [mode, started, state, phase, speak, askAndListen, bargeIn]);
 
   // Watchdog: `phase === "idle"` while voice mode is armed should always be momentary (the
   // orchestration effect above immediately re-arms it). If it isn't — the effect bailed because
@@ -365,6 +381,9 @@ export default function InterviewRoom() {
         // Whether the question was finished before they started answering. A question the candidate
         // talked over was not fully asked, and the server must not count it as probe coverage.
         questionDelivery: result.questionDelivery,
+        // Why this turn ended — the endpointing verdict, or that they said so outright. A
+        // condition of the interview, recorded so "it cut me off" is checkable afterwards.
+        endOfTurn: result.endOfTurn,
       });
     } finally {
       finishingRef.current = false;
@@ -566,7 +585,11 @@ export default function InterviewRoom() {
           </p>
         </div>
         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
-          Question {Math.min(state.questionCount, state.maxQuestions)} / {state.maxQuestions}
+          {/* The opening self-introduction is not one of the counted questions, so it is named
+              rather than numbered — "Question 0 / 8" reads like something has gone wrong. */}
+          {state.currentIsWarmup
+            ? "Introduction"
+            : `Question ${Math.min(state.questionCount, state.maxQuestions)} / ${state.maxQuestions}`}
         </span>
       </div>
 
@@ -578,14 +601,34 @@ export default function InterviewRoom() {
           aria-relevant="additions"
           className="max-h-[52vh] space-y-4 overflow-y-auto bg-slate-50 p-5"
         >
-          {state.turns.map((t, i) => (
-            <Bubble key={i} role={t.role} text={t.text} />
-          ))}
-          {voiceMode && phase === "listening" && interim && <Bubble role="candidate" text={interim} muted />}
+          {/* In a spoken interview the candidate sees the QUESTIONS only. Watching your own
+              words appear as you say them turns a conversation into a dictation exercise —
+              people start editing themselves against the screen instead of talking. The full
+              verbatim transcript is not lost: it is on the session and appears in the AI report
+              the recruiter reads. Typed interviews are unchanged, because there the text IS how
+              the candidate answers. */}
+          {state.turns.map((t, i) =>
+            voiceMode && (t.role === "candidate" || t.kind === "warmup_answer") ? null : (
+              <Bubble key={i} role={t.role} text={t.text} />
+            )
+          )}
+
+          {voiceMode && phase === "listening" && (
+            <div className="flex items-center gap-2 pl-11 text-xs font-medium text-slate-500">
+              <span className="relative flex h-2 w-2" aria-hidden="true">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-500" />
+              </span>
+              {endingSoon ? "Wrapping up your answer…" : "Listening…"}
+              {/* Sighted candidates get the indicator; screen-reader users would otherwise have
+                  no feedback at all that they are being heard, so they keep the words. */}
+              <span className="sr-only">{interim}</span>
+            </div>
+          )}
 
           {pending?.status === "sending" && (
             <>
-              <Bubble role="candidate" text={pending.text} muted />
+              {!voiceMode && <Bubble role="candidate" text={pending.text} muted />}
               <div className="flex items-center gap-2 pl-11 text-xs text-slate-500">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Interviewer is thinking…
               </div>

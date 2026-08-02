@@ -9,12 +9,21 @@
 // historical decisions keep pointing at the exact object that made them.
 
 const mongoose = require("mongoose");
+const { CRITERION_KINDS, IMPORTANCE_KEYS } = require("../utils/rubricEngine");
 
 const criterionSchema = new mongoose.Schema(
   {
     id: { type: String, required: true, trim: true },
     label: { type: String, required: true, trim: true },
-    kind: { type: String, enum: ["must_have", "nice_to_have", "disqualifier"], required: true },
+    // The tier WORD a human (or the compiler) actually chose. Persisted rather
+    // than re-derived from `weight`, because the weight is a normalised fraction
+    // that depends on the rest of the rubric — the choice is the audit fact, the
+    // number is just its consequence. Absent on rubrics compiled before tiers
+    // existed; rubricEngine.importanceOf falls back to `kind` for those.
+    importance: { type: String, enum: IMPORTANCE_KEYS },
+    // Derived from `importance`, never chosen separately. Legacy frozen rubrics
+    // may still carry "disqualifier"; nothing authors one any more.
+    kind: { type: String, enum: CRITERION_KINDS, required: true },
     // Normalised in code (rubricEngine.normaliseWeights): scoreable weights sum
     // to exactly 1.0; disqualifiers are gates and always carry 0.
     weight: { type: Number, required: true, min: 0, max: 1 },

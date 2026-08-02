@@ -6,7 +6,10 @@
 // produced them (reproducibility / auditability — W4).
 // 2026-07-25.2: Phase 8 — claim-probes as required coverage, probeId in the
 // question schema, and honest closing semantics (isClosing is now read by code).
-const PROMPT_VERSION = "2026-07-25.2";
+// 2026-08-03.1: recruiter-approved must-ask questions. They are delivered verbatim
+// by code, so the model is told what is coming purely so it does not pre-empt or
+// paraphrase one, and closing is additionally gated on all of them having been asked.
+const PROMPT_VERSION = "2026-08-03.1";
 
 // The fence + security preamble are shared with the résumé pipeline via
 // promptSafety (Phase 4.3). SECURITY_SENTENCE is byte-identical to the string
@@ -128,14 +131,32 @@ function probeBlock(probes) {
   );
 }
 
-function questionPrompt({ context, plan, turns, currentDifficulty, askedQuestions, questionCount, minQuestions, maxQuestions, probes }) {
+// Recruiter-approved questions still to come. The model is told about them so it does NOT
+// pre-empt or paraphrase one — they are delivered verbatim by code (aiInterviewService), and a
+// model that asked its own version first would leave the approved one arriving as a duplicate.
+function mustAskBlock(mustAsk) {
+  if (!Array.isArray(mustAsk) || mustAsk.length === 0) return "";
+  const lines = mustAsk.map((q) => `- ${q.text}`);
+  return (
+    `RECRUITER-APPROVED QUESTIONS STILL TO COME — these will be asked automatically, word for ` +
+    `word, and are NOT yours to ask. Do not ask them, do not rephrase them, and do not ask ` +
+    `anything that would make them redundant. Your job is to follow up on what the candidate ` +
+    `actually said:\n${lines.join("\n")}\n\n`
+  );
+}
+
+function questionPrompt({ context, plan, turns, currentDifficulty, askedQuestions, questionCount, minQuestions, maxQuestions, probes, mustAsk }) {
   const remaining = maxQuestions - questionCount;
   const uncovered = (probes || []).length;
-  const mustCoverNow = uncovered > 0 && remaining <= uncovered;
-  const canClose = uncovered === 0 && questionCount >= (minQuestions || 1);
+  const unasked = (mustAsk || []).length;
+  const mustCoverNow = uncovered > 0 && remaining <= uncovered + unasked;
+  // An approved question that has not been asked yet means the interview has not run the
+  // instrument the recruiter approved, so it cannot close — same gate as an uncovered probe.
+  const canClose = uncovered === 0 && unasked === 0 && questionCount >= (minQuestions || 1);
   return (
     `${context}\n\n` +
     `INTERVIEW PLAN: topics=${(plan.topics || []).join(", ")}; focus=${(plan.focusAreas || []).join(", ")}.\n\n` +
+    mustAskBlock(mustAsk) +
     probeBlock(probes) +
     `CONVERSATION SO FAR:\n${transcriptText(turns) || "(none yet — this is the opening)"}\n\n` +
     `ALREADY ASKED (never repeat these):\n${(askedQuestions || []).map((q) => "- " + q).join("\n") || "(none)"}\n\n` +

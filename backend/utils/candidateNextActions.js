@@ -87,8 +87,8 @@ function assessmentAction(session, now) {
       state: "missed",
       title: "Assessment window closed",
       detail: started
-        ? "Your assessment was not submitted before the window closed. Any answers you saved were kept."
-        : "The window to start this assessment has passed.",
+        ? "Your assessment was not submitted before the window closed. Any answers you saved were kept — the hiring team can reopen it if they choose to."
+        : "The window to start this assessment has passed. Only the hiring team can reopen it.",
       dueAt: dueAt || null,
       sessionId: session._id,
       canRecoverLink: true,
@@ -101,12 +101,16 @@ function assessmentAction(session, now) {
     state: started ? "in_progress" : "due",
     title: started ? "Finish your assessment" : "Take your assessment",
     detail: started
-      ? "You have started this assessment. Your saved answers are still there."
-      : "Open the link in your invitation email to begin.",
+      ? "You have started this assessment. Your saved answers are still there — pick up where you left off."
+      : "You can start it here, or from the link in your invitation email.",
     dueAt: dueAt || null,
     urgency: band,
     sessionId: session._id,
     canRecoverLink: true,
+    // The window is open, so this session can be entered straight from the
+    // dashboard — no emailed link required. `missed` deliberately omits this:
+    // an expired window is a recruiter decision to reopen, not a button.
+    canOpen: true,
   };
 }
 
@@ -148,8 +152,8 @@ function interviewAction(session, now) {
       state: "missed",
       title: "Interview link expired",
       detail: started
-        ? "Your interview was not finished before the link expired. You can resume where you left off on a new link."
-        : "This interview link is no longer valid.",
+        ? "Your interview was not finished before the link expired. The hiring team can reissue it, and you would resume where you left off."
+        : "This interview is no longer open. Only the hiring team can reschedule it.",
       dueAt: dueAt || null,
       scheduledAt: session.interviewAt || null,
       sessionId: session._id,
@@ -162,14 +166,21 @@ function interviewAction(session, now) {
     owner: "candidate",
     state: started ? "in_progress" : "due",
     title: started ? "Resume your interview" : "Attend your interview",
+    // No fixed slot is enforced anywhere — the portal admits this session from
+    // the moment it exists until expiresAt, which is exactly what the invitation
+    // email promises ("take it whenever suits you"). Telling the candidate to
+    // wait for interviewAt would invent a rule the system does not have, and the
+    // cost of believing it is a missed window.
     detail: started
-      ? "You have already started. Reopening your link resumes the same interview."
-      : "Open the link in your invitation email at the scheduled time.",
+      ? "You have already started. Rejoining resumes the same interview."
+      : "You can start it here any time before it closes, or use the link in your invitation email.",
     dueAt: dueAt || null,
     scheduledAt: session.interviewAt || null,
     urgency: band,
     sessionId: session._id,
     canRecoverLink: true,
+    // See assessmentAction: live window ⇒ enterable from the dashboard.
+    canOpen: true,
   };
 }
 

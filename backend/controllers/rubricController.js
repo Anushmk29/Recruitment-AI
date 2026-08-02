@@ -7,6 +7,20 @@
 const Job = require("../models/Job");
 const RoleRubric = require("../models/RoleRubric");
 const rubricService = require("../services/rubricService");
+const engine = require("../utils/rubricEngine");
+
+// The importance ladder and the selectivity presets are defined ONCE, in
+// rubricEngine, and shipped to the editor — the UI renders whatever the server
+// says a tier means. Hard-coding the multipliers in the SPA would let the two
+// drift, and "what did Critical weigh when this rubric was approved" has to have
+// exactly one answer.
+const AUTHORING_VOCAB = {
+  importanceTiers: engine.IMPORTANCE_TIERS,
+  defaultImportance: engine.DEFAULT_IMPORTANCE,
+  thresholdPresets: engine.THRESHOLD_PRESETS,
+  evidenceTypes: engine.EVIDENCE_TYPES,
+  maxCriteria: engine.MAX_CRITERIA,
+};
 
 async function loadOwnJob(req) {
   return Job.findOne({ _id: req.params.jobId, company: req.user.company });
@@ -34,7 +48,7 @@ async function getForJob(req, res) {
     rubricService.getActiveRubric(job._id, req.user.company),
     rubricService.listForJob(job._id, req.user.company),
   ]);
-  res.json({ active, versions });
+  res.json({ active, versions, vocab: AUTHORING_VOCAB });
 }
 
 // GET /api/rubrics/:id

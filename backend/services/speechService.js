@@ -24,11 +24,17 @@ function cfg() {
     sttModel: process.env.DEEPGRAM_STT_MODEL || "nova-3",
     ttsModel: process.env.DEEPGRAM_TTS_MODEL || "aura-2-thalia-en",
     language: process.env.DEEPGRAM_STT_LANGUAGE || "en",
-    // 2000ms was tuned for a snappy chat, not an interview: a candidate pausing to find a word
-    // read as "done speaking" and their turn ended mid-thought. 3200ms gives real thinking room;
-    // the client adds a further visible grace period on top (see useVoiceInterview.js) before
-    // actually treating silence as the end of the turn.
-    utteranceEndMs: Number(process.env.DEEPGRAM_UTTERANCE_END_MS || 3200),
+    // This is now an ASK, not an ANSWER. It used to be the whole end-of-turn decision, which is
+    // why it kept being raised (2000 → 3200): every value was wrong, because "are they done?"
+    // is not a question about duration. A candidate pausing to find a word was cut off; a
+    // candidate who had plainly finished sat in silence for over three seconds.
+    //
+    // The provider now just tells us early that speech stopped, and utils/endpointing.js decides
+    // what that means from the SHAPE of what was said — trailing on "and…" waits generously,
+    // a finished sentence with falling energy responds in under a second. So this wants to be
+    // near the provider minimum (1000ms), not generous: being told sooner is strictly better
+    // once being told no longer ends the turn.
+    utteranceEndMs: Number(process.env.DEEPGRAM_UTTERANCE_END_MS || 1000),
     ttlSeconds: Number(process.env.VOICE_TOKEN_TTL_SECONDS || 60),
     // Speaker diarization. Deepgram labels each word with a speaker index on the SAME stream we
     // already open, at no extra cost on nova-3 — so "a second voice answered this question" becomes

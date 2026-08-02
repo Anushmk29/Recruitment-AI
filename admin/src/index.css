@@ -70,6 +70,18 @@
     background-image: radial-gradient(circle at 1px 1px, rgba(37, 99, 235, 0.12) 1px, transparent 0);
     background-size: 28px 28px;
   }
+
+  /* Touch comfort floor, applied only where the pointer is actually coarse.
+     A recruiter works this app on a mouse most of the day and density is the
+     point — a blanket 44px control would stretch every toolbar and table row
+     for a device that isn't there. On a tablet in a meeting the same controls
+     grow to the size a thumb can hit. */
+  @media (pointer: coarse) {
+    .tap-target {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
 }
 
 /* ---------------------------------------------------------------------------
