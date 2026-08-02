@@ -16,11 +16,14 @@ services:
     name: recruitment-api
     runtime: node
     region: singapore
-    # `free` spins the service down after ~15 min idle. That is survivable for browsing
-    # but it silently breaks two things: the node-cron interview reminders (24h/1h) never
-    # fire while asleep, and a candidate opening a magic link waits ~50s for a cold start.
-    # Change to `starter` ($7/mo, always-on) before inviting real candidates. See DEPLOY.md.
-    plan: free
+    # `starter` ($7/mo, always-on). Do NOT drop back to `free`: free spins the service
+    # down after ~15 min idle, which is survivable for browsing but silently breaks three
+    # things — the node-cron interview reminders (24h/1h) never fire while asleep, a
+    # candidate opening a magic link waits ~50s for a cold start, and any detached
+    # background job is killed mid-run (assessment item generation returns 202 and
+    # finishes in the background, so a spin-down leaves a half-generated item pool that
+    # then fails the section-coverage check at approve time). See DEPLOY.md.
+    plan: starter
     rootDir: backend
     buildCommand: npm ci
     startCommand: npm start

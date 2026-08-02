@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, XCircle, Info, X } from "lucide-react";
 
@@ -34,11 +34,21 @@ export function ToastProvider({ children }) {
     [remove]
   );
 
-  const toast = {
-    success: (msg, d) => push(msg, "success", d),
-    error: (msg, d) => push(msg, "error", d),
-    info: (msg, d) => push(msg, "info", d),
-  };
+  // MUST be memoized. This object is the context value, and ToastProvider re-renders
+  // on every push AND every auto-dismiss. A fresh literal here changes identity on each
+  // of those renders, which re-runs every consumer effect that lists `toast` as a
+  // dependency — including the Socket.io connect effect in NotificationContext, whose
+  // reconnect then calls disconnect() on a socket still in CONNECTING ("WebSocket is
+  // closed before the connection is established"). Six error toasts tore the
+  // notification socket down six times. `push` is already stable via useCallback.
+  const toast = useMemo(
+    () => ({
+      success: (msg, d) => push(msg, "success", d),
+      error: (msg, d) => push(msg, "error", d),
+      info: (msg, d) => push(msg, "info", d),
+    }),
+    [push]
+  );
 
   return (
     <ToastContext.Provider value={toast}>
