@@ -18,6 +18,8 @@ const { notifyAdmin, notifyCandidate } = require("../services/notificationServic
 const { dispatchEmail } = require("../services/emailDispatchService");
 const { passwordChangedEmailTemplate } = require("../utils/emailTemplates");
 const { writeAuditLog } = require("../middleware/auditLog");
+const { billingEnforced } = require("../utils/billingMode");
+const { activateIfBypassed } = require("../services/demoActivationService");
 
 // Short-lived access token — the frontends transparently refresh it via /auth/refresh.
 // Configurable so ops can tune it without a code change. Refresh-token lifetime lives in
@@ -195,7 +197,17 @@ async function login(req, res) {
 
   if (user.role === "admin" && user.company) {
     const company = await Company.findById(user.company);
-    if (!company || company.status === "pending_payment") {
+
+    // Demo / pilot bypass (BILLING_ENFORCEMENT=off, see utils/billingMode.js).
+    // Rather than waving an unpaid tenant past the paywall into a workspace that
+    // was never provisioned, promote it to a real one here — Subscription,
+    // Workspace and CompanySettings included. Idempotent, and a no-op the moment
+    // enforcement is restored. A MISSING company doc is not a billing state, so
+    // that branch below still rejects regardless of the flag.
+    const bypassBilling = !billingEnforced() && Boolean(company);
+    if (bypassBilling) await activateIfBypassed(company);
+
+    if (!bypassBilling && (!company || company.status === "pending_payment")) {
       // Authentication itself succeeded — only full product access is gated.
       // Issue tokens anyway so the frontend can carry the admin straight to
       // checkout instead of leaving them stuck if they closed the browser
@@ -209,7 +221,7 @@ async function login(req, res) {
         user: sanitizeUser(user),
       });
     }
-    if (company.status === "suspended") {
+    if (!bypassBilling && company.status === "suspended") {
       return res.status(403).json({
         error: "Your company workspace has been suspended. Please contact support.",
         code: "COMPANY_SUSPENDED",

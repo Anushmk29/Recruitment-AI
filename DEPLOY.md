@@ -50,16 +50,82 @@ Pick **one** of the two options below.
 
 #### Option A — Cloudflare R2 (recommended: free, zero moving parts)
 
-10 GB free, no egress fees, S3-compatible. Create a bucket and an API token, then:
+10 GB storage, 1M writes and 10M reads per month, **no egress fees**, S3-compatible. For
+this workload — résumés are a few hundred KB, evidence clips ~1 MB — that is free
+indefinitely.
+
+**A1. Enable R2.** Cloudflare dashboard → **R2 Object Storage**. Cloudflare asks for a
+payment method before it will activate R2 even on the free tier. That is a billing
+formality; the free allowance is genuinely $0 and you are not charged until you exceed it.
+
+**A2. Create the bucket.** → **Create bucket**
+
+| Field | Value |
+|---|---|
+| Name | `recruitment-uploads` |
+| Location | **Asia-Pacific (APAC)** — closest to a Singapore Render region |
+| Storage class | Standard |
+
+**Leave public access DISABLED.** This is not optional. The bucket holds résumés and
+identity photos — personal data of candidates who never consented to it being world
+readable. This app never needs public access: `storageService.sendDownload()` reads objects
+into the API and streams them through Express behind auth, and the codebase issues no
+presigned URLs at all. Do not attach a public `r2.dev` URL or a custom domain to this
+bucket.
+
+**A3. Copy your Account ID.** Shown in the right-hand sidebar of the R2 overview page (and
+in your dashboard URL). It is a 32-character hex string, and it is what goes in the
+endpoint — *not* the bucket name.
+
+**A4. Create a scoped API token.** R2 → **Manage R2 API Tokens** → **Create API Token**
+
+| Field | Value |
+|---|---|
+| Token name | `recruitment-api` |
+| Permissions | **Object Read & Write** — not Admin |
+| Specify bucket | `recruitment-uploads` only |
+| TTL | Forever (or set a rotation reminder) |
+
+Scope it to the one bucket. A token with account-wide access is an unnecessary blast
+radius for a credential that lives in a dashboard env var.
+
+On create, Cloudflare shows **Access Key ID**, **Secret Access Key**, and the S3 endpoint.
+**The secret is displayed exactly once** — copy it now or you will be issuing a new token.
+Note these are R2 API token credentials; your Cloudflare global API key is a different
+thing and will not work.
+
+**A5. Fill in the env vars.**
 
 ```
 S3_BUCKET=recruitment-uploads
 S3_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-S3_ACCESS_KEY_ID=<R2 API token key id>
-S3_SECRET_ACCESS_KEY=<R2 API token secret>
+S3_ACCESS_KEY_ID=<Access Key ID from A4>
+S3_SECRET_ACCESS_KEY=<Secret Access Key from A4>
 S3_REGION=auto
 S3_FORCE_PATH_STYLE=true
 ```
+
+`S3_REGION` must be the literal string `auto` — R2 has no regions in the AWS sense, and a
+real region name makes the SDK sign requests R2 rejects. The endpoint carries the **account
+ID with no bucket in it**; the bucket is addressed by `S3_FORCE_PATH_STYLE=true`.
+
+**A6. Prove it works before you deploy.** Put those six lines in `backend/.env` and run:
+
+```bash
+cd backend
+npm run check:storage
+```
+
+It does a real put → get → byte-compare → delete against the bucket using the same
+`storageService` production uses, and maps the usual failures (`AccessDenied`,
+`NoSuchBucket`, `SignatureDoesNotMatch`, DNS) onto the specific variable that caused them.
+A pass here means the credentials are correct — worth ten seconds, because the failure mode
+in production is silent.
+
+**A7. Paste the same six vars into Render** (Part 1, Step 5). Remove them from
+`backend/.env` afterwards only if you also want local dev to use disk; keeping them means
+your machine and production share a bucket, which is convenient for debugging and slightly
+risky for housekeeping.
 
 Backblaze B2 or plain AWS S3 work identically — only `S3_ENDPOINT` / `S3_REGION` change.
 
@@ -286,6 +352,13 @@ MONGODB_URI="mongodb+srv://.../recruitment" npm run seed:plans
 ```bash
 curl https://recruitment-api.onrender.com/api/health     # {"ok":true}
 curl https://recruitment-api.onrender.com/api/ready      # checks Mongo + Redis
+```
+
+If you have not already, confirm object storage from your machine against the same bucket
+the API uses — this is the one dependency that fails silently rather than loudly:
+
+```bash
+cd backend && npm run check:storage                      # put → get → delete round-trip
 ```
 
 Then: open the admin SPA and log in → post a job → apply through the candidate SPA with a

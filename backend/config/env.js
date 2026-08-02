@@ -2,11 +2,24 @@
 // at boot with a clear message, not fail silently on the first request that needs it.
 
 const { candidateLinkBase, isDisposableHost, isLocalHost } = require("../utils/corsOrigins");
+const { billingEnforced, demoPlanKey } = require("../utils/billingMode");
 
 function validateEnv() {
   const isProd = process.env.NODE_ENV === "production";
   const errors = [];
   const warnings = [];
+
+  // Warn on EVERY boot, not only in production. This is the one flag that lets an
+  // unpaid — or suspended — tenant reach a full workspace, so it must never be on
+  // without being visible in the logs. A warning, not an error: it is a legitimate
+  // demo/pilot configuration, just never an accidental one.
+  if (!billingEnforced()) {
+    warnings.push(
+      `BILLING_ENFORCEMENT=off — the subscription paywall AND tenant suspension are NOT enforced. ` +
+        `Any registered company is auto-provisioned on the "${demoPlanKey()}" plan without paying, and a ` +
+        `suspended tenant can still log in. Demo/pilot only — remove this var and restart to re-enable.`
+    );
+  }
 
   // Emailed interview links outlive the process that sent them by days
   // (INTERVIEW_LINK_VALIDITY_HOURS, 48h default). Because only the token HASH is

@@ -14,6 +14,7 @@
     "seed:plans": "node scripts/seedSubscriptionPlans.js",
     "seed:demo": "node scripts/seedDemoAccounts.js",
     "check:env": "node scripts/checkEnv.js",
+    "check:storage": "node scripts/checkStorage.js",
     "test": "node --test \"test/unit/*.test.js\"",
     "test:watch": "node --test --watch \"test/unit/*.test.js\"",
     "test:eval": "node test/eval/runEval.js",

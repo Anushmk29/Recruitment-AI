@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const User = require("../models/User");
 const Company = require("../models/Company");
 const tenantContext = require("../utils/tenantContext");
+const { billingEnforced } = require("../utils/billingMode");
 
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
@@ -113,6 +114,10 @@ async function requireActiveCompany(req, res, next) {
     if (!req.user || !req.user.company) return next();
     const company = await Company.findById(req.user.company).select("status");
     if (!company) return res.status(403).json({ error: "Company account not found" });
+    // Demo / pilot bypass (BILLING_ENFORCEMENT=off, see utils/billingMode.js). Only the
+    // STATUS requirement is lifted — the tenant must still exist, so a dangling company
+    // reference is a hard 403 either way. Suspension is unenforced while this is on.
+    if (!billingEnforced()) return next();
     if (company.status !== "active") {
       return res.status(403).json({
         error: "Your company account is not active. Complete payment or contact support to continue.",

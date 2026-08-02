@@ -9,6 +9,7 @@ const { otpEmailTemplate } = require("../utils/emailTemplates");
 const { dispatchEmail } = require("./emailDispatchService");
 const { ServiceError } = require("../utils/errors");
 const { notifyAdmin } = require("./notificationService");
+const { activateIfBypassed } = require("./demoActivationService");
 
 function generateCompanyCode() {
   return `CMP-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
@@ -152,11 +153,18 @@ async function verifyCompanyOtp(email, otp) {
   company.status = "pending_payment";
   await company.save();
 
+  // Demo / pilot bypass: provision the workspace here instead of routing the
+  // recruiter to plan selection. No-op when billing is enforced, which is the
+  // default. See utils/billingMode.js.
+  const activated = await activateIfBypassed(company);
+
   await notifyAdmin({
     companyId: company._id,
     type: "email_verified",
     title: "Email verified",
-    message: `${admin.name}, your email is verified. Choose a subscription plan to activate your ${company.name} workspace.`,
+    message: activated
+      ? `${admin.name}, your email is verified and your ${company.name} workspace is ready.`
+      : `${admin.name}, your email is verified. Choose a subscription plan to activate your ${company.name} workspace.`,
   });
 
   return { company, admin };
