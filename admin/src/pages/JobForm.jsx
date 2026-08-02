@@ -199,6 +199,9 @@ export default function JobForm() {
             <Button as={Link} to={`/jobs/${id}/rubric`} variant="secondary" className="whitespace-nowrap">
               <ClipboardCheck className="h-4 w-4" /> Scoring Rubric
             </Button>
+            <Button as={Link} to={`/jobs/${id}/questions`} variant="secondary" className="whitespace-nowrap">
+              <ClipboardCheck className="h-4 w-4" /> Interview Questions
+            </Button>
             <Button as={Link} to={`/jobs/${id}/assessment`} variant="secondary" className="whitespace-nowrap">
               <ClipboardCheck className="h-4 w-4" /> Assessment Paper
             </Button>

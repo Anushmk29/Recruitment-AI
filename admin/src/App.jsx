@@ -41,6 +41,7 @@ const SubscriptionPage = lazy(() => import("./pages/dashboard/SubscriptionPage.j
 const Notifications = lazy(() => import("./pages/dashboard/Notifications.jsx"));
 const SettingsPage = lazy(() => import("./pages/dashboard/SettingsPage.jsx"));
 const RubricEditor = lazy(() => import("./pages/dashboard/RubricEditor.jsx"));
+const QuestionSetEditor = lazy(() => import("./pages/dashboard/QuestionSetEditor.jsx"));
 const PaperEditor = lazy(() => import("./pages/dashboard/PaperEditor.jsx"));
 const AssessmentTracker = lazy(() => import("./pages/dashboard/AssessmentTracker.jsx"));
 const ScoreExplanation = lazy(() => import("./pages/dashboard/ScoreExplanation.jsx"));
@@ -125,6 +126,7 @@ export default function App() {
             <Route path="jobs/new" element={<JobForm />} />
             <Route path="jobs/:id/edit" element={<JobForm />} />
             <Route path="jobs/:id/rubric" element={<RubricEditor />} />
+            <Route path="jobs/:id/questions" element={<QuestionSetEditor />} />
             <Route path="jobs/:id/assessment" element={<PaperEditor />} />
             <Route path="jobs/:id/assessments" element={<AssessmentTracker />} />
             <Route path="jobs/:id/candidates" element={<CandidateList />} />
