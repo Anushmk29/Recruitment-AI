@@ -373,6 +373,10 @@ _Last updated: 2026-07-31._
       `JobDetail` has error/retry branches · **AuditLog got its first read path**: company-scoped
       `GET /api/audit-logs` (action/actor/date filters, regex-escaped, paginated) + an Audit
       Trail screen in the sidebar. _6 new unit tests._
+      **Superseded 2026-08-03:** the tenant-facing Audit Trail *screen* was removed from the admin
+      sidebar (recruiters do not read raw mutation logs). The append-only `AuditLog` writes and the
+      company-scoped `GET /api/audit-logs` endpoint are UNCHANGED — the log is the compliance
+      artefact, and platform staff still read it in the Phase 16 console (`/platform` → Audit Logs).
 - [x] **Phase 14 — Integrity evidence: event-anchored clips + phone companion** _(2026-07-26)_.
       **Evidence, not footage**: the browser keeps a ~15s in-memory rolling segment
       (`MediaRecorder`, rotated so every segment is a valid standalone WebM) and persists a clip

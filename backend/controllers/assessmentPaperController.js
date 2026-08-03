@@ -12,9 +12,19 @@ const itemGenService = require("../services/itemGenService");
 // run is working or was orphaned by a dead process, and the editor uses it to
 // disable the Resume button. Compute liveness with the SERVER's clock (client-side
 // staleness would be at the mercy of clock skew) and ship it alongside.
+//
+// `generationPlan` ships for the same reason: how many items a "Generate" click
+// will actually build depends on poolItemCount and the tier/paper caps, all of
+// which are server-side and env-tunable. Computing it here rather than in the SPA
+// keeps one authority for the number, so the editor can never quote a figure the
+// generator won't honour.
 function withRunHealth(paper) {
   const doc = typeof paper.toObject === "function" ? paper.toObject() : paper;
-  return { ...doc, generationStalled: itemGenService.isRunStale(doc.generationRun) };
+  return {
+    ...doc,
+    generationStalled: itemGenService.isRunStale(doc.generationRun),
+    generationPlan: itemGenService.generationPlan(doc),
+  };
 }
 
 async function loadJob(req) {

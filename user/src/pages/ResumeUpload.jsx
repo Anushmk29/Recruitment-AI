@@ -107,7 +107,18 @@ export default function ResumeUpload() {
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600 hover:border-brand-400">
               <UploadCloud className="h-4 w-4 text-slate-400" />
               {file ? file.name : "Choose a PDF or DOCX file"}
-              <input type="file" accept=".pdf,.docx" className="hidden" onChange={(e) => setFile(e.target.files[0])} required />
+              {/* Deliberately NOT `required`: the input is visually hidden, and Chrome
+                  refuses to submit a form whose invalid control cannot be focused —
+                  it aborts silently ("An invalid form control is not focusable") and
+                  onSubmit never runs, so the button appeared dead. The check below in
+                  handleUpload is the real one, and it can actually say something. */}
+              <input
+                type="file"
+                name="resume"
+                accept=".pdf,.docx"
+                className="hidden"
+                onChange={(e) => setFile(e.target.files[0] || null)}
+              />
             </label>
           </FormGroup>
           <Button type="submit" loading={status === "uploading"}>

@@ -339,6 +339,71 @@ test("a missing generationRun blocks nothing", () => {
   assert.equal(isRunActive(undefined, 0), false);
 });
 
+// --- Pool sizing & cost visibility -------------------------------------------
+// The recruiter sets ONE number ("questions served"); generation runs off
+// poolItemCount, and in claim_tiered mode off poolItemCount × 3 tiers. That gap
+// is deliberate — a bank bigger than the served count is what makes each
+// candidate's draw different and what lets flagged items be discarded — but it
+// must be (a) tied to the served count so an edit can't strand it, and (b) shown
+// before it is spent.
+
+const paperService = require("../../services/assessmentPaperService");
+const { generationPlan, buildSpecs } = require("../../services/itemGenService");
+
+function planSection(over = {}) {
+  return {
+    id: "s1",
+    title: "Core",
+    criterionIds: ["c1"],
+    servedItemCount: 4,
+    poolItemCount: 8,
+    difficultyMix: { easy: 1, medium: 2, hard: 1 },
+    timeLimitSec: 300,
+    ...over,
+  };
+}
+
+test("the item bank is clamped to [served, 2× served] in both directions", () => {
+  assert.equal(paperService.normalisePool(16, 3), 6, "lowering the served count must shrink the bank with it");
+  assert.equal(
+    paperService.normalisePool(4, 8),
+    8,
+    "a bank below the served count leaves the section permanently unapprovable — poolItemCount has no UI control"
+  );
+  assert.equal(paperService.normalisePool(10, 6), 10, "a bank already in range is left alone");
+});
+
+test("claim_tiered costs 3× fixed, and the plan says so out loud", () => {
+  const sections = [planSection()];
+  const fixed = generationPlan({ difficultyPolicy: { mode: "fixed" }, sections });
+  const tiered = generationPlan({ difficultyPolicy: { mode: "claim_tiered" }, sections });
+
+  assert.equal(fixed.sections[0].planned, 8, "fixed generates the bank (2× served), not the served count");
+  assert.equal(fixed.sections[0].servedItemCount, 4, "and the served count rides along so the editor can show both");
+  assert.equal(tiered.sections[0].planned, tiered.sections[0].perTier * 3, "one bank per difficulty tier");
+  assert.ok(tiered.total > fixed.total, "the tier multiplier must be visible, never silent");
+});
+
+test("the plan the editor shows is exactly what buildSpecs will generate", () => {
+  const rubric = { criteria: [{ id: "c1", probeHint: "" }] };
+  for (const mode of ["fixed", "claim_tiered"]) {
+    const paper = { difficultyPolicy: { mode }, sections: [planSection(), planSection({ id: "s2" })] };
+    assert.equal(
+      buildSpecs(paper, rubric).length,
+      generationPlan(paper).total,
+      `${mode}: the quoted cost must equal the generated cost, or the editor is lying about spend`
+    );
+  }
+});
+
+test("a plan over the per-paper ceiling is flagged as capped, not quietly truncated", () => {
+  const sections = Array.from({ length: 5 }, (_, i) => planSection({ id: `s${i + 1}` }));
+  const plan = generationPlan({ difficultyPolicy: { mode: "claim_tiered" }, sections });
+  assert.ok(plan.uncappedTotal > plan.paperCap, "fixture must exceed the ceiling for this test to mean anything");
+  assert.equal(plan.capped, true);
+  assert.equal(plan.total, plan.paperCap, "the honest number is what will actually be built");
+});
+
 test("heartbeatAt is a real schema path, so the loop's stamp persists", () => {
   const paper = new AssessmentPaper({
     job: new mongoose.Types.ObjectId(),

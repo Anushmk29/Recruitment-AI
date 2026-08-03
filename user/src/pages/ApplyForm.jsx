@@ -421,12 +421,15 @@ export default function ApplyForm() {
             <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-600 hover:border-brand-400">
               <Paperclip className="h-4 w-4 text-slate-400" />
               {resume ? resume.name : "Choose a PDF or DOCX file (max 5 MB)"}
+              {/* Not `required` — see ResumeUpload.jsx: a hidden invalid control makes
+                  Chrome abort the submit silently and onSubmit never fires, so the
+                  candidate gets no message at all. handleSubmit enforces the resume. */}
               <input
                 type="file"
+                name="resume"
                 accept=".pdf,.docx"
                 className="hidden"
                 onChange={handleResumeChange}
-                required={!resumeId}
               />
             </label>
             <p className="mt-1.5 text-xs text-slate-400">

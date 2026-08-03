@@ -62,9 +62,27 @@ const MIN_SERVED = 2;
 const MAX_SERVED = 8;
 const SEC_PER_ITEM_MIN = 45;
 const SEC_PER_ITEM_MAX = 120;
+const POOL_MULTIPLIER = 2; // a section's bank is at most 2× what one candidate sees
 
 function clamp(n, lo, hi) {
   return Math.min(hi, Math.max(lo, Math.round(Number(n) || 0)));
+}
+
+/**
+ * A section's item bank is deliberately larger than the number one candidate
+ * answers: the surplus is what makes every candidate's draw different (a leaked
+ * paper is worth less) and the buffer that absorbs items the blind-solve gate
+ * flags. But the pool must stay TIED to the served count, in BOTH directions —
+ * this is one function precisely so compile and edit cannot disagree.
+ *
+ * Left untied (as it was), an edit to servedItemCount silently broke one of two
+ * things: lowering it burned generation budget on a pool sized for the old,
+ * bigger test; raising it could leave poolItemCount BELOW servedItemCount, so the
+ * section was unapprovable ("has 4 approved item(s) but serves 8") with no way to
+ * fix it from the editor, because poolItemCount has no control.
+ */
+function normalisePool(rawPool, servedItemCount) {
+  return clamp(rawPool, servedItemCount, servedItemCount * POOL_MULTIPLIER);
 }
 
 /**
@@ -86,7 +104,7 @@ function normaliseBlueprint(rawSections, rubric) {
     criterionIds.forEach((id) => assigned.add(id));
 
     const servedItemCount = clamp(raw.servedItemCount, MIN_SERVED, MAX_SERVED);
-    const poolItemCount = clamp(raw.poolItemCount, servedItemCount, servedItemCount * 2);
+    const poolItemCount = normalisePool(raw.poolItemCount, servedItemCount);
     sections.push({
       id: `s${sections.length + 1}`,
       title: typeof raw.title === "string" && raw.title.trim() ? raw.title.trim().slice(0, 80) : `Section ${sections.length + 1}`,
@@ -108,7 +126,7 @@ function normaliseBlueprint(rawSections, rubric) {
       title: "Core requirements",
       criterionIds: missedMustHaves.map((c) => c.id),
       servedItemCount: served,
-      poolItemCount: clamp(served * 1.5, served, served * 2),
+      poolItemCount: normalisePool(served * 1.5, served),
       difficultyMix: normaliseMix(null, served),
       timeLimitSec: served * 75,
     });
@@ -242,6 +260,9 @@ async function updateDraft(paperId, companyId, changes = {}) {
       if (edit.servedItemCount !== undefined) {
         section.servedItemCount = clamp(edit.servedItemCount, MIN_SERVED, MAX_SERVED);
         section.difficultyMix = normaliseMix(edit.difficultyMix || section.difficultyMix, section.servedItemCount);
+        // Resize the bank with the test — see normalisePool for why leaving this
+        // behind breaks the section in both directions.
+        section.poolItemCount = normalisePool(section.poolItemCount, section.servedItemCount);
       } else if (edit.difficultyMix) {
         section.difficultyMix = normaliseMix(edit.difficultyMix, section.servedItemCount);
       }
@@ -335,6 +356,8 @@ module.exports = {
   engineEnabled,
   tenantEnabled,
   assertEnabled,
+  normalisePool,
+  POOL_MULTIPLIER,
   compileBlueprint,
   updateDraft,
   approve,

@@ -46,7 +46,6 @@ const PaperEditor = lazy(() => import("./pages/dashboard/PaperEditor.jsx"));
 const AssessmentTracker = lazy(() => import("./pages/dashboard/AssessmentTracker.jsx"));
 const ScoreExplanation = lazy(() => import("./pages/dashboard/ScoreExplanation.jsx"));
 const ReviewQueue = lazy(() => import("./pages/dashboard/ReviewQueue.jsx"));
-const AuditTrail = lazy(() => import("./pages/dashboard/AuditTrail.jsx"));
 
 const PlatformConsole = lazy(() => import("./pages/platform/PlatformConsole.jsx"));
 
@@ -141,7 +140,6 @@ export default function App() {
             <Route path="subscription" element={<SubscriptionPage />} />
             <Route path="notifications" element={<Notifications />} />
             <Route path="settings" element={<SettingsPage />} />
-            <Route path="audit-trail" element={<AuditTrail />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>

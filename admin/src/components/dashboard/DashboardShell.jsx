@@ -15,7 +15,6 @@ import {
   X,
   ChevronDown,
   Scale,
-  History,
 } from "lucide-react";
 import { useAdminAuth } from "../../auth/useAdminAuth.js";
 import { clearAdminAuth, getAdminRefreshToken } from "../../auth/adminAuth.js";
@@ -35,7 +34,6 @@ const NAV_ITEMS = [
   { to: "/reports", label: "Reports", icon: BarChart3 },
   { to: "/subscription", label: "Subscription", icon: CreditCard },
   { to: "/notifications", label: "Notifications", icon: Bell },
-  { to: "/audit-trail", label: "Audit Trail", icon: History },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 

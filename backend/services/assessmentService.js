@@ -287,6 +287,19 @@ async function loginWithToken(token) {
 // item keys: candidate item payloads are built by itemsPayload below, which
 // never reads `key`. A serializer test greps every portal payload for "key".
 function dashboardPayload(session, candidate, job, paper) {
+  // Per-section answered counts, computed with the SCORER's own isAnswered — so
+  // the number a candidate reads before the final submit is literally the number
+  // that gets scored, not a second opinion rendered by the client. Keys are never
+  // touched here; this counts presence of an answer, never its correctness.
+  const typeById = new Map((paper?.items || []).map((i) => [i.id, i.type]));
+  const responseById = new Map((session.responses || []).map((r) => [r.itemId, r.response]));
+  const answeredBySection = new Map();
+  for (const assembled of session.assembledItems || []) {
+    const prev = answeredBySection.get(assembled.sectionId) || 0;
+    const answered = scorer.isAnswered(typeById.get(assembled.itemId), responseById.get(assembled.itemId));
+    answeredBySection.set(assembled.sectionId, prev + (answered ? 1 : 0));
+  }
+
   return {
     candidateName: candidate.basicDetails.name,
     jobTitle: job.title,
@@ -307,6 +320,7 @@ function dashboardPayload(session, candidate, job, paper) {
           : s.servedItemCount
       ),
       timeLimitSec: s.timeLimitSec,
+      answeredCount: answeredBySection.get(s.id) || 0,
     })),
     sectionState: session.sectionState,
     deviceCheck: session.deviceCheck,

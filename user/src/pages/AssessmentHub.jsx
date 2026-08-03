@@ -1,14 +1,31 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Loader2, AlertTriangle, Clock, CheckCircle2, PlayCircle, ShieldCheck, Send } from "lucide-react";
+import {
+  Loader2,
+  AlertTriangle,
+  AlertCircle,
+  Clock,
+  CheckCircle2,
+  PlayCircle,
+  ShieldCheck,
+  Send,
+  ChevronRight,
+  Lock,
+} from "lucide-react";
 import api from "../api/client.js";
-import { authHeader, clearAuth, getAuth } from "../portal/assessmentAuth.js";
+import { authHeader, getAuth } from "../portal/assessmentAuth.js";
 import { Card, Badge } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 
 // Section hub (ASSESSMENT-ENGINE-PLAN A2.4): instructions → consent (when the
 // paper runs proctoring) → per-section status/timers with Start/Resume → final
 // submit once every section is done. The exam grammar candidates already know.
+//
+// Two rules this screen learned from the item screen:
+//   1. A blocked action names its blocker. "Finish every section" is not an
+//      instruction if it does not say WHICH section, with a way to get there.
+//   2. A failed action never destroys the page. Load failures are fatal and take
+//      the screen; action failures are inline and leave everything reachable.
 
 const SECTION_STATUS = {
   not_started: { label: "Not started", tone: "slate" },
@@ -16,32 +33,39 @@ const SECTION_STATUS = {
   completed: { label: "Submitted", tone: "green" },
 };
 
-function fmtClock(sec) {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+// A time LIMIT is a duration, not a clock. "30:00" reads as a countdown already
+// running; "30 min" reads as the budget it actually is.
+function fmtDuration(sec) {
+  const total = Math.max(0, Math.round(sec || 0));
+  if (total < 60) return `${total} sec`;
+  const m = Math.round(total / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return rest ? `${h} hr ${rest} min` : `${h} hr`;
 }
 
 export default function AssessmentHub() {
   const navigate = useNavigate();
   const [session, setSession] = useState(null);
-  const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
   const [consentChecked, setConsentChecked] = useState(false);
-  const [submitConfirm, setSubmitConfirm] = useState(false);
+  const [lockAcknowledged, setLockAcknowledged] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const res = await api.get("/assessment-portal/me", { headers: authHeader() });
       setSession(res.data.session);
     } catch (err) {
-      setError(err.response?.data?.error || "Could not load your assessment. Use your emailed link again.");
+      setLoadError(err.response?.data?.error || "Could not load your assessment. Use your emailed link again.");
     }
   }, []);
 
   useEffect(() => {
     if (!getAuth()?.jwt) {
-      setError("Please open your assessment through the link in your invitation email.");
+      setLoadError("Please open your assessment through the link in your invitation email.");
       return;
     }
     load();
@@ -49,6 +73,7 @@ export default function AssessmentHub() {
 
   async function begin() {
     setBusy(true);
+    setActionError("");
     try {
       // Device/browser snapshot first (best-effort), then start.
       await api
@@ -68,34 +93,32 @@ export default function AssessmentHub() {
       const res = await api.post("/assessment-portal/start", {}, { headers: authHeader() });
       setSession(res.data.session);
     } catch (err) {
-      setError(err.response?.data?.error || "Could not start the assessment.");
+      setActionError(err.response?.data?.error || "Could not start the assessment. Nothing has been recorded — try again.");
     } finally {
       setBusy(false);
     }
-  }
-
-  async function openSection(sectionId) {
-    navigate(`/assessment-portal/section/${sectionId}`);
   }
 
   async function finalSubmit() {
     setBusy(true);
+    setActionError("");
     try {
       const res = await api.post("/assessment-portal/submit", {}, { headers: authHeader() });
       setSession((s) => ({ ...s, status: res.data.status }));
-      setSubmitConfirm(false);
     } catch (err) {
-      setError(err.response?.data?.error || "Submission failed — your answers are saved; try again.");
+      // Inline, NOT page-level: a network blip at the final step must not take
+      // the candidate's own sections off the screen.
+      setActionError(err.response?.data?.error || "Submission failed — your answers are saved. Try again.");
     } finally {
       setBusy(false);
     }
   }
 
-  if (error) {
+  if (loadError) {
     return (
       <Card className="text-center">
         <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-red-500" />
-        <p className="text-sm font-medium text-red-600">{error}</p>
+        <p className="text-sm font-medium text-red-600">{loadError}</p>
       </Card>
     );
   }
@@ -108,10 +131,19 @@ export default function AssessmentHub() {
   }
 
   const started = Boolean(session.startedAt);
-  const sectionStateById = new Map((session.sectionState || []).map((s) => [s.sectionId, s]));
-  const allDone =
-    started &&
-    (session.sections || []).every((s) => (sectionStateById.get(s.id)?.status || "not_started") === "completed");
+  const sections = session.sections || [];
+  const stateById = new Map((session.sectionState || []).map((s) => [s.sectionId, s]));
+  const statusOf = (id) => stateById.get(id)?.status || "not_started";
+  const outstanding = started ? sections.filter((s) => statusOf(s.id) !== "completed") : sections;
+  const allDone = started && outstanding.length === 0;
+
+  const totals = sections.reduce(
+    (acc, s) => ({
+      answered: acc.answered + (statusOf(s.id) === "not_started" ? 0 : s.answeredCount || 0),
+      items: acc.items + (s.itemCount || 0),
+    }),
+    { answered: 0, items: 0 }
+  );
 
   if (session.status === "completed") {
     return (
@@ -122,6 +154,13 @@ export default function AssessmentHub() {
           Thank you, {session.candidateName}. Your answers are in. If you advance, your AI interview invitation will arrive by
           email — keep an eye on your inbox.
         </p>
+        {totals.items > 0 && (
+          <p className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-50 px-3.5 py-2 text-xs text-slate-500">
+            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+            {totals.answered} of {totals.items} questions answered across {sections.length} section
+            {sections.length === 1 ? "" : "s"}
+          </p>
+        )}
       </Card>
     );
   }
@@ -138,11 +177,18 @@ export default function AssessmentHub() {
         </div>
         <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1">
-            <Clock className="h-3.5 w-3.5" /> Start by {new Date(session.startDeadline).toLocaleString()}
+            <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Start by {new Date(session.startDeadline).toLocaleString()}
           </span>
           <span>Link valid until {new Date(session.expiresAt).toLocaleString()}</span>
         </div>
       </Card>
+
+      {actionError && (
+        <p className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-700" role="alert">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          {actionError}
+        </p>
+      )}
 
       {session.paused && (
         <Card className="border-amber-200 bg-amber-50/60">
@@ -160,67 +206,157 @@ export default function AssessmentHub() {
             {session.instructions ||
               "Each section is timed separately — once you start a section, its clock runs until you submit it. Your answers save automatically; if you lose connection, reopen your link to resume exactly where you left off."}
           </p>
+
+          {sections.length > 0 && (
+            <ul className="mt-4 space-y-1.5">
+              {sections.map((s) => (
+                <li key={s.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                  <span className="min-w-0 truncate font-medium text-slate-700">{s.title}</span>
+                  <span className="shrink-0 text-xs text-slate-500">
+                    {s.itemCount} questions · {fmtDuration(s.timeLimitSec)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
           {session.proctoringRequired && (
-            <label className="mt-4 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-              <input type="checkbox" className="mt-0.5" checked={consentChecked} onChange={(e) => setConsentChecked(e.target.checked)} />
+            <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0"
+                checked={consentChecked}
+                onChange={(e) => setConsentChecked(e.target.checked)}
+              />
               <span>
-                <ShieldCheck className="mr-1 inline h-4 w-4 text-brand-600" />
+                <ShieldCheck className="mr-1 inline h-4 w-4 text-brand-600" aria-hidden="true" />
                 I consent to integrity monitoring during this assessment (tab switches, focus changes and similar signals are
                 recorded). These are advisory signals reviewed by a human — nothing terminates your test automatically.
               </span>
             </label>
           )}
-          <Button className="mt-4" onClick={begin} loading={busy} disabled={session.proctoringRequired && !consentChecked}>
-            <PlayCircle className="h-4 w-4" /> Start assessment
-          </Button>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button onClick={begin} loading={busy} disabled={session.proctoringRequired && !consentChecked}>
+              <PlayCircle className="h-4 w-4" /> Start assessment
+            </Button>
+            {session.proctoringRequired && !consentChecked && (
+              <p className="text-xs font-medium text-amber-700">Tick the consent box above to begin.</p>
+            )}
+          </div>
         </Card>
       )}
 
       {started && (
-        <Card>
-          <h2 className="text-base font-semibold text-slate-800">Sections</h2>
-          <div className="mt-3 space-y-2">
-            {(session.sections || []).map((section) => {
-              const state = sectionStateById.get(section.id) || { status: "not_started" };
-              const meta = SECTION_STATUS[state.status] || SECTION_STATUS.not_started;
-              return (
-                <div key={section.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 p-3">
-                  <div className="min-w-[10rem] flex-1">
-                    <p className="text-sm font-semibold text-slate-800">{section.title}</p>
-                    <p className="text-xs text-slate-400">
-                      {section.itemCount} questions · {fmtClock(section.timeLimitSec)} time limit
-                    </p>
-                  </div>
-                  <Badge tone={meta.tone}>{meta.label}</Badge>
-                  {state.status !== "completed" && (
-                    <Button onClick={() => openSection(section.id)} disabled={busy || session.paused}>
-                      {state.status === "in_progress" ? "Resume" : "Start"}
-                    </Button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+        <>
+          <Card>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-base font-semibold text-slate-800">Sections</h2>
+              <p className="text-xs text-slate-500">
+                {sections.length - outstanding.length} of {sections.length} submitted
+              </p>
+            </div>
 
-          <div className="mt-5 border-t border-slate-100 pt-4">
-            {!submitConfirm ? (
-              <Button onClick={() => setSubmitConfirm(true)} disabled={busy || !allDone} variant={allDone ? "primary" : "secondary"}>
-                <Send className="h-4 w-4" /> Submit assessment
-              </Button>
-            ) : (
-              <div className="flex flex-wrap items-center gap-3">
-                <p className="text-sm text-slate-600">Submit your assessment? You can't change answers after this.</p>
-                <Button onClick={finalSubmit} loading={busy}>
-                  Yes, submit
-                </Button>
-                <Button variant="ghost" onClick={() => setSubmitConfirm(false)}>
-                  Not yet
-                </Button>
-              </div>
+            <div className="mt-3 space-y-2">
+              {sections.map((section) => {
+                const status = statusOf(section.id);
+                const meta = SECTION_STATUS[status] || SECTION_STATUS.not_started;
+                const answered = status === "not_started" ? 0 : section.answeredCount || 0;
+                const total = section.itemCount || 0;
+                const pct = total ? Math.round((answered / total) * 100) : 0;
+                return (
+                  <div key={section.id} className="rounded-xl border border-slate-200 p-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="min-w-[10rem] flex-1">
+                        <p className="text-sm font-semibold text-slate-800">{section.title}</p>
+                        <p className="text-xs text-slate-400">
+                          {total} questions · {fmtDuration(section.timeLimitSec)} limit
+                        </p>
+                      </div>
+                      <Badge tone={meta.tone}>{meta.label}</Badge>
+                      {status !== "completed" && (
+                        <Button onClick={() => navigate(`/assessment-portal/section/${section.id}`)} disabled={busy || session.paused}>
+                          {status === "in_progress" ? "Resume" : "Start"}
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+
+                    {/* Answered-so-far, counted by the same code that scores it.
+                        A submitted section's bar is a record, not progress — it
+                        never wears the in-flight blue. */}
+                    {status !== "not_started" && total > 0 && (
+                      <div className="mt-2.5">
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className={`h-full ${
+                              status !== "completed" ? "bg-brand-600" : answered === total ? "bg-emerald-500" : "bg-slate-400"
+                            }`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {answered} of {total} answered
+                          {status === "completed" && answered < total && (
+                            <span className="text-slate-400"> · {total - answered} left blank</span>
+                          )}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Blocked state lives HERE, not in a second card that repeats every
+                row and button one screen down. The rows above already carry the
+                actions; this only has to name what is still open. */}
+            {!allDone && (
+              <p className="mt-4 flex items-start gap-2 border-t border-slate-100 pt-3.5 text-sm text-slate-600">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+                <span>
+                  Final submit unlocks once every section is in. Still open:{" "}
+                  {outstanding.map((s, i) => (
+                    <span key={s.id}>
+                      {i > 0 && ", "}
+                      <strong className="font-semibold text-slate-800">{s.title}</strong>
+                    </span>
+                  ))}
+                  .
+                </span>
+              </p>
             )}
-            {!allDone && <p className="mt-2 text-xs text-slate-400">Finish every section to enable the final submit.</p>}
-          </div>
-        </Card>
+          </Card>
+
+          {allDone && (
+            <Card>
+              <h2 className="text-base font-semibold text-slate-800">Submit your assessment</h2>
+              <p className="mt-2 text-sm text-slate-600">
+                Every section is submitted and locked. This hands {totals.answered} answered question
+                {totals.answered === 1 ? "" : "s"} of {totals.items} to the hiring team for scoring.
+              </p>
+
+              <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                <input
+                  type="checkbox"
+                  checked={lockAcknowledged}
+                  onChange={(e) => setLockAcknowledged(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                />
+                <span className="text-sm text-slate-700">
+                  I understand this is final — my answers can't be changed after I submit.
+                </span>
+              </label>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <Button onClick={finalSubmit} loading={busy} disabled={!lockAcknowledged}>
+                  <Send className="h-4 w-4" /> Submit assessment
+                </Button>
+                {!lockAcknowledged && <p className="text-xs font-medium text-slate-500">Confirm above to submit.</p>}
+              </div>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );

@@ -16,17 +16,50 @@
   --color-brand-900: #1e3a8a;
   --color-brand-950: #172554;
 
-  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -8px rgba(15, 23, 42, 0.08);
+  /* Outcome — the system's only semantic colour, and the one a candidate reads
+     fastest. Named for meaning rather than hue so the Reserved Verdict Rule is
+     enforceable by grep: a component reaching for `amber-700` to mean "note"
+     is visible in review in a way `text-amber-700` never was.
+
+     Each pair is contrast-checked against its own tint at 12px, which is the
+     size these actually ship at inside a badge:
+       positive  #047857 on #d1fae5 → 4.83:1
+       pending   #92400e on #fef3c7 → 6.37:1   (amber-700 was 4.35:1, under AA)
+       negative  #b91c1c on #fee2e2 → 5.25:1 */
+  --color-verdict-positive: #047857;
+  --color-verdict-positive-tint: #d1fae5;
+  --color-verdict-pending: #92400e;
+  --color-verdict-pending-tint: #fef3c7;
+  --color-verdict-negative: #b91c1c;
+  --color-verdict-negative-tint: #fee2e2;
+
+  /* Elevation — four planes, all cool-tinted so layering reads as lift rather
+     than as drop shadow. Matches admin/src/index.css; see DESIGN.md
+     § Elevation & Depth. */
   --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -8px rgba(15, 23, 42, 0.08);
+  --shadow-lift: 0 2px 4px rgba(15, 23, 42, 0.04), 0 18px 40px -12px rgba(15, 23, 42, 0.13);
+  --shadow-deep: 0 4px 8px rgba(15, 23, 42, 0.05), 0 36px 64px -20px rgba(15, 23, 42, 0.18);
+
+  /* Motion. Three curves cover the whole system; the browser default `ease` is
+     never used, and nothing overshoots — bounce reads as a toy on a product
+     that decides livelihoods. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 @layer base {
   html {
     font-family: var(--font-sans);
+    /* `clip`, not `hidden` — `hidden` creates a scroll container and would
+       break the sticky app navbar. */
+    overflow-x: clip;
   }
 
   body {
     @apply bg-slate-50 text-slate-900 antialiased;
+    overflow-x: clip;
   }
 
   h1,
@@ -45,9 +78,44 @@
   .shadow-card {
     box-shadow: var(--shadow-card);
   }
+  .shadow-lift {
+    box-shadow: var(--shadow-lift);
+  }
+  .shadow-deep {
+    box-shadow: var(--shadow-deep);
+  }
   .bg-grid {
     background-image: radial-gradient(circle at 1px 1px, rgba(37, 99, 235, 0.12) 1px, transparent 0);
     background-size: 28px 28px;
+  }
+
+  /* Touch comfort floor, applied only where the pointer is actually coarse.
+     Candidates reach this app on whatever device they have, and a good share of
+     them are on a phone; a thumb needs 44px. On a mouse the sm/md button
+     heights stay 32/40px, which is what keeps a dense card readable. */
+  @media (pointer: coarse) {
+    .tap-target {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion.
+
+   The policy is movement stops, feedback does not. Components opt out of
+   transform and looping animation through Tailwind's `motion-reduce:` variant
+   and framer-motion's own `useReducedMotion()`, so hover, focus, press, and
+   loading all still register — just without travel. There is deliberately no
+   blanket `animation: 0.01ms` kill here: that removes the state change along
+   with the movement, which is the opposite of what the preference asks for.
+
+   This block is only the backstop for things no component owns.
+   --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
 }
 

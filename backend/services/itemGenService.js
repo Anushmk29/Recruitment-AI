@@ -96,6 +96,75 @@ function httpError(status, message, code) {
 // numeric/ordering appear sparsely — they're harder to generate unambiguously.
 const TYPE_CYCLE = ["mcq_single", "mcq_single", "mcq_multi", "mcq_single", "ordering", "mcq_single", "mcq_multi", "numeric"];
 
+const TIERS = ["easy", "medium", "hard"];
+
+/**
+ * How many items generation will actually build for ONE section, and how that
+ * number is arrived at. Pure — no rubric, no I/O.
+ *
+ * This exists because the recruiter only ever sets `servedItemCount` ("questions
+ * served"), while generation runs off `poolItemCount`, and in claim_tiered mode
+ * off poolItemCount × 3 tiers. That gap is intentional (a pool bigger than the
+ * served count is what makes every candidate's draw different, and it absorbs
+ * items the blind-solve gate flags) but it was invisible: a section serving 5
+ * could silently generate 24. buildSpecs is now written in terms of this
+ * function and the editor renders it, so the number the recruiter sees before
+ * spending is exactly the number that gets built.
+ */
+function sectionPlan(section, mode) {
+  if (mode === "claim_tiered") {
+    const perTier = Math.min(section.poolItemCount, poolCapPerTier());
+    return {
+      sectionId: section.id,
+      title: section.title,
+      servedItemCount: section.servedItemCount,
+      poolItemCount: section.poolItemCount,
+      perTier,
+      tiers: TIERS.length,
+      planned: perTier * TIERS.length,
+    };
+  }
+  const mix = section.difficultyMix || {};
+  const total = Math.max(1, (mix.easy || 0) + (mix.medium || 0) + (mix.hard || 0));
+  const scale = section.poolItemCount / total;
+  const counts = {
+    easy: Math.round((mix.easy || 0) * scale),
+    medium: Math.round((mix.medium || 0) * scale),
+    hard: Math.round((mix.hard || 0) * scale),
+  };
+  return {
+    sectionId: section.id,
+    title: section.title,
+    servedItemCount: section.servedItemCount,
+    poolItemCount: section.poolItemCount,
+    perTier: null,
+    tiers: 1,
+    counts,
+    planned: counts.easy + counts.medium + counts.hard,
+  };
+}
+
+/**
+ * The whole paper's generation plan — what a "Generate items" click will cost,
+ * before it is clicked. `capped` means the per-paper ceiling will truncate the
+ * plan, which the editor must say out loud rather than let the recruiter believe
+ * every section got its full pool (rule 5: a degraded outcome is labelled).
+ */
+function generationPlan(paper) {
+  const mode = paper?.difficultyPolicy?.mode || "fixed";
+  const sections = (paper?.sections || []).map((s) => sectionPlan(s, mode));
+  const uncappedTotal = sections.reduce((n, s) => n + s.planned, 0);
+  const paperCap = maxItemsPerPaper();
+  return {
+    mode,
+    sections,
+    uncappedTotal,
+    total: Math.min(uncappedTotal, paperCap),
+    paperCap,
+    capped: uncappedTotal > paperCap,
+  };
+}
+
 /**
  * Expand a paper's sections into concrete item specs.
  * fixed mode        → one pool per section following the section's difficultyMix,
@@ -121,26 +190,19 @@ function buildSpecs(paper, rubric) {
     });
   };
 
+  const mode = paper.difficultyPolicy?.mode || "fixed";
   for (const section of paper.sections) {
-    if (paper.difficultyPolicy?.mode === "claim_tiered") {
-      const perTier = Math.min(section.poolItemCount, poolCapPerTier());
-      for (const tier of ["easy", "medium", "hard"]) {
-        for (let i = 0; i < perTier; i++) {
+    const plan = sectionPlan(section, mode);
+    if (mode === "claim_tiered") {
+      for (const tier of TIERS) {
+        for (let i = 0; i < plan.perTier; i++) {
           pushSpec(section, section.criterionIds[i % section.criterionIds.length], tier);
         }
       }
     } else {
-      const mix = section.difficultyMix || {};
-      const total = Math.max(1, (mix.easy || 0) + (mix.medium || 0) + (mix.hard || 0));
-      const scale = section.poolItemCount / total;
-      const counts = {
-        easy: Math.round((mix.easy || 0) * scale),
-        medium: Math.round((mix.medium || 0) * scale),
-        hard: Math.round((mix.hard || 0) * scale),
-      };
       let i = 0;
-      for (const difficulty of ["easy", "medium", "hard"]) {
-        for (let n = 0; n < counts[difficulty]; n++) {
+      for (const difficulty of TIERS) {
+        for (let n = 0; n < plan.counts[difficulty]; n++) {
           pushSpec(section, section.criterionIds[i++ % section.criterionIds.length], difficulty);
         }
       }
@@ -552,6 +614,8 @@ module.exports = {
   runGeneration,
   regenerateItem,
   buildSpecs,
+  sectionPlan,
+  generationPlan,
   normaliseGenerated,
   solverAgreesWithKey,
   isRunStale,

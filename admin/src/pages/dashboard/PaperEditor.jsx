@@ -209,6 +209,11 @@ export default function PaperEditor() {
     itemsBySection.get(item.sectionId).push(item);
   }
   const flaggedCount = (selected?.items || []).filter((i) => i.status === "flagged").length;
+  // Server-computed (poolItemCount, the per-tier cap and the per-paper ceiling all
+  // live in backend config) so this screen can never quote a number generation
+  // won't honour.
+  const plan = selected?.generationPlan || null;
+  const planBySection = new Map((plan?.sections || []).map((s) => [s.sectionId, s]));
 
   return (
     <div className="space-y-6">
@@ -323,9 +328,32 @@ export default function PaperEditor() {
 
             <div className="mt-5 space-y-3">
               {selected.sections.map((s) => (
-                <SectionRow key={s.id} section={s} editable={isDraft && !busy} onSave={(edit) => saveDraft({ sections: [edit] })} />
+                <SectionRow
+                  key={s.id}
+                  section={s}
+                  plan={planBySection.get(s.id)}
+                  editable={isDraft && !busy}
+                  onSave={(edit) => saveDraft({ sections: [edit] })}
+                />
               ))}
             </div>
+
+            {plan && (
+              <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                <strong className="text-slate-700">This paper generates {plan.total} question(s)</strong> across{" "}
+                {selected.sections.length} section(s) — more than any one candidate answers, on purpose. Each section keeps a bank
+                roughly twice the number it serves so no two candidates get the same draw, and so items the blind solvers reject can
+                be discarded without leaving the section short.
+                {plan.mode === "claim_tiered" && " Claim-tiered mode builds that bank three times over — one per difficulty tier — because each candidate is served the tier their own claims assert."}
+                {plan.capped && (
+                  <span className="font-semibold text-amber-700">
+                    {" "}
+                    Capped: the full plan is {plan.uncappedTotal} items but the per-paper ceiling is {plan.paperCap}, so the last
+                    sections will be generated short. Lower the questions-served counts, or raise ASSESSMENT_MAX_ITEMS_PER_PAPER.
+                  </span>
+                )}
+              </p>
+            )}
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               <div>
@@ -488,7 +516,7 @@ export default function PaperEditor() {
   );
 }
 
-function SectionRow({ section, editable, onSave }) {
+function SectionRow({ section, plan, editable, onSave }) {
   const [served, setServed] = useState(String(section.servedItemCount));
   const [time, setTime] = useState(String(section.timeLimitSec));
   const dirty = Number(served) !== section.servedItemCount || Number(time) !== section.timeLimitSec;
@@ -501,6 +529,18 @@ function SectionRow({ section, editable, onSave }) {
       <div>
         <Label className="!text-xs">Questions served</Label>
         <Input type="number" min="2" max="8" value={served} disabled={!editable} onChange={(e) => setServed(e.target.value)} className="w-24" />
+        <p className="mt-1 text-[11px] text-slate-500">what one candidate answers</p>
+      </div>
+      <div>
+        <Label className="!text-xs">Questions generated</Label>
+        {/* Read-only and derived, not a second knob: the bank is sized from the
+            served count so the two can never drift out of step. */}
+        <div className="mt-1 w-28 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700">
+          {plan ? plan.planned : section.poolItemCount}
+        </div>
+        <p className="mt-1 text-[11px] text-slate-500">
+          {plan?.perTier ? `${plan.perTier} × 3 tiers` : `bank of ${section.poolItemCount}`}
+        </p>
       </div>
       <div>
         <Label className="!text-xs">Time limit (sec)</Label>

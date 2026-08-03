@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useId, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   FileText,
@@ -112,12 +112,82 @@ function actionTone(action, now) {
   return "brand";
 }
 
+// Wrap / icon / text triples for the four urgency states. The text tones read
+// from the verdict tokens rather than raw Tailwind hues, so this map and the
+// Badge sitting next to it cannot describe the same state in two different
+// colours — and the amber moves off 4.35:1, which was under AA at this size.
 const TONE_STYLES = {
-  red: { wrap: "border-red-200 bg-red-50", icon: "bg-red-100 text-red-700", text: "text-red-700" },
-  amber: { wrap: "border-amber-200 bg-amber-50", icon: "bg-amber-100 text-amber-700", text: "text-amber-700" },
-  brand: { wrap: "border-brand-200 bg-brand-50", icon: "bg-brand-100 text-brand-700", text: "text-brand-700" },
-  slate: { wrap: "border-slate-200 bg-slate-50", icon: "bg-slate-100 text-slate-600", text: "text-slate-600" },
+  red: {
+    wrap: "border-red-200 bg-red-50",
+    icon: "bg-verdict-negative-tint text-verdict-negative",
+    text: "text-verdict-negative",
+  },
+  amber: {
+    wrap: "border-amber-200 bg-amber-50",
+    icon: "bg-verdict-pending-tint text-verdict-pending",
+    text: "text-verdict-pending",
+  },
+  brand: {
+    wrap: "border-brand-200 bg-brand-50",
+    icon: "bg-brand-100 text-brand-700",
+    text: "text-brand-700",
+  },
+  slate: {
+    wrap: "border-slate-200 bg-slate-50",
+    icon: "bg-slate-100 text-slate-600",
+    text: "text-slate-600",
+  },
 };
+
+// Inline text actions — "Mark as read", "Remove", "Save". They stay text, but
+// they get a real hit area: 24px is the WCAG 2.2 AA target floor and
+// `tap-target` lifts it to 44px on a thumb. The negative margin cancels the
+// padding so nothing shifts optically, and the focus ring is added because a
+// bare <button> here previously had no visible focus state of its own.
+const INLINE_ACTION =
+  "tap-target -m-1 inline-flex items-center gap-1 rounded-lg p-1 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2";
+
+// Session statuses arrive as backend identifiers. Every other piece of stage
+// copy on this page comes from pipeline.js; these were the one place a raw enum
+// was reformatted into UI text, so a schema rename would have surfaced straight
+// to the candidate. Unknown values still fall through to the old formatting
+// rather than disappearing.
+const SESSION_STATUS_LABELS = {
+  pending: "Not started",
+  scheduled: "Scheduled",
+  in_progress: "In progress",
+  completed: "Completed",
+  submitted: "Submitted",
+  expired: "Expired",
+  cancelled: "Cancelled",
+};
+
+function sessionStatusLabel(status) {
+  if (!status) return "Unknown";
+  return SESSION_STATUS_LABELS[status] || String(status).replace(/_/g, " ");
+}
+
+// A progress bar is a measurement, so it names what it measures. Without the
+// role and the value it is a styled empty div — and on an application card it
+// is the only thing that says how far along the process actually is.
+function ProgressBar({ value, label, className = "", trackClassName = "h-1.5" }) {
+  const pct = Math.max(0, Math.min(100, Math.round(value || 0)));
+  return (
+    <div
+      role="progressbar"
+      aria-valuenow={pct}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={label}
+      className={`w-full overflow-hidden rounded-full bg-slate-100 ${trackClassName} ${className}`}
+    >
+      <div
+        className="h-full rounded-full bg-brand-600 transition-[width] duration-500 ease-out motion-reduce:transition-none"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
 
 // The line that names who the step is waiting on. Every other candidate portal
 // shows a status label with no owner, which is why "Under Review" tells you
@@ -126,14 +196,14 @@ function OwnerLine({ action, now }) {
   if (action.owner === "candidate") {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700">
-        <UserRound className="h-3.5 w-3.5" /> Waiting on you
+        <UserRound className="h-3.5 w-3.5" aria-hidden="true" /> Waiting on you
       </span>
     );
   }
   if (action.owner === "company") {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
-        <Hourglass className="h-3.5 w-3.5" /> Waiting on the hiring team
+        <Hourglass className="h-3.5 w-3.5" aria-hidden="true" /> Waiting on the hiring team
         {action.since ? ` · for ${formatRelative(action.since, now).replace(" ago", "")}` : ""}
       </span>
     );
@@ -159,10 +229,17 @@ function ActionRow({ action, jobTitle, companyName, now, onOpen, opening }) {
   const due = action.dueAt;
 
   return (
-    <div className={`rounded-xl border p-4 ${tone.wrap}`}>
+    // 16px is the container radius; 12px is the control radius. This panel is a
+    // container, and at `rounded-xl` it read as an oversized button — see
+    // DESIGN.md § The 12/16 Rule.
+    <div className={`rounded-2xl border p-4 ${tone.wrap}`}>
       <div className="flex items-start gap-3">
         <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone.icon}`}>
-          {action.state === "missed" ? <AlertTriangle className="h-4.5 w-4.5" /> : <Icon className="h-4.5 w-4.5" />}
+          {action.state === "missed" ? (
+            <AlertTriangle className="h-4.5 w-4.5" aria-hidden="true" />
+          ) : (
+            <Icon className="h-4.5 w-4.5" aria-hidden="true" />
+          )}
         </span>
 
         <div className="min-w-0 flex-1">
@@ -191,7 +268,7 @@ function ActionRow({ action, jobTitle, companyName, now, onOpen, opening }) {
           {action.canOpen && (
             <div className="mt-3">
               <Button size="sm" loading={opening} onClick={() => onOpen(action)}>
-                {openLabel(action)} <ArrowRight className="h-3.5 w-3.5" />
+                {openLabel(action)} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </Button>
             </div>
           )}
@@ -230,8 +307,12 @@ function StageTrack({ status, stageHistory }) {
         const done = reached.has(stage);
         const current = stage === status;
         return (
-          <li key={stage} className="flex items-start gap-2.5">
+          // `aria-current` is what tells a screen reader which of these steps is
+          // the live one. The marker dot carries that visually and nothing else
+          // did programmatically.
+          <li key={stage} className="flex items-start gap-2.5" aria-current={current ? "step" : undefined}>
             <span
+              aria-hidden="true"
               className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
                 current
                   ? "border-brand-600 bg-brand-600"
@@ -243,10 +324,13 @@ function StageTrack({ status, stageHistory }) {
               {done && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
             </span>
             <div className="min-w-0">
-              <p className={`text-xs ${current ? "font-semibold text-slate-900" : done ? "font-medium text-slate-600" : "text-slate-400"}`}>
+              {/* Unreached steps were `slate-400` — 2.5:1 on white. They are
+                  meant to read as quieter, not as unreadable. */}
+              <p className={`text-xs ${current ? "font-semibold text-slate-900" : done ? "font-medium text-slate-600" : "text-slate-500"}`}>
                 {STAGE_LABELS[stage] || stage}
+                {current && <span className="sr-only"> (current step)</span>}
               </p>
-              {dates[stage] && <p className="text-[11px] text-slate-400">{formatAbsolute(dates[stage])}</p>}
+              {dates[stage] && <p className="text-[11px] text-slate-500">{formatAbsolute(dates[stage])}</p>}
             </div>
           </li>
         );
@@ -257,13 +341,15 @@ function StageTrack({ status, stageHistory }) {
 
 function ApplicationCard({ application, next, now, onOpen, openingId }) {
   const [open, setOpen] = useState(false);
+  const trackId = useId();
   const { job, status, stageHistory = [], offer } = application;
   const rejected = isRejected(status);
   const pct = Math.round(stageProgress(status) * 100);
   const primary = next?.primary;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
+    // Container radius, not control radius — DESIGN.md § The 12/16 Rule.
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-900">{job?.title || "Application"}</p>
@@ -273,9 +359,11 @@ function ApplicationCard({ application, next, now, onOpen, openingId }) {
       </div>
 
       {!rejected && (
-        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-          <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${pct}%` }} />
-        </div>
+        <ProgressBar
+          className="mt-3"
+          value={pct}
+          label={`${job?.title || "Application"}: ${stageLabel(status)}, ${pct}% through the process`}
+        />
       )}
 
       {primary && (
@@ -300,7 +388,7 @@ function ApplicationCard({ application, next, now, onOpen, openingId }) {
       {primary?.canOpen && (
         <div className="mt-3">
           <Button size="sm" loading={openingId === primary.sessionId} onClick={() => onOpen(primary)}>
-            {openLabel(primary)} <ArrowRight className="h-3.5 w-3.5" />
+            {openLabel(primary)} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
         </div>
       )}
@@ -308,26 +396,36 @@ function ApplicationCard({ application, next, now, onOpen, openingId }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-brand-700 hover:underline"
+        aria-expanded={open}
+        aria-controls={trackId}
+        className={`${INLINE_ACTION} mt-3 text-brand-700 hover:bg-brand-50 hover:underline focus-visible:ring-brand-300`}
       >
-        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown
+          aria-hidden="true"
+          className={`h-3.5 w-3.5 transition-transform duration-200 motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
+        />
         {open ? "Hide" : "Show"} full progress
       </button>
 
-      {open && <StageTrack status={status} stageHistory={stageHistory} />}
+      <div id={trackId} hidden={!open}>
+        {open && <StageTrack status={status} stageHistory={stageHistory} />}
+      </div>
     </div>
   );
 }
 
 // --- page -------------------------------------------------------------------
 
+// These cards are siblings of the "Needs you" panel, not children of it, so
+// they sit at the same heading level. They were <h3> under an <h1>, which skips
+// a level and leaves a screen-reader user's section list with a hole in it.
 function SectionCard({ title, icon: Icon, children, action }) {
   return (
-    <Card>
+    <Card as="section">
       <div className="mb-4 flex items-center justify-between gap-2">
-        <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-          <Icon className="h-4.5 w-4.5 text-brand-600" /> {title}
-        </h3>
+        <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+          <Icon className="h-4.5 w-4.5 text-brand-600" aria-hidden="true" /> {title}
+        </h2>
         {action}
       </div>
       {children}
@@ -505,17 +603,53 @@ export default function CandidateDashboard() {
     return (
       <div className="space-y-4">
         <h1 className="text-2xl font-bold text-slate-900">My Dashboard</h1>
-        <p className="text-sm font-medium text-red-600">{error}</p>
+        <Card role="alert" className="border-red-200 bg-red-50">
+          <p className="flex items-start gap-2.5 text-sm font-semibold text-verdict-negative">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            {error}
+          </p>
+        </Card>
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-6 w-40" />
-        <Card><Skeleton className="h-32 w-full" /></Card>
-        <Card><Skeleton className="h-32 w-full" /></Card>
+      // The shape of the page that is about to arrive, not two generic blocks.
+      // A skeleton that does not match what loads is just a second layout shift
+      // wearing a loading costume.
+      <div className="space-y-6" aria-busy="true">
+        <p className="sr-only" role="status">
+          Loading your dashboard…
+        </p>
+
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-52" />
+          <Skeleton className="h-4 w-96 max-w-full" />
+        </div>
+
+        <Card>
+          <Skeleton className="h-5 w-28" />
+          <Skeleton className="mt-4 h-20 w-full rounded-2xl" />
+          <Skeleton className="mt-3 h-20 w-full rounded-2xl" />
+        </Card>
+
+        <Card>
+          <Skeleton className="h-5 w-40" />
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <Skeleton className="h-28 w-full rounded-2xl" />
+            <Skeleton className="h-28 w-full rounded-2xl" />
+          </div>
+        </Card>
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          {["assessments", "interviews", "resume", "notifications"].map((key) => (
+            <Card key={key}>
+              <Skeleton className="h-5 w-36" />
+              <Skeleton className="mt-4 h-16 w-full" />
+            </Card>
+          ))}
+        </div>
       </div>
     );
   }
@@ -532,19 +666,40 @@ export default function CandidateDashboard() {
         </p>
       </div>
 
+      {/* Session-open failures are raised here rather than inside the "Needs
+          you" card. That card is one of four places a session can be opened
+          from, and it is not rendered at all once nothing is owed — so the
+          portal's honest refusal ("expired", "cancelled") had nowhere to land
+          for the other three. `role="alert"` announces it wherever focus sits. */}
+      {openError && (
+        <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4">
+          <p className="flex items-start gap-2.5 text-sm font-semibold text-verdict-negative">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            {openError}
+          </p>
+        </div>
+      )}
+
+      {/* An admin moving a stage arrives over the socket and re-renders the page
+          silently. This line is the only thing that tells a screen-reader user
+          the ground moved under them. */}
+      <p className="sr-only" role="status">
+        {needsYou.length > 0
+          ? `${needsYou.length} ${needsYou.length === 1 ? "item needs" : "items need"} your attention.`
+          : "Nothing needs you right now."}
+      </p>
+
       {/* The hero. Only rendered when something is genuinely owed, so an empty
           state here is meaningful rather than decorative. */}
       {needsYou.length > 0 ? (
-        <Card className="border-brand-200">
+        <Card as="section" className="border-brand-200">
           <h2 className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-900">
-            <ListChecks className="h-4.5 w-4.5 text-brand-600" /> Needs you
+            <ListChecks className="h-4.5 w-4.5 text-brand-600" aria-hidden="true" /> Needs you
             <Badge tone="brand">{needsYou.length}</Badge>
           </h2>
           <p className="mb-4 text-xs text-slate-500">
             These are waiting on you. Deadlines are shown in your local time.
           </p>
-
-          {openError && <p className="mb-3 text-sm font-medium text-red-600">{openError}</p>}
 
           <div className="space-y-3">
             {needsYou.map(({ action, application }) => (
@@ -562,13 +717,13 @@ export default function CandidateDashboard() {
         </Card>
       ) : (
         data.appliedJobs.length > 0 && (
-          <Card className="border-emerald-200 bg-emerald-50/50">
+          <Card as="section" className="border-emerald-200 bg-emerald-50/50">
             <div className="flex items-start gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
-                <CircleCheck className="h-4.5 w-4.5" />
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-verdict-positive-tint text-verdict-positive">
+                <CircleCheck className="h-4.5 w-4.5" aria-hidden="true" />
               </span>
               <div>
-                <p className="text-sm font-semibold text-slate-900">Nothing needs you right now</p>
+                <h2 className="text-sm font-semibold text-slate-900">Nothing needs you right now</h2>
                 <p className="mt-0.5 text-sm text-slate-600">
                   Every open application is with the hiring team. You'll be emailed and notified here the moment
                   that changes.
@@ -626,7 +781,7 @@ export default function CandidateDashboard() {
                   <div className="flex items-start justify-between gap-2">
                     <p className="min-w-0 truncate text-sm font-semibold text-slate-800">{s.job?.title}</p>
                     <Badge tone={s.status === "completed" ? "green" : s.status === "expired" ? "red" : "brand"}>
-                      {s.status.replace(/_/g, " ")}
+                      {sessionStatusLabel(s.status)}
                     </Badge>
                   </div>
                   {s.progress?.totalSections > 0 && (
@@ -642,7 +797,7 @@ export default function CandidateDashboard() {
                   {/* Results belong to the hiring team until they choose to
                       share them — saying so is better than an unexplained gap. */}
                   {s.status === "completed" && (
-                    <p className="mt-1 text-xs text-slate-400">
+                    <p className="mt-1 text-xs text-slate-500">
                       Results are reviewed by the hiring team and aren't shown here.
                     </p>
                   )}
@@ -653,20 +808,20 @@ export default function CandidateDashboard() {
                       loading={openingId === s._id}
                       onClick={() => openSession(openableSessions.get(String(s._id)))}
                     >
-                      {openLabel(openableSessions.get(String(s._id)))} <ArrowRight className="h-3.5 w-3.5" />
+                      {openLabel(openableSessions.get(String(s._id)))} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                   )}
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-slate-400">No assessments yet.</p>
+            <p className="text-sm text-slate-500">No assessments yet.</p>
           )}
         </SectionCard>
 
         <SectionCard title="Interviews" icon={Video}>
           {data.upcomingInterviews.length === 0 && data.aiInterviewHistory.length === 0 ? (
-            <p className="text-sm text-slate-400">No interviews scheduled yet.</p>
+            <p className="text-sm text-slate-500">No interviews scheduled yet.</p>
           ) : (
             <div className="space-y-3">
               {[...data.upcomingInterviews, ...data.aiInterviewHistory].map((s) => (
@@ -674,7 +829,7 @@ export default function CandidateDashboard() {
                   <div className="flex items-start justify-between gap-2">
                     <p className="min-w-0 truncate text-sm font-semibold text-slate-800">{s.job?.title}</p>
                     <Badge tone={s.status === "completed" ? "green" : s.status === "expired" ? "red" : "brand"}>
-                      {s.status.replace(/_/g, " ")}
+                      {sessionStatusLabel(s.status)}
                     </Badge>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">{formatAbsolute(s.interviewAt)}</p>
@@ -685,7 +840,7 @@ export default function CandidateDashboard() {
                       loading={openingId === s._id}
                       onClick={() => openSession(openableSessions.get(String(s._id)))}
                     >
-                      {openLabel(openableSessions.get(String(s._id)))} <ArrowRight className="h-3.5 w-3.5" />
+                      {openLabel(openableSessions.get(String(s._id)))} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                     </Button>
                   )}
                 </div>
@@ -696,9 +851,13 @@ export default function CandidateDashboard() {
 
         <SectionCard title="Resume" icon={FileText}>
           {data.resume.hasResume ? (
-            <p className="text-sm text-emerald-700">Resume on file: {data.resume.latest.originalName}</p>
+            // `break-words`: uploaded filenames are user-supplied and routinely
+            // arrive as one 80-character unbroken string.
+            <p className="text-sm break-words text-verdict-positive">
+              Resume on file: {data.resume.latest.originalName}
+            </p>
           ) : (
-            <p className="text-sm text-slate-400">No resume uploaded yet.</p>
+            <p className="text-sm text-slate-500">No resume uploaded yet.</p>
           )}
           <Link to="/resume">
             <Button variant="outline" size="sm" className="mt-3">
@@ -708,7 +867,7 @@ export default function CandidateDashboard() {
         </SectionCard>
 
         <SectionCard title="Notifications" icon={Bell}>
-          {data.notifications.length === 0 && <p className="text-sm text-slate-400">No notifications yet.</p>}
+          {data.notifications.length === 0 && <p className="text-sm text-slate-500">No notifications yet.</p>}
           <div className="space-y-3">
             {data.notifications.slice(0, 5).map((n) => (
               <div key={n._id} className="rounded-lg bg-slate-50 p-3">
@@ -718,9 +877,12 @@ export default function CandidateDashboard() {
                   <button
                     type="button"
                     onClick={() => markNotificationRead(n._id)}
-                    className="mt-1 text-xs font-semibold text-brand-700 hover:underline"
+                    className={`${INLINE_ACTION} mt-1 text-brand-700 hover:bg-brand-50 hover:underline focus-visible:ring-brand-300`}
                   >
                     Mark as read
+                    {/* Three notifications in a row all offering "Mark as read"
+                        is unnavigable by voice or by screen reader without this. */}
+                    <span className="sr-only">: {n.title}</span>
                   </button>
                 )}
               </div>
@@ -735,7 +897,7 @@ export default function CandidateDashboard() {
 
         <SectionCard title="Saved Jobs" icon={Bookmark}>
           {data.savedJobs.length === 0 ? (
-            <p className="text-sm text-slate-400">No saved jobs yet.</p>
+            <p className="text-sm text-slate-500">No saved jobs yet.</p>
           ) : (
             <div className="space-y-2">
               {data.savedJobs.map((job) => (
@@ -746,8 +908,13 @@ export default function CandidateDashboard() {
                     </Link>
                     <p className="text-xs text-slate-500">{job.company?.name}</p>
                   </div>
-                  <button onClick={() => toggleSaveJob(job._id)} className="text-xs font-semibold text-red-600 hover:underline">
+                  <button
+                    type="button"
+                    onClick={() => toggleSaveJob(job._id)}
+                    className={`${INLINE_ACTION} shrink-0 text-red-600 hover:bg-red-50 hover:underline focus-visible:ring-red-300`}
+                  >
                     Remove
+                    <span className="sr-only"> {job.title} from saved jobs</span>
                   </button>
                 </div>
               ))}
@@ -757,7 +924,7 @@ export default function CandidateDashboard() {
 
         <SectionCard title="Recommended Jobs" icon={Sparkles}>
           {data.recommendedJobs.length === 0 ? (
-            <p className="text-sm text-slate-400">No recommendations yet — add skills to your profile to get matched.</p>
+            <p className="text-sm text-slate-500">No recommendations yet — add skills to your profile to get matched.</p>
           ) : (
             <div className="space-y-2">
               {data.recommendedJobs.map((job) => (
@@ -767,12 +934,17 @@ export default function CandidateDashboard() {
                       to={`/jobs/${job.slug || job._id}`}
                       className="flex items-center gap-1 truncate text-sm font-semibold text-slate-800 hover:text-brand-700"
                     >
-                      {job.title} <ExternalLink className="h-3 w-3 shrink-0" />
+                      {job.title} <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
                     </Link>
                     <p className="truncate text-xs text-slate-500">{job.company?.name}</p>
                   </div>
-                  <button onClick={() => toggleSaveJob(job._id)} className="shrink-0 text-xs font-semibold text-brand-700 hover:underline">
+                  <button
+                    type="button"
+                    onClick={() => toggleSaveJob(job._id)}
+                    className={`${INLINE_ACTION} shrink-0 text-brand-700 hover:bg-brand-50 hover:underline focus-visible:ring-brand-300`}
+                  >
                     Save
+                    <span className="sr-only"> {job.title}</span>
                   </button>
                 </div>
               ))}
@@ -783,16 +955,18 @@ export default function CandidateDashboard() {
 
       {/* Profile sits below the tracking work: it is useful, but it is the part
           every portal already has, and it is not why someone opens this page. */}
-      <Card>
+      <Card as="section">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-            <UserRound className="h-4.5 w-4.5 text-brand-600" /> Your profile
-          </h3>
-          <span className="text-lg font-bold text-brand-700">{pct}%</span>
+          <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+            <UserRound className="h-4.5 w-4.5 text-brand-600" aria-hidden="true" /> Your profile
+          </h2>
+          {/* The bar below announces the same number as its value, so this is a
+              visual echo rather than a second thing to read out. */}
+          <span aria-hidden="true" className="text-lg font-bold text-brand-700">
+            {pct}%
+          </span>
         </div>
-        <div className="mb-6 h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
-          <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${pct}%` }} />
-        </div>
+        <ProgressBar className="mb-6" trackClassName="h-2.5" value={pct} label="Profile completeness" />
         <form onSubmit={handleProfileSave}>
           <div className="grid gap-4 sm:grid-cols-2">
             <FormGroup>
@@ -828,7 +1002,7 @@ export default function CandidateDashboard() {
 
       <SectionCard title="Past interviews" icon={History}>
         {data.aiInterviewHistory.length === 0 ? (
-          <p className="text-sm text-slate-400">No past interviews yet.</p>
+          <p className="text-sm text-slate-500">No past interviews yet.</p>
         ) : (
           <div className="space-y-3">
             {data.aiInterviewHistory.map((s) => (
@@ -837,7 +1011,7 @@ export default function CandidateDashboard() {
                   <p className="truncate text-sm font-semibold text-slate-800">{s.job?.title}</p>
                   <p className="truncate text-xs text-slate-500">{formatAbsolute(s.interviewAt)}</p>
                 </div>
-                <Badge tone={s.status === "completed" ? "green" : "slate"}>{s.status.replace(/_/g, " ")}</Badge>
+                <Badge tone={s.status === "completed" ? "green" : "slate"}>{sessionStatusLabel(s.status)}</Badge>
               </div>
             ))}
           </div>
