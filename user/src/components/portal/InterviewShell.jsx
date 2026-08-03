@@ -89,7 +89,7 @@ export default function InterviewShell({ stage = "live", children }) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-canvas">
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-3xl items-center justify-between gap-4 px-5">
           <div className="flex min-w-0 items-center gap-2.5">

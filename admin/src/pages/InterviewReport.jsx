@@ -665,14 +665,18 @@ function Bubble({ role, text, score, delivery, spoken, wordCount, durationSec, r
       </div>
       <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${isAi ? "bg-slate-50 text-slate-700" : "bg-brand-600 text-white"}`}>
         <p>{text}</p>
+        {/* The two readouts below sit on the violet bubble at white/90, not
+            brand-100: on this ramp brand-100 over brand-600 lands at 4.49:1,
+            and these are 11px score figures — the smallest numbers in the
+            report and the ones most likely to be quoted back in a dispute. */}
         {!isAi && (score != null || (spoken && delivery != null)) && (
-          <p className="mt-1 text-[11px] font-semibold text-brand-100">
+          <p className="mt-1 text-[11px] font-semibold text-white/90">
             {score != null && <>Answer score: {score}/100</>}
             {spoken && delivery != null && <>{score != null ? " · " : ""}Delivery: {delivery}/100</>}
           </p>
         )}
         {!isAi && wordCount != null && (
-          <p className="mt-0.5 text-[11px] text-brand-100/90">
+          <p className="mt-0.5 text-[11px] text-white/90">
             {wordCount} word{wordCount === 1 ? "" : "s"} · {durationSec != null ? `${durationSec}s` : "duration unknown"} ·{" "}
             <span className={responsive ? "" : "font-semibold text-amber-200"}>{responsive ? "Responsive" : "Non-responsive"}</span>
           </p>
@@ -868,6 +872,26 @@ export default function InterviewReport() {
                 {ev.generatedBy === "fallback" && (
                   <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
                     Deterministic fallback — every score below is a PLACEHOLDER from answer-completeness heuristics, not a real evaluation.
+                  </p>
+                )}
+
+                {/* What the score is a score OF.
+                    An overall of 72 over eight answered questions and an overall of 72 over two
+                    answered and six declined are entirely different findings, and the number
+                    alone cannot tell them apart. The count travels with the score so a reviewer
+                    cannot read one without the other — and `reviewReason` states, in code's
+                    words rather than the model's, why an automated recommendation was withheld
+                    (the candidate ended the interview early, or declined most of it). */}
+                {ev.reviewReason && (
+                  <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+                    Recommendation withheld — {ev.reviewReason}. This interview needs human review before any decision.
+                  </p>
+                )}
+                {typeof ev.questionsDeclined === "number" && ev.questionsDeclined > 0 && (
+                  <p className="mt-2 text-sm font-medium text-slate-500">
+                    Declined: {ev.questionsDeclined} of {ev.questionsAsked} question
+                    {ev.questionsAsked === 1 ? "" : "s"} — the candidate was asked and said they could not answer.
+                    Scores below cover only the {ev.questionsAnswered} answered.
                   </p>
                 )}
 

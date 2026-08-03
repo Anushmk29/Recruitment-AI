@@ -221,12 +221,41 @@ async function generateProbesForSession(session, candidate) {
 // 8.4 — verdict assessment (at finalisation, off the candidate request path)
 // ---------------------------------------------------------------------------
 
+// The answer that responded to this probe's question — or "", explicitly, when the candidate
+// declined it.
+//
+// THE DECLINE MUST NOT REACH THE VERDICT MODEL. A probe asks the candidate to substantiate a
+// specific résumé claim, and the model is asked to judge the answer against precomputed
+// verify/contradict conditions. Hand it "I don't know" and it will reach for `contradicted` —
+// which would turn *declining to elaborate* into evidence that the candidate's résumé was false,
+// write that back to the ClaimGraph, and rescore them on it. That is a serious adverse finding
+// manufactured out of an absence of evidence.
+//
+// The correct verdict for a declined probe is `inconclusive`, and it is assigned in code (see
+// declinedProbeClaimIds) rather than asked for, because "no evidence either way" is exactly the
+// judgement a model under schema pressure is least reliable at returning.
 function answerTextForProbe(turns, probe) {
   if (probe.turnIndex == null) return "";
   for (let i = probe.turnIndex + 1; i < turns.length; i += 1) {
-    if (turns[i].role === "candidate") return turns[i].text || "";
+    if (turns[i].role === "candidate") return turns[i].declined ? "" : turns[i].text || "";
   }
   return "";
+}
+
+// Probes whose question the candidate answered with a decline. Marked inconclusive without any
+// model call at all — there is nothing to assess, and the honest verdict is knowable from the
+// turn flag alone.
+function declinedProbeClaimIds(turns, probes) {
+  const ids = [];
+  for (const p of probes || []) {
+    if (p.turnIndex == null) continue;
+    for (let i = p.turnIndex + 1; i < turns.length; i += 1) {
+      if (turns[i].role !== "candidate") continue;
+      if (turns[i].declined) ids.push(p.claimId);
+      break;
+    }
+  }
+  return ids;
 }
 
 /**
@@ -236,6 +265,28 @@ function answerTextForProbe(turns, probe) {
  */
 async function assessVerdicts(session, candidate) {
   const ai = session.aiInterview;
+
+  // Declined probes are settled first, in code, before anything reaches a model — and before the
+  // LLM-availability early-return below, because "the candidate declined this one" is knowable
+  // with no provider at all and must be recorded either way. `inconclusive` is the honest verdict
+  // and it carries no adverse consequence: applyVerdictsToClaims leaves an inconclusive claim
+  // unverified rather than contradicted, so the rescore treats it as evidence never gathered
+  // (which it is), not as a claim disproved (which it emphatically is not).
+  const declinedIds = new Set(declinedProbeClaimIds(ai.turns || [], (ai.probes || []).filter((p) => p.status === "asked")));
+  if (declinedIds.size) {
+    for (const p of ai.probes) {
+      if (p.status !== "asked" || !declinedIds.has(p.claimId)) continue;
+      p.status = "assessed";
+      p.verdict = "inconclusive";
+      p.verdictReasoning =
+        "The candidate was asked this question and stated they could not answer it. Declining to " +
+        "elaborate is not evidence for or against the claim, so it remains unverified.";
+      p.answerQuote = "";
+      p.assessedAt = new Date();
+    }
+    await session.save();
+  }
+
   const asked = (ai.probes || []).filter((p) => p.status === "asked");
   if (!asked.length) return [];
   if (!isEnabled() || !llm.isEnabled()) return [];
@@ -437,4 +488,5 @@ module.exports = {
   sanitiseVerdicts,
   applyVerdictsToClaims,
   answerTextForProbe,
+  declinedProbeClaimIds,
 };

@@ -4,17 +4,77 @@
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Lexend", "Inter", system-ui, sans-serif;
 
-  --color-brand-50: #eff6ff;
-  --color-brand-100: #dbeafe;
-  --color-brand-200: #bfdbfe;
-  --color-brand-300: #93c5fd;
-  --color-brand-400: #60a5fa;
-  --color-brand-500: #3b82f6;
-  --color-brand-600: #2563eb;
-  --color-brand-700: #1d4ed8;
-  --color-brand-800: #1e40af;
-  --color-brand-900: #1e3a8a;
-  --color-brand-950: #172554;
+  /* Signal Violet — the owned brand ramp. This replaces the provisional Tailwind
+     `blue` that DESIGN.md § Colors flagged as temporary under the Inherited
+     Palette Rule; because every surface reads `brand-*` rather than a raw hue,
+     these eleven values are the only place the brand colour is decided.
+
+     Contrast-checked at the two pairings that actually ship:
+       brand-600 #6d4fe0 + white  → 5.46:1  (primary button)
+       brand-700 #5b3fc4 on brand-100 #eae6ff → 5.85:1  (brand badge, 12px) */
+  --color-brand-50: #f4f2ff;
+  --color-brand-100: #eae6ff;
+  --color-brand-200: #d8d2fe;
+  --color-brand-300: #bcb1fb;
+  --color-brand-400: #9c8bf6;
+  --color-brand-500: #7f66ee;
+  --color-brand-600: #6d4fe0;
+  --color-brand-700: #5b3fc4;
+  --color-brand-800: #4a34a0;
+  --color-brand-900: #3e2d82;
+  --color-brand-950: #261a52;
+
+  /* Ember — the secondary brand ramp, and the one rule worth stating loudly:
+     it is DECORATIVE ONLY. See § The Ember Containment Rule in DESIGN.md.
+
+     Orange sits next door to the reserved `verdict-pending` amber, which means
+     "awaiting a human / not yet verified". If ember were allowed onto a badge,
+     a chip, or a score tile, the fastest channel a recruiter reads would stop
+     being trustworthy. So ember is hue-separated from amber on purpose — amber
+     is gold (~45°), ember is red-orange (~14°) — and it is confined to
+     illustrative fills, icon tiles, marketing emphasis, and chart series.
+
+     Contrast:
+       accent-600 #e64d1f + white → 3.86:1 — LARGE bold text only (≥18.66px)
+       accent-700 #bd3a14 + white → 5.18:1 — required for any small white text
+       accent-700 on accent-50    → 5.18:1 */
+  --color-accent-50: #fff5f1;
+  --color-accent-100: #ffe6dc;
+  --color-accent-200: #ffcbb6;
+  --color-accent-300: #ffa885;
+  --color-accent-400: #ff8256;
+  --color-accent-500: #f96436;
+  --color-accent-600: #e64d1f;
+  --color-accent-700: #bd3a14;
+  --color-accent-800: #963117;
+  --color-accent-900: #7a2b16;
+  --color-accent-950: #421107;
+
+  /* Outcome — the system's only semantic colour. Mirrored from
+     user/src/index.css so both apps state verdicts in the same voice, and so
+     the Reserved Verdict Rule (and the new Ember Containment Rule) are
+     enforceable by grep: a component reaching for `amber-700` to mean "note",
+     or for `accent-500` to mean "warning", is visible in review in a way a raw
+     Tailwind hue never was.
+
+     Each pair is contrast-checked against its own tint at 12px, the size these
+     actually ship at inside a badge:
+       positive  #047857 on #d1fae5 → 4.83:1
+       pending   #92400e on #fef3c7 → 6.37:1   (amber-700 was 4.35:1, under AA)
+       negative  #b91c1c on #fee2e2 → 5.25:1 */
+  --color-verdict-positive: #047857;
+  --color-verdict-positive-tint: #d1fae5;
+  --color-verdict-pending: #92400e;
+  --color-verdict-pending-tint: #fef3c7;
+  --color-verdict-negative: #b91c1c;
+  --color-verdict-negative-tint: #fee2e2;
+
+  /* Canvas — the app background. A faint violet wash rather than a cold slate,
+     so white cards read as lifted off a tinted plane instead of floating on
+     near-white. Kept within a hair of slate-50's lightness so the existing
+     `bg-slate-50` fills still sit on it without banding. */
+  --color-canvas: #f6f5fb;
+  --color-canvas-deep: #edeaf7;
 
   /* Elevation — four planes, all cool-tinted so layering reads as lift rather
      than as drop shadow. Planes 3 and 4 extend the original two-shadow
@@ -40,7 +100,7 @@
   }
 
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply bg-canvas text-slate-900 antialiased;
     overflow-x: clip;
   }
 
@@ -67,8 +127,54 @@
     box-shadow: var(--shadow-deep);
   }
   .bg-grid {
-    background-image: radial-gradient(circle at 1px 1px, rgba(37, 99, 235, 0.12) 1px, transparent 0);
+    background-image: radial-gradient(circle at 1px 1px, rgba(109, 79, 224, 0.13) 1px, transparent 0);
     background-size: 28px 28px;
+  }
+
+  /* Ambient brand wash for hero and section backdrops. Two violet stops carry
+     the field and a single low-opacity ember stop warms one corner — the ratio
+     is deliberate, since ember at parity would start competing with the
+     reserved amber channel for attention. Static, so it costs nothing to
+     paint and has no reduced-motion story to tell. */
+  .bg-aurora {
+    background-image:
+      radial-gradient(58rem 32rem at 12% -10%, rgba(124, 92, 240, 0.16), transparent 60%),
+      radial-gradient(46rem 28rem at 92% 6%, rgba(249, 100, 54, 0.09), transparent 62%),
+      radial-gradient(52rem 34rem at 50% 108%, rgba(188, 177, 251, 0.22), transparent 65%);
+  }
+
+  /* The reference deck's signature: a soft violet-to-white card face. Used on
+     panels that group content rather than on panels that state a result — a
+     tinted surface must never be mistaken for a verdict tint. */
+  .surface-brand {
+    background-image: linear-gradient(160deg, var(--color-brand-50) 0%, #ffffff 58%);
+  }
+
+  .surface-ember {
+    background-image: linear-gradient(160deg, var(--color-accent-50) 0%, #ffffff 58%);
+  }
+
+  /* Filled feature tiles — the violet and ember blocks in the reference deck.
+     Both carry white text, so the LIGHTEST stop is the binding constraint and
+     it is chosen, not picked for looks: whatever sits at 0% must clear 4.5:1
+     against white on its own, because a gradient gives the text no single
+     background to be measured against.
+
+       brand-600  #6d4fe0 + white → 5.46:1   ← lightest stop of fill-brand
+       accent-700 #bd3a14 + white → 5.56:1   ← lightest stop of fill-ember
+
+     The brighter values are deliberately *not* used as stops here. brand-500 is
+     4.17:1 and accent-500 is 3.04:1 against white — both would have put 14px
+     body copy under AA across the top third of the card, which is exactly the
+     failure that looks fine to a designer on a big monitor and is unreadable on
+     a phone in daylight. Those values stay available for borders and tints,
+     where nothing is written on them. */
+  .fill-brand {
+    background-image: linear-gradient(150deg, var(--color-brand-600) 0%, var(--color-brand-800) 100%);
+  }
+
+  .fill-ember {
+    background-image: linear-gradient(150deg, var(--color-accent-700) 0%, var(--color-accent-900) 100%);
   }
 
   /* Touch comfort floor, applied only where the pointer is actually coarse.

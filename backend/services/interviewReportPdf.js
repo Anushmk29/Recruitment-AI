@@ -167,6 +167,19 @@ function buildReportPdf(report) {
   if (iv.startedAt) labelValue(doc, "Started", fmtWhen(iv.startedAt));
   if (iv.completedAt) labelValue(doc, "Completed", fmtWhen(iv.completedAt));
   if (iv.substance) labelValue(doc, "Responsive answers", `${iv.substance.responsiveCount} / ${iv.substance.totalAnswers}`);
+  // Rule 5 — uncertainty is visible on the PDF, not only on the screen. A printed score with no
+  // indication of how much of the interview it covers is the version most likely to end up in
+  // front of someone with no access to the transcript behind it.
+  if (iv.substance?.declinedCount > 0) {
+    labelValue(
+      doc,
+      "Declined questions",
+      `${iv.substance.declinedCount} (asked, candidate stated they could not answer — excluded from the scores below)`
+    );
+  }
+  if (iv.endedEarly) {
+    labelValue(doc, "Ended early", "By the candidate — the interview was not completed and no automated recommendation applies");
+  }
 
   // --- Evaluation ---
   heading(doc, "Evaluation");

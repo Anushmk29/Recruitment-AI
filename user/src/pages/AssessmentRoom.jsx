@@ -471,7 +471,7 @@ export default function AssessmentRoom() {
   );
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-slate-50">
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-canvas">
       <span aria-live="polite" className="sr-only">
         {announcement}
       </span>

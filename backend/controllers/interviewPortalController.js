@@ -11,10 +11,19 @@ const backchannel = require("../utils/backchannel");
 const speechAuth = require("../utils/speechAuthorization");
 const speakable = require("../utils/speakable");
 const personaService = require("../services/personaService");
+const intentService = require("../services/intentService");
+const conversationIntent = require("../utils/conversationIntent");
+const metaAnswers = require("../utils/metaAnswers");
 const proctoring = require("../utils/proctoring");
 const evidenceClipService = require("../services/evidenceClipService");
 const CompanySettings = require("../models/CompanySettings");
 const { candidateLinkBase } = require("../utils/corsOrigins");
+
+// How many intent readings to keep on a session. Generous, because unlike proctoring events these
+// have no aggregate counterpart — the individual rows ARE the record of what the interviewer
+// understood, and a complaint about one turn is answered by that turn's row or not at all. Still
+// bounded: a candidate who talks continuously for an hour must not grow the document without limit.
+const INTENT_TAIL = 200;
 
 // Keep only a recent tail of raw events on the session (the per-type `counts` are the source of
 // truth for the score); bound how many events one flush can carry to cap ingest cost.
@@ -387,6 +396,41 @@ async function submitAnswer(req, res) {
   res.json(state);
 }
 
+// The candidate said something ABOUT the interview rather than into it: they don't know this one,
+// they want a moment, or they want to stop (utils/dialogueActs.js).
+//
+// A separate endpoint from submitAnswer on purpose. These are not answers, they must not be
+// scored as answers, and routing them through the answer path is precisely how they were being
+// mishandled before — a decline arrived as a weak answer and a request to stop arrived as
+// nothing at all. Keeping them apart at the HTTP boundary is what makes "this was a decline, not
+// a bad answer" a fact about the request rather than an inference from the text.
+const DIALOGUE_ACTS = ["decline", "pause", "withdraw"];
+
+async function submitDialogueAct(req, res) {
+  const session = req.interviewSession;
+  const b = req.body || {};
+  const act = DIALOGUE_ACTS.includes(b.act) ? b.act : null;
+  if (!act) {
+    return res.status(400).json({ error: "Unknown conversational act", code: "UNKNOWN_ACT" });
+  }
+
+  const state = await aiInterview.submitDialogueAct(session, act, {
+    // The service re-runs detection against this text, so it is the evidence for the act rather
+    // than a label to be taken on trust. Length-capped here; the service caps it again.
+    text: String(b.text || "").slice(0, 4000),
+    confirmText: String(b.confirmText || "").slice(0, 4000),
+    // "explicit" means the candidate pressed the End interview button. It skips the spoken
+    // confirmation because a button press IS the confirmation — but only the button can claim it,
+    // and the button is the one path where no transcript exists to re-check.
+    confirmedBy: b.confirmedBy === "explicit" ? "explicit" : "spoken",
+    inputMode: b.inputMode === "voice" ? "voice" : "text",
+    transcriptConfidence: clampNum(b.transcriptConfidence, 0, 1),
+    audioDurationMs: clampNum(b.audioDurationMs, 0, 60 * 60 * 1000),
+    backchannels: sanitizeBackchannels(b.backchannels),
+  });
+  res.json(state);
+}
+
 // Candidate consents to (or declines) VOICE capture before the microphone ever
 // opens (Phase 9.5) — mirrors the proctoring consent gate. Declining is fine:
 // the typed-answer path is always available and never penalised.
@@ -526,6 +570,96 @@ async function voiceToken(req, res) {
   cred.conversation = personaService.conversationPolicy(persona);
   cred.persona = { name: persona.name, source: persona.source };
   res.json(cred);
+}
+
+// "What did the candidate just mean?" — the semantic tier of the intent layer.
+//
+// The browser runs the deterministic matchers itself, because a live turn cannot wait on a network
+// round-trip for the common phrasings (utils/conversationIntent.js). It calls this only for the
+// tail those matchers do not read. Two things are deliberately NOT delegated to it:
+//
+//   1. The server re-runs the deterministic tier before consulting the model. A client that says
+//      "nothing matched" is not taken at its word — same posture as the dialogue-act endpoint,
+//      and it means the cheap, reproducible reading always wins when there is one.
+//   2. The reply to a process question is composed HERE, from this session's real state, and
+//      recorded as a turn before it can be spoken. The browser never gets to invent the numbers
+//      in "there are three more to go".
+//
+// Never fails a turn: any error is reported as `answer_continues`, which is the interviewer's
+// behaviour before this path existed.
+async function voiceIntent(req, res) {
+  const session = req.interviewSession;
+  const ai = session.aiInterview || {};
+  const utterance = String(req.body?.utterance || "").slice(0, 500);
+  if (!utterance.trim()) {
+    return res.json({ action: "answer_continues", tier: null, reason: "nothing_to_classify" });
+  }
+
+  // Context comes from the SERVER's record of the conversation, not from the client's claim about
+  // it. The browser knows what it played, but the transcript is what the interview actually was —
+  // and a client that could choose the context could choose the reading.
+  const lastAiTurn = [...(ai.turns || [])].reverse().find((t) => t.role === "ai");
+  const lastQuestion = [...(ai.turns || [])].reverse().find((t) => t.role === "ai" && t.kind === "question");
+
+  const settings = session.company
+    ? await CompanySettings.findOne({ company: session.company }).lean()
+    : null;
+
+  const intent = await intentService.resolveIntent(utterance, {
+    interviewerSaid: lastAiTurn?.text || "",
+    questionAsked: lastQuestion?.text || "",
+    // What they have already said in this turn, so a fragment is read in the context of the answer
+    // it belongs to. Client-supplied because only the browser holds the in-progress turn — but it
+    // is only ever CONTEXT for the reading, never something that can be stored or spoken.
+    answerSoFar: String(req.body?.answerSoFar || "").slice(0, 2000),
+    session,
+    candidate: { _id: session.candidate },
+    settings,
+  });
+
+  // On the record before anything acts on it, so a decision that turns out badly is inspectable.
+  ai.intents = [
+    ...(ai.intents || []),
+    {
+      utterance,
+      action: intent.action,
+      tier: intent.tier ?? 1,
+      confidence: intent.confidence,
+      reason: intent.reason,
+      model: intent.model,
+      promptVersion: intent.promptVersion,
+      latencyMs: intent.latencyMs,
+      degraded: Boolean(intent.degraded),
+      turnIndex: (ai.turns || []).length,
+    },
+  ].slice(-INTENT_TAIL);
+
+  const payload = {
+    action: intent.action,
+    tier: intent.tier,
+    confidence: intent.confidence,
+    reason: intent.reason,
+    residue: intent.residue || "",
+    needsConfirmation: Boolean(intent.needsConfirmation),
+    consumesTurn: Boolean(intent.consumesTurn),
+  };
+
+  // A process question is the one action whose reply cannot come from the phrase bank, because it
+  // states facts about THIS interview. Composed from state, written into the transcript as a real
+  // exchange, and only then returned — the write is what makes it speakable at all, since
+  // speechAuthorization only permits the approved bank and this session's own authored turns.
+  if (intent.action === "meta_question") {
+    const answer = metaAnswers.answerFor(intent.metaTopic, metaAnswers.stateFromSession(session));
+    ai.turns.push({ role: "candidate", kind: "meta_question", text: utterance });
+    ai.turns.push({ role: "ai", kind: "meta_answer", text: answer.text });
+    payload.speak = answer.text;
+    payload.metaTopic = answer.topic;
+    payload.answered = answer.answered;
+  }
+
+  session.markModified("aiInterview");
+  await session.save();
+  res.json(payload);
 }
 
 // Text-to-speech proxy for spoken questions — the browser posts the question text and gets back
@@ -727,11 +861,13 @@ module.exports = {
   startInterview,
   getInterviewState,
   submitAnswer,
+  submitDialogueAct,
   proctoringConsent,
   proctoringEvents,
   voiceConsent,
   voiceToken,
   voiceSpeak,
+  voiceIntent,
   uploadEvidenceClip,
   phoneEvidenceClip,
   phonePair,

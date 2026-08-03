@@ -97,7 +97,10 @@ export default function Checkout() {
       currency: order.currency,
       name: "HireFlow AI",
       description: `${planKey} plan (${billingCycle})`,
-      theme: { color: "#2563eb" },
+      // Razorpay's modal is a third-party iframe, so it cannot read our tokens —
+      // this hex has to be kept in step with --color-brand-600 by hand. It is
+      // the only hardcoded brand colour left in either app.
+      theme: { color: "#6d4fe0" },
       handler: async (response) => {
         try {
           await api.post("/payments/verify", {
@@ -121,7 +124,7 @@ export default function Checkout() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-canvas">
       <MarketingNavbar />
       <div className="mx-auto max-w-md px-5 py-14 sm:px-8">
         <OnboardingSteps current={5} />

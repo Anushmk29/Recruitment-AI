@@ -105,23 +105,29 @@ export default function Pricing() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
               >
+                {/* The recommended plan is the one filled card in the row. A
+                    ring alone reads as "selected" rather than "recommended",
+                    and on a four-card row it was easy to miss entirely. */}
                 <Card
-                  className={`relative flex h-full flex-col ${popular ? "border-brand-400 ring-2 ring-brand-100" : ""}`}
+                  tone={popular ? "filled-brand" : "default"}
+                  className={`relative flex h-full flex-col ${popular ? "shadow-lift" : ""}`}
                 >
                   {popular && (
-                    <span className="absolute -top-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-brand-600 px-3 py-1 text-[11px] font-bold text-white">
+                    <span className="absolute -top-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-accent-700 px-3 py-1 text-[11px] font-bold text-white shadow-soft">
                       <Cpu className="h-3 w-3" /> Most Popular
                     </span>
                   )}
-                  <h3 className="text-base font-semibold text-slate-900">{plan.name}</h3>
-                  <p className="mt-1 text-xs text-slate-500">{plan.description}</p>
-                  <div className="mt-5 text-3xl font-extrabold text-slate-900">
+                  <h3 className={`text-base font-semibold ${popular ? "text-white" : "text-slate-900"}`}>{plan.name}</h3>
+                  <p className={`mt-1 text-xs ${popular ? "text-white/90" : "text-slate-500"}`}>{plan.description}</p>
+                  <div className={`font-display mt-5 text-3xl font-extrabold ${popular ? "text-white" : "text-slate-900"}`}>
                     {formatPrice(plan.pricing[billingCycle])}
                     {plan.pricing[billingCycle] > 0 && (
-                      <span className="text-sm font-medium text-slate-500"> / {billingCycle === "monthly" ? "mo" : "yr"}</span>
+                      <span className={`text-sm font-medium ${popular ? "text-white/90" : "text-slate-500"}`}>
+                        {" "}/ {billingCycle === "monthly" ? "mo" : "yr"}
+                      </span>
                     )}
                   </div>
-                  <ul className="mt-5 flex-1 space-y-2.5 text-sm text-slate-600">
+                  <ul className={`mt-5 flex-1 space-y-2.5 text-sm ${popular ? "text-white/90" : "text-slate-600"}`}>
                     {[
                       `${plan.limits.maxJobs.toLocaleString()} active jobs`,
                       `${plan.limits.maxRecruiters.toLocaleString()} recruiter seats`,
@@ -130,15 +136,23 @@ export default function Pricing() {
                       `${(plan.limits.storageLimitMb / 1000).toFixed(1)} GB storage`,
                     ].map((line) => (
                       <li key={line} className="flex items-start gap-2">
-                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" /> {line}
+                        {/* On the filled card the tick goes white: emerald-500
+                            on violet is 2.1:1, and it is carrying no verdict
+                            here anyway — it is a list bullet. */}
+                        <Check
+                          className={`mt-0.5 h-4 w-4 shrink-0 ${popular ? "text-white" : "text-emerald-500"}`}
+                          aria-hidden="true"
+                        />{" "}
+                        {line}
                       </li>
                     ))}
                   </ul>
-                  <Button
-                    variant={popular ? "primary" : "secondary"}
-                    className="mt-6 w-full"
-                    onClick={() => choosePlan(plan.key)}
-                  >
+                  {/* All four buttons are `secondary` now. The recommended plan
+                      used to get the solid violet `primary` to stand out; on a
+                      violet card that button would disappear into its own
+                      background, and the fill is already carrying the emphasis
+                      the variant used to. */}
+                  <Button variant="secondary" className="mt-6 w-full" onClick={() => choosePlan(plan.key)}>
                     Choose {plan.name}
                   </Button>
                 </Card>

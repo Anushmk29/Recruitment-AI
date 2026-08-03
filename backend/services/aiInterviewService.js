@@ -39,6 +39,7 @@ const {
 
 const probeService = require("./probeService");
 const backchannel = require("../utils/backchannel");
+const dialogueActs = require("../utils/dialogueActs");
 const personaService = require("./personaService");
 const questionSetService = require("./questionSetService");
 
@@ -143,6 +144,51 @@ function clampScore(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return undefined;
   return Math.max(0, Math.min(100, Math.round(v)));
+}
+
+// ---- How much of the instrument actually produced evidence -----------------
+//
+// A declined question ("I don't know") is asked-but-unanswered. It is deliberately NOT scored
+// zero — see the `declined` field on models/InterviewSession.js for why conflating a candid
+// decline with a wrong answer is both unfair and self-defeating. But excluding it silently would
+// be its own lie: a mean over the two questions someone answered would read exactly like a mean
+// over eight, and would flatter the candidate who declined most.
+//
+// So it is excluded from the mean AND counted, and the count travels with the score everywhere
+// the score goes. That is the whole resolution: neither number is fabricated, and a human can
+// see what the number is actually over.
+function coverageStats(ai) {
+  const answers = (ai.turns || []).filter((t) => t.role === "candidate" && t.kind === "answer");
+  const declined = answers.filter((t) => t.declined).length;
+  return {
+    asked: ai.questionCount || 0,
+    answered: answers.length - declined,
+    declined,
+  };
+}
+
+// Beyond this share of declined questions, there is not enough demonstrated evidence for an
+// automated recommendation to mean anything. Deliberately a constant in code rather than a model
+// judgement or a tenant setting: "was there enough evidence to decide?" is the question an
+// automated hiring decision is most likely to be challenged on, and the answer has to be the same
+// for every candidate and stateable without reading a config.
+const MAX_DECLINE_SHARE = 0.5;
+
+// Whether CODE overrules the model's recommendation and routes to a human, and why.
+//
+// This is rule 6 (every automated adverse action needs a human) applied at the point it actually
+// bites. A model handed a two-turn transcript will still confidently return "no_hire" — it has no
+// way to know that the transcript is short because the candidate withdrew rather than because
+// they failed. That distinction is not the model's to make, so it is not asked to.
+function reviewRequiredReason(ai) {
+  if (ai.status === "ended_early") {
+    return "the candidate chose to end the interview before it finished, so most of the instrument was never run";
+  }
+  const c = coverageStats(ai);
+  if (c.asked > 0 && c.declined / c.asked > MAX_DECLINE_SHARE) {
+    return `the candidate declined ${c.declined} of ${c.asked} questions, leaving too little demonstrated evidence to support an automated recommendation`;
+  }
+  return null;
 }
 
 async function loadRefs(session) {
@@ -311,6 +357,24 @@ function closingScript(candidate) {
   );
 }
 
+// The closing when the candidate ended it themselves. Authored here, in code, for the same reason
+// as every other spoken turn — and this one carries a promise, so its wording is not the model's
+// to improvise.
+//
+// What it deliberately does NOT do: express regret, ask why, or offer to continue. Any of those
+// would be pressure applied at the exact moment someone has said they want to stop, and the whole
+// value of the exit is that it is honoured without negotiation. It also does not imply the
+// application is over — ending an interview is the candidate's decision about this session, and
+// what happens to their application is the hiring team's, not this machine's, to announce.
+function withdrawalScript(candidate) {
+  const first = String(candidate?.basicDetails?.name || "").trim().split(/\s+/)[0];
+  return (
+    `Understood${first ? `, ${first}` : ""} — we'll stop here. Thank you for the time you've given today. ` +
+    `Everything you've said so far has been recorded and will go to the hiring team along with your ` +
+    `application, and a person will review it. Nothing further is needed from you. All the best.`
+  );
+}
+
 // ---- LLM steps (metered, with graceful fallback) ----
 async function makePlan({ session, candidate, job, settings, context, useAi }) {
   if (!useAi) return { plan: fallbackPlan(job), engine: "fallback" };
@@ -379,10 +443,20 @@ async function scoreUnscoredAnswers({ session, candidate, job, settings, ai, use
   for (let i = 0; i < ai.turns.length; i += 1) {
     const turn = ai.turns[i];
     if (turn.role !== "candidate" || typeof turn.answerScore === "number") continue;
-    // The opening self-introduction is not part of the instrument and is never scored. The
-    // `questionTurn` lookup below would skip it anyway (no question precedes it), but stating it
-    // means a later change to turn ordering can't quietly start scoring it.
-    if (turn.kind === "warmup_answer") continue;
+    // ONLY a real answer is scored, and the test is positive on purpose. It used to exclude the
+    // opening self-introduction by name (`kind === "warmup_answer"`), which meant every candidate
+    // turn kind added afterwards was scored by default until someone remembered to exclude it —
+    // and the first one added, `meta_question`, is a candidate asking "how many more are there?".
+    // Scoring that against the question it interrupted is exactly the failure the kind exists to
+    // prevent. Inverting the test makes silence the safe answer: a new kind is not part of the
+    // instrument until it is deliberately made part of it.
+    if (turn.kind !== "answer") continue;
+    // A decline is not a wrong answer and must never be scored as one. Without this the whole
+    // point of the decline path evaporates at finalisation: every "I don't know" would arrive
+    // here unscored, get sent to the scoring prompt like any other answer, and come back as the
+    // near-zero it structurally has to be — putting the fabricated number back into the mean by
+    // the back door. It stays unscored and is reported as declined instead (coverageStats).
+    if (turn.declined) continue;
     const questionTurn = [...ai.turns.slice(0, i)].reverse().find((t) => t.role === "ai" && t.kind === "question");
     if (!questionTurn) continue;
 
@@ -469,7 +543,13 @@ function publicState(session) {
     // can label it honestly instead of counting it as "Question 0 of 8".
     currentIsWarmup: ai.status === "in_progress" && lastAi?.kind === "warmup",
     awaitingAnswer: ai.status === "in_progress",
-    completed: ai.status === "completed",
+    // "Over" for the UI's purposes covers both endings — the room must show the end screen either
+    // way, and must never leave a candidate who withdrew staring at an open microphone.
+    completed: ai.status === "completed" || ai.status === "ended_early",
+    // ...but the two are surfaced distinctly, because what the candidate is told differs. Someone
+    // who finished hears that their answers are with the team; someone who stopped should not be
+    // shown a screen implying they completed something they deliberately did not.
+    endedEarly: ai.status === "ended_early",
   };
 }
 
@@ -656,6 +736,15 @@ async function submitAnswer(session, answerText, opts = {}) {
     }
   }
 
+  return advance(session);
+}
+
+// Decide and deliver the interviewer's next turn: complete, an approved must-ask question, or an
+// adaptive one. Extracted from submitAnswer so the dialogue-act paths reach the next question
+// through exactly the same code — a decline has to advance the interview identically to an
+// answer, and a second copy of this logic would be a second place for the two to drift apart.
+async function advance(session) {
+  const ai = session.aiInterview;
   const { candidate, job } = await loadRefs(session);
   const settings = await loadSettings(session.company);
   const context = buildContext(candidate, job);
@@ -703,8 +792,12 @@ async function submitAnswer(session, answerText, opts = {}) {
   const lastAnswer = [...ai.turns].reverse().find((t) => t.role === "candidate");
   const score = clampScore(next.answerScore);
   // The model scores "the previous answer" unconditionally, and on the first pass that answer is
-  // the self-introduction. Discard it rather than record it: nothing in the rubric backs it.
-  if (lastAnswer && lastAnswer.kind !== "warmup_answer" && score !== undefined) lastAnswer.answerScore = score;
+  // the self-introduction. Discard it rather than record it: nothing in the rubric backs it. Same
+  // for a decline — the model will happily score "I don't know" a 5, and that 5 would be a
+  // judgement about an answer nobody gave.
+  if (lastAnswer && lastAnswer.kind !== "warmup_answer" && !lastAnswer.declined && score !== undefined) {
+    lastAnswer.answerScore = score;
+  }
   if (next.difficulty) ai.currentDifficulty = next.difficulty;
 
   // Phase 8.3 — early end, decided by CODE: the model may propose closing
@@ -728,6 +821,179 @@ async function submitAnswer(session, answerText, opts = {}) {
   ai.questionCount += 1;
 
   await session.save();
+  return publicState(session);
+}
+
+// ---- Dialogue acts: the candidate talking ABOUT the interview --------------
+//
+// See utils/dialogueActs.js for what the acts are and why detection is deterministic. This is the
+// server half: the browser reports which act it detected (it has to — detection must be instant),
+// and this RE-RUNS the same rules against the same transcript before acting on any of it.
+//
+// That re-check is not paranoia about a malicious candidate; there is nothing here worth
+// attacking (the worst available outcome is ending your own interview, which the button already
+// offers). It is that "the client said so" is not an acceptable answer to "why did this interview
+// end?", and one day someone will ask. The stored record has to name a trigger phrase and a rule.
+
+async function submitDialogueAct(session, act, opts = {}) {
+  const ai = session.aiInterview;
+  if (ai.status !== "in_progress") {
+    throw Object.assign(new Error("The interview is not in progress"), { status: 400 });
+  }
+
+  if (act === "pause") return handlePause(session, opts);
+  if (act === "decline") return handleDecline(session, opts);
+  if (act === "withdraw") return handleWithdraw(session, opts);
+  throw Object.assign(new Error("Unknown conversational act"), { status: 400 });
+}
+
+// "Give me a second." Nothing to decide and nothing to record on the instrument — the interviewer
+// simply says it is waiting, and the browser extends its own silence window. It is logged as a
+// backchannel so the interview's real conditions stay reconstructible, and that is all it is.
+async function handlePause(session, opts) {
+  const ai = session.aiInterview;
+  ai.backchannels.push({
+    kind: "pause",
+    phrase: backchannel.phraseFor("pause", ai.backchannels.length),
+    turnIndex: ai.turns.length - 1,
+    at: opts.at ? new Date(opts.at) : new Date(),
+  });
+  await session.save();
+  return publicState(session);
+}
+
+// "I don't know." / "Can we skip this one?"
+//
+// Recorded verbatim as the candidate's turn — their words are their words, and tidying them out
+// of the transcript is not this system's call — but flagged `declined`, which is what keeps it out
+// of every scoring path. Then the interview advances exactly as it would after any other answer.
+//
+// Note what does NOT happen: the probe or approved question this was asked against stays `asked`.
+// It WAS asked; the candidate heard it and responded. What it did not produce is evidence, and
+// that shows up as an `inconclusive` verdict, not as an uncovered probe. Putting it back to
+// pending would mean re-asking a question the candidate has already declined, which is the one
+// thing a person would obviously not do.
+async function handleDecline(session, opts) {
+  const ai = session.aiInterview;
+  const raw = String(opts.text || "").trim().slice(0, MAX_ANSWER_CHARS);
+  const echo = backchannel.stripEcho(raw, opts.backchannels);
+  const text = echo.text;
+  if (!text) throw Object.assign(new Error("A transcript is required"), { status: 400 });
+
+  // Re-run the detection server-side. A client that reports "decline" over a real answer would
+  // otherwise be able to discard that answer from scoring, which is the one direction of this
+  // that a candidate could actually benefit from.
+  const verdict = dialogueActs.detect(text);
+  if (verdict.act !== "decline" || !verdict.honour) {
+    // Not a decline on the server's reading — treat it as the answer it appears to be, through
+    // the ordinary path. Falling back to submitAnswer rather than erroring means a disagreement
+    // between the two readings can never cost the candidate their words.
+    console.warn(
+      `[aiInterview] client reported a decline the server does not read as one (session ${session._id}, ` +
+        `act=${verdict.act || "none"}, otherWords=${verdict.otherWords}) — recording it as an answer`
+    );
+    return submitAnswer(session, text, opts);
+  }
+
+  const precedingAi = [...ai.turns].reverse().find((t) => t.role === "ai");
+  if (precedingAi?.kind === "warmup") {
+    // Declining the self-introduction is not a decline of anything scored — there is no rubric
+    // criterion behind "tell me about yourself". Record it as the warmup answer it is.
+    return submitAnswer(session, text, opts);
+  }
+
+  ai.turns.push({
+    role: "candidate",
+    kind: "answer",
+    text,
+    declined: true,
+    declineAct: "decline",
+    inputMode: opts.inputMode === "voice" ? "voice" : "text",
+    ...(opts.transcriptConfidence !== undefined ? { transcriptConfidence: opts.transcriptConfidence } : {}),
+    ...(opts.audioDurationMs !== undefined ? { audioDurationMs: opts.audioDurationMs } : {}),
+  });
+  if (opts.inputMode === "voice") ai.modality = "voice";
+
+  const turnIndex = ai.turns.length - 1;
+  ai.backchannels.push({
+    kind: "decline",
+    phrase: backchannel.phraseFor("decline", ai.questionCount || 0),
+    turnIndex,
+    at: new Date(),
+  });
+  for (const b of Array.isArray(opts.backchannels) ? opts.backchannels : []) {
+    ai.backchannels.push({ kind: b.kind, phrase: b.phrase, turnIndex, at: b.at || new Date() });
+  }
+
+  return advance(session);
+}
+
+// "I don't want to do this."
+//
+// The only irreversible action a candidate can take here, and therefore the only one that is
+// never taken on a single utterance. The browser must already have asked the confirmation
+// question and got an affirmative (or the candidate pressed the explicit End button, which needs
+// no confirmation — a button press is unambiguous by construction). Both are re-verified here.
+//
+// Rule 6 in the sharpest form it takes anywhere in this system: what follows must never be an
+// automated adverse action. The partial transcript is preserved, evaluated only for what it
+// actually contains, and the recommendation is forced to "review" by code
+// (see reviewRequiredReason) so no candidate is ever auto-rejected for exercising an exit.
+async function handleWithdraw(session, opts) {
+  const ai = session.aiInterview;
+  const confirmedBy = opts.confirmedBy === "explicit" ? "explicit" : "spoken";
+
+  if (confirmedBy === "spoken") {
+    const requestText = String(opts.text || "").trim().slice(0, MAX_ANSWER_CHARS);
+    const confirmText = String(opts.confirmText || "").trim().slice(0, MAX_ANSWER_CHARS);
+    const request = dialogueActs.detect(requestText);
+    if (request.act !== "withdraw" || !request.honour) {
+      throw Object.assign(
+        new Error("That did not read as a request to end the interview — the interview is continuing"),
+        { status: 400, code: "WITHDRAW_NOT_RECOGNISED" }
+      );
+    }
+    // Anything that is not a recognised yes resumes the interview. Silence, a half-sentence and
+    // an outright no are all the same answer here, and it is the recoverable one.
+    if (dialogueActs.detectConfirmation(confirmText) !== "yes") {
+      throw Object.assign(
+        new Error("The interview was not ended — no confirmation was given"),
+        { status: 400, code: "WITHDRAW_NOT_CONFIRMED" }
+      );
+    }
+    ai.endedEarly = {
+      by: "candidate",
+      requestText,
+      matchedTrigger: request.matchedTrigger,
+      confirmedBy,
+      confirmText,
+    };
+  } else {
+    ai.endedEarly = { by: "candidate", confirmedBy: "explicit" };
+  }
+
+  const { candidate } = await loadRefs(session);
+  const stats = coverageStats(ai);
+  ai.endedEarly.questionsAsked = stats.asked;
+  ai.endedEarly.questionsAnswered = stats.answered;
+  ai.endedEarly.at = new Date();
+
+  ai.turns.push({ role: "ai", kind: "closing", text: withdrawalScript(candidate) });
+  ai.status = "ended_early";
+  ai.completedAt = new Date();
+  // The SESSION is "completed" in the operational sense — it is over, it must not be resumable,
+  // and the expiry job must not later mark it expired. What actually happened is carried by
+  // aiInterview.status, which is where every consumer that cares about the difference reads it.
+  session.status = "completed";
+  session.completedAt = new Date();
+  await session.save();
+
+  console.warn(
+    `[aiInterview] session ${session._id} ended early by the candidate after ${stats.asked} question(s) ` +
+      `(${stats.answered} answered, ${stats.declined} declined, confirmedBy=${confirmedBy})`
+  );
+
+  scheduleFinalization(session._id);
   return publicState(session);
 }
 
@@ -763,6 +1029,29 @@ async function runFinalization(sessionId) {
     if (voice.delivery !== undefined) evaluation.delivery = voice.delivery;
     if (voice.confidence !== undefined) evaluation.confidence = voice.confidence;
   }
+
+  // How much of the instrument produced evidence, attached to the score so the two can never be
+  // read apart. Computed here in code — the model is never asked how complete its own input was.
+  const stats = coverageStats(ai);
+  evaluation.questionsAsked = stats.asked;
+  evaluation.questionsAnswered = stats.answered;
+  evaluation.questionsDeclined = stats.declined;
+
+  // CODE overrules the model's recommendation when the transcript cannot support one. The model
+  // returned a recommendation because the schema requires one; whether there was enough interview
+  // behind it to act on is not a question it is in a position to answer, so it is not asked.
+  const reason = reviewRequiredReason(ai);
+  if (reason) {
+    evaluation.reviewReason = reason;
+    evaluation.recommendation = "review";
+    evaluation.summary =
+      `No automated recommendation: ${reason}. A human must review this interview before any decision is taken. ` +
+      (stats.answered > 0
+        ? `What follows describes only the ${stats.answered} question(s) the candidate actually answered. `
+        : `The candidate answered no scored questions, so nothing below is measured. `) +
+      String(evaluation.summary || "");
+  }
+
   ai.evaluation = { ...evaluation, generatedAt: new Date() };
   await session.save();
 
@@ -798,9 +1087,15 @@ async function runFinalization(sessionId) {
 module.exports = {
   beginInterview,
   submitAnswer,
+  submitDialogueAct,
   publicState,
   runFinalization,
   closingAllowed,
+  // exported for tests (dialogue acts + the evidence-coverage guards)
+  coverageStats,
+  reviewRequiredReason,
+  withdrawalScript,
+  MAX_DECLINE_SHARE,
   // exported for tests (Phase 9 gates)
   scoreUnscoredAnswers,
   probeUncoveredByInterruption,

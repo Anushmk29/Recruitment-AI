@@ -10,6 +10,18 @@ const variants = {
     "bg-transparent text-slate-700 border border-slate-300 hover:bg-slate-50 focus-visible:ring-slate-200 disabled:opacity-50",
   ghost: "bg-transparent text-slate-600 hover:bg-slate-100 focus-visible:ring-slate-200 disabled:opacity-50",
   danger: "bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-300 disabled:bg-red-300",
+  // Ember CTA — marketing surfaces only (hero, pricing, conversion prompts),
+  // where the job is "draw the eye", not "state an outcome". It stays inside
+  // the Ember Containment Rule because emphasis is not a status.
+  //
+  // Two constraints are load-bearing here. It ships accent-700, not the
+  // brighter accent-600: button labels are 14px semibold, i.e. normal text at
+  // AA, and accent-600 on white is 3.86:1 — it only clears for large text.
+  // And it must never sit beside `danger` in the same control group; two warm
+  // saturated buttons side by side is how someone destroys a record they meant
+  // to promote.
+  accent:
+    "bg-accent-700 text-white shadow-soft hover:bg-accent-800 focus-visible:ring-accent-300 disabled:bg-accent-300",
 };
 
 const sizes = {

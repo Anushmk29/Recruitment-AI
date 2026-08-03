@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import MarketingNavbar from "../components/marketing/MarketingNavbar.jsx";
 import Button from "../components/ui/Button.jsx";
-import { Card } from "../components/ui/Card.jsx";
+import { Card, IconTile } from "../components/ui/Card.jsx";
 
 const FEATURES = [
   { icon: UploadCloud, title: "One Resume, Every Job", desc: "Upload your resume once and reuse it for every application, with a full version history if you update it later." },
@@ -67,7 +67,7 @@ export default function Landing() {
 
       {/* Hero */}
       <section className="relative overflow-hidden bg-grid">
-        <div className="absolute inset-x-0 top-0 -z-10 h-[520px] bg-gradient-to-b from-brand-50 via-white to-white" />
+        <div className="absolute inset-x-0 top-0 -z-10 h-[560px] bg-aurora" />
         <div className="mx-auto max-w-3xl px-5 py-24 text-center sm:px-8">
           <motion.div initial="hidden" animate="show" variants={fadeUp}>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-700">
@@ -109,10 +109,12 @@ export default function Landing() {
         <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           {FEATURES.map((f, i) => (
             <motion.div key={f.title} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} transition={{ delay: (i % 4) * 0.06 }}>
-              <Card className="group h-full transition hover:-translate-y-1 hover:shadow-soft">
-                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-50 text-brand-600 transition group-hover:bg-brand-600 group-hover:text-white">
-                  <f.icon className="h-5.5 w-5.5" />
-                </div>
+              {/* Every fourth tile warms to ember. It is a rhythm device on a
+                  decorative icon chip — the one job ember is allowed to do —
+                  and it never touches the card body, so no feature reads as
+                  "flagged" next to its neighbours. */}
+              <Card interactive className="group h-full">
+                <IconTile icon={f.icon} tone={i % 4 === 3 ? "ember" : "brand"} className="mb-4" />
                 <h3 className="text-base font-semibold text-slate-900">{f.title}</h3>
                 <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{f.desc}</p>
               </Card>
@@ -122,7 +124,7 @@ export default function Landing() {
       </section>
 
       {/* How it works */}
-      <section id="how-it-works" className="bg-slate-50 py-24">
+      <section id="how-it-works" className="bg-canvas py-24">
         <div className="mx-auto max-w-5xl px-5 sm:px-8">
           <motion.div initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} className="mx-auto max-w-2xl text-center">
             <h2 className="text-3xl font-bold text-slate-900 sm:text-4xl">How it works</h2>
@@ -157,22 +159,30 @@ export default function Landing() {
           <h2 className="text-3xl font-bold text-slate-900 sm:text-4xl">Why candidates choose HireFlow AI</h2>
         </motion.div>
         <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {WHY_US.map((f, i) => (
-            <motion.div key={f.title} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} transition={{ delay: (i % 3) * 0.08 }}>
-              <Card className="h-full">
-                <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-brand-600 text-white">
-                  <f.icon className="h-5.5 w-5.5" />
-                </div>
-                <h3 className="text-base font-semibold text-slate-900">{f.title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{f.desc}</p>
-              </Card>
-            </motion.div>
-          ))}
+          {WHY_US.map((f, i) => {
+            // The reference deck's rhythm: one violet block, one ember block,
+            // the rest white. Two filled cards out of six is the entire budget —
+            // a grid where everything is filled has no focal point left to
+            // spend, and the eye just bounces.
+            const tone = i === 0 ? "filled-brand" : i === 1 ? "filled-ember" : "default";
+            const filled = tone !== "default";
+            return (
+              <motion.div key={f.title} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} transition={{ delay: (i % 3) * 0.08 }}>
+                <Card tone={tone} className="h-full">
+                  <IconTile icon={f.icon} tone={filled ? "on-fill" : "brand"} className="mb-4" />
+                  <h3 className={`text-base font-semibold ${filled ? "text-white" : "text-slate-900"}`}>{f.title}</h3>
+                  <p className={`mt-1.5 text-sm leading-relaxed ${filled ? "text-white/90" : "text-slate-500"}`}>
+                    {f.desc}
+                  </p>
+                </Card>
+              </motion.div>
+            );
+          })}
         </div>
       </section>
 
       {/* About */}
-      <section id="about" className="bg-slate-50 py-24">
+      <section id="about" className="bg-canvas py-24">
         <div className="mx-auto max-w-3xl px-5 text-center sm:px-8">
           <h2 className="text-3xl font-bold text-slate-900 sm:text-4xl">About HireFlow AI</h2>
           <p className="mt-4 text-slate-600">
@@ -188,9 +198,11 @@ export default function Landing() {
 
       {/* CTA */}
       <section className="mx-auto max-w-7xl px-5 py-20 sm:px-8">
-        <div className="rounded-3xl bg-brand-600 px-8 py-16 text-center shadow-soft">
+        <div className="rounded-3xl fill-brand px-8 py-16 text-center shadow-lift">
           <h2 className="text-3xl font-bold text-white sm:text-4xl">Ready to start applying?</h2>
-          <p className="mx-auto mt-3 max-w-xl text-brand-100">
+          {/* white/90 rather than brand-100: brand-100 on the gradient's
+              lightest stop is 4.49:1, which rounds to "fails". */}
+          <p className="mx-auto mt-3 max-w-xl text-white/90">
             Create your free account and apply to your first job in minutes.
           </p>
           <Button as={Link} to="/register" variant="secondary" size="lg" className="mt-8">

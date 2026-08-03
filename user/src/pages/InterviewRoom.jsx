@@ -83,7 +83,13 @@ export default function InterviewRoom() {
   // The voice hook calls onAutoEndOfTurn when the candidate stops speaking (hands-free). We route
   // it through a ref so the live socket handler always invokes the latest handleDone.
   const handleDoneRef = useRef(null);
-  const voice = useVoiceInterview({ onAutoEndOfTurn: () => handleDoneRef.current?.() });
+  // The candidate said something ABOUT the interview — they can't answer this one, or they want
+  // to stop. Same ref indirection as onAutoEndOfTurn: the live socket handler is installed once.
+  const handleActRef = useRef(null);
+  const voice = useVoiceInterview({
+    onAutoEndOfTurn: () => handleDoneRef.current?.(),
+    onDialogueAct: (payload) => handleActRef.current?.(payload),
+  });
   const {
     supported,
     phase,
@@ -92,9 +98,11 @@ export default function InterviewRoom() {
     endingSoon,
     backchannel,
     personaName,
+    canInterrupt,
     speak,
     askAndListen,
     acknowledge,
+    acknowledgeDecline,
     finishListening,
     cancelListening,
   } = voice;
@@ -104,10 +112,13 @@ export default function InterviewRoom() {
   // re-introduce the interviewer.
   const introSpokenRef = useRef(false);
 
-  // Barge-in is only on where the pre-check MEASURED that this device's mic doesn't hear its own
-  // speakers, and the decision came from the server, not from this page. Anywhere else the
-  // interviewer finishes each question before listening — otherwise it hears itself start talking
-  // and stops mid-question, every question.
+  // Whether the pre-check MEASURED that this device's mic doesn't hear its own speakers.
+  //
+  // This used to be the sole gate on being able to interrupt, which meant every candidate without
+  // headphones got an interviewer they could not talk over. It is now one input of two: the hook
+  // enables interruption whenever the server's echo gate is on (portal/echoAlignment.js), and this
+  // measurement only still matters if that gate has been switched off. `canInterrupt` from the
+  // hook is the real answer, and it is what the UI should tell the candidate.
   const bargeIn = useMemo(() => {
     try {
       return JSON.parse(sessionStorage.getItem("bargeIn") || "null")?.eligible === true;
@@ -299,6 +310,94 @@ export default function InterviewRoom() {
     [pending]
   );
 
+  // Send a conversational act — a decline or a withdrawal. Deliberately a different endpoint from
+  // submitAnswer: these are not answers and must not be scored as any. See
+  // backend/utils/dialogueActs.js.
+  const submitAct = useCallback(async (payload) => {
+    setError("");
+    try {
+      const res = await api.post("/interview-portal/interview/act", payload, { headers: authHeader() });
+      setState(res.data);
+      setPending(null);
+      return res.data;
+    } catch (err) {
+      if (err.response?.status === 401) {
+        setError("This interview link has expired. Please check your email for a current invitation.");
+        return null;
+      }
+      // A failed withdrawal is the one that matters: the candidate has said they want to stop and
+      // the request did not land, so tell them plainly rather than leaving them in an interview
+      // they have already left. The button below stays available to try again.
+      setError(
+        err.response?.data?.error ||
+          (payload.act === "withdraw"
+            ? "Couldn't end the interview just now — check your connection and try again."
+            : "Couldn't send that — check your connection and try again.")
+      );
+      return null;
+    }
+  }, []);
+
+  // The candidate declined the current question, or asked to stop and confirmed it.
+  const handleDialogueAct = useCallback(
+    async (event) => {
+      if (finishingRef.current) return;
+      finishingRef.current = true;
+      try {
+        const result = await finishListening();
+        if (event.act === "withdraw") {
+          await submitAct({
+            act: "withdraw",
+            text: event.text,
+            confirmText: event.confirmText,
+            confirmedBy: event.confirmedBy || "spoken",
+          });
+          return;
+        }
+        // A decline. Use the server-trusted transcript from the closed stream where we have it —
+        // it is the same text the hook detected on, plus anything that arrived as the mic closed.
+        const text = result?.transcript || event.text;
+        if (!text) {
+          setError("That didn't come through — please try again, or switch to typing.");
+          handledRef.current = null;
+          return;
+        }
+        // "That's no problem — let's move on", said out loud while the next question is prepared,
+        // so a candidate who has just admitted they can't answer isn't met with silence.
+        const ack = acknowledgeDecline();
+        await submitAct({
+          act: "decline",
+          text,
+          inputMode: "voice",
+          transcriptConfidence: result?.confidence,
+          audioDurationMs: result?.durationMs,
+          backchannels: [...(result?.backchannels || []), ...(ack ? [ack] : [])],
+        });
+      } finally {
+        finishingRef.current = false;
+      }
+    },
+    [finishListening, submitAct, acknowledgeDecline]
+  );
+
+  useEffect(() => {
+    handleActRef.current = handleDialogueAct;
+  }, [handleDialogueAct]);
+
+  // The explicit exit. It exists independently of the spoken one because a candidate who wants to
+  // leave should never have to find the right words to be let out — and because a button press
+  // needs no confirmation to be unambiguous, which the spoken path does.
+  const [confirmingExit, setConfirmingExit] = useState(false);
+  const endInterview = useCallback(async () => {
+    setConfirmingExit(false);
+    try {
+      cancelListening();
+    } catch {
+      /* the mic may already be closed — ending must not depend on it */
+    }
+    await submitAct({ act: "withdraw", confirmedBy: "explicit" });
+  }, [cancelListening, submitAct]);
+
   const voiceMode = mode === "voice" && supported;
 
   // Voice orchestration: for each new AI question, ask it and listen. On devices where the
@@ -471,6 +570,27 @@ export default function InterviewRoom() {
         <p className="mt-2 text-sm text-slate-500">Please complete your pre-interview checks first.</p>
         <Button className="mt-4" onClick={() => navigate("/portal/pre-check")}>
           Go to pre-interview checks
+        </Button>
+      </Card>
+    );
+  } else if (state.endedEarly) {
+    // A distinct screen from "Interview Complete", because telling someone who deliberately
+    // stopped that they completed something is both false and faintly insulting. Neutral tone
+    // throughout: no "unfortunately", no implication their application is over — what happens to
+    // it is the hiring team's decision, not this machine's to announce. Nothing here asks them to
+    // reconsider, which is the whole point of an exit that is honoured without negotiation.
+    body = (
+      <Card className="text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+          <CheckCircle2 className="h-7 w-7" />
+        </div>
+        <h1 className="text-lg font-semibold text-slate-900">Interview ended</h1>
+        <p className="mt-2 text-sm text-slate-500">
+          You've ended this interview. Everything you said has been recorded and will go to the hiring team along with
+          your application, and a person will review it. Nothing further is needed from you.
+        </p>
+        <Button variant="outline" className="mt-5" onClick={() => navigate("/portal/dashboard")}>
+          Back to my dashboard
         </Button>
       </Card>
     );
@@ -703,7 +823,7 @@ export default function InterviewRoom() {
                         <Volume2 className="h-4 w-4 animate-pulse" />{" "}
                         {personaName ? `${personaName} is speaking…` : "Interviewer is speaking…"}
                       </p>
-                      {bargeIn && (
+                      {(canInterrupt || bargeIn) && (
                         <p className="text-xs text-slate-500">You can start answering whenever you&apos;re ready — just talk.</p>
                       )}
                     </>
@@ -810,6 +930,20 @@ export default function InterviewRoom() {
                       <Mic className="mr-1 inline h-3 w-3" /> Use voice instead
                     </button>
                   )}
+                  {/* Parity with the spoken "I don't know". Without it, a typing candidate's only
+                      way to decline is to write "I don't know" into the answer box and have it
+                      scored as an answer — which is exactly the behaviour this whole change
+                      exists to remove. Recorded as a decline, not as a zero. */}
+                  {!state.currentIsWarmup && (
+                    <button
+                      type="button"
+                      disabled={sending}
+                      onClick={() => submitAct({ act: "decline", text: "I don't know.", inputMode: "text" })}
+                      className="rounded py-1 text-xs font-medium text-slate-500 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-100 disabled:opacity-50"
+                    >
+                      I don&apos;t know this one — skip it
+                    </button>
+                  )}
                 </div>
                 <Button type="submit" loading={sending} disabled={!answer.trim()}>
                   <Send className="h-4 w-4" /> Send answer
@@ -819,6 +953,43 @@ export default function InterviewRoom() {
           )}
         </div>
       </Card>
+
+      {/* The way out.
+          Deliberately always visible rather than hidden behind a menu, and deliberately plain:
+          a candidate who wants to leave should not have to hunt, and should not be made to feel
+          they are doing something irregular. It is the same exit the spoken "I want to stop"
+          reaches — this one just needs no particular words, which matters most for exactly the
+          candidates least likely to find them. */}
+      {!confirmingExit ? (
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => setConfirmingExit(true)}
+            className="rounded py-1 text-xs font-medium text-slate-400 underline-offset-2 hover:text-slate-600 hover:underline focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-100"
+          >
+            End interview
+          </button>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-slate-200 bg-white p-4 text-center">
+          <p className="text-sm font-medium text-slate-900">End this interview now?</p>
+          {/* Says what actually happens, without pressure in either direction. No "you won't be
+              able to return" scare copy and no attempt to talk them out of it — but no false
+              comfort either: it does end here, and that is stated plainly. */}
+          <p className="mx-auto mt-1 max-w-md text-xs text-slate-500">
+            Your answers so far are recorded and go to the hiring team with your application, and a person will review
+            them. This interview won&apos;t continue after you end it.
+          </p>
+          <div className="mt-3 flex items-center justify-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setConfirmingExit(false)}>
+              Keep going
+            </Button>
+            <Button size="sm" onClick={endInterview}>
+              End interview
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
     );
   }

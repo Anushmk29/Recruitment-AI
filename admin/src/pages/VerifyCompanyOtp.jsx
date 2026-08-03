@@ -91,7 +91,7 @@ export default function VerifyCompanyOtp() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-canvas">
       <MarketingNavbar />
       <div className="mx-auto max-w-md px-5 py-14 sm:px-8">
         <OnboardingSteps current={3} />

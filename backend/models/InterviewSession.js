@@ -133,14 +133,38 @@ const acousticSchema = new mongoose.Schema(
 // and it does not consume the question budget. The kind is what keeps it out of the score —
 // see aiInterviewService (scoreUnscoredAnswers skips it, and submitAnswer never assigns it an
 // answerScore).
+//
+// "meta_question" / "meta_answer" are the same idea applied to the candidate asking about the
+// interview rather than answering it — "how many more of these are there?", "can I type instead?"
+// (utils/metaAnswers.js). Before these kinds existed, such an utterance was recorded as the
+// candidate's ANSWER to whatever had just been asked: they lost the question and had a non-answer
+// scored against them for asking it. It belongs in the transcript, because a reviewer should see
+// that they asked and what they were told — and it is emphatically not evidence about them, so
+// the kind keeps it out of the score, out of the question budget, and out of askedQuestions.
 const interviewTurnSchema = new mongoose.Schema(
   {
     role: { type: String, enum: ["ai", "candidate"], required: true },
     kind: {
       type: String,
-      enum: ["intro", "warmup", "warmup_answer", "question", "answer", "closing"],
+      enum: ["intro", "warmup", "warmup_answer", "question", "answer", "closing", "meta_question", "meta_answer"],
       default: "question",
     },
+    // The candidate said they could not or would not answer this one ("I don't know", "can we
+    // skip this") — utils/dialogueActs.js. It stays kind "answer" and keeps its verbatim text,
+    // because a decline IS part of the transcript and a reviewer must see exactly what was said.
+    // The flag is what keeps it out of the scoring paths.
+    //
+    // WHY IT IS NOT SCORED ZERO. A zero is indistinguishable from a wrong answer, and these are
+    // different findings about a candidate: one demonstrated a misunderstanding, the other told
+    // you plainly they hadn't done it. Scoring the honest answer identically to the wrong one
+    // also teaches candidates to bluff, which degrades every measurement the interview makes.
+    // So a decline is excluded from the answer-score mean and reported as a decline instead —
+    // and the count is surfaced on the evaluation, so "scored 72" can never quietly mean
+    // "scored 72 on the two questions they didn't decline". See aiInterviewService.coverageStats.
+    declined: { type: Boolean },
+    // Which act produced it, for the audit trail: "decline" here, always — recorded rather than
+    // assumed so a later act that also ends a turn can be told apart from this one.
+    declineAct: { type: String, trim: true },
     text: { type: String, required: true },
     topic: { type: String, trim: true },
     difficulty: { type: String, enum: ["easy", "medium", "hard"] },
@@ -259,9 +283,21 @@ const interviewEvaluationSchema = new mongoose.Schema(
     weaknesses: { type: [String], default: [] },
     missingSkills: { type: [String], default: [] },
     // "review" = no automated recommendation; requires human judgement. The deterministic
-    // fallback ALWAYS emits "review" — it must never produce an adverse hiring decision.
+    // fallback ALWAYS emits "review" — it must never produce an adverse hiring decision. So does
+    // any interview the candidate ended early, and any interview where they declined more than
+    // half of what was asked: see aiInterviewService.reviewRequiredReason, which is CODE
+    // overruling the model, not a prompt asking it nicely.
     recommendation: { type: String, enum: ["strong_hire", "hire", "maybe", "no_hire", "review"] },
     summary: { type: String, trim: true },
+    // How much of the instrument actually produced evidence. Without these, "72" is unreadable:
+    // a 72 over eight answered questions and a 72 over two answered and six declined are wildly
+    // different findings, and the number alone cannot tell them apart. Computed in code from the
+    // turns (aiInterviewService.coverageStats), never by the model.
+    questionsAsked: { type: Number },
+    questionsAnswered: { type: Number },
+    questionsDeclined: { type: Number },
+    // Why the automated recommendation was withheld, when it was. Null on an ordinary interview.
+    reviewReason: { type: String, trim: true },
     generatedBy: { type: String, enum: ["ai", "fallback"], default: "ai" },
     generatedAt: { type: Date },
     // Provenance for reproducibility / legal defensibility of an automated decision (W4).
@@ -283,9 +319,41 @@ const interviewEvaluationSchema = new mongoose.Schema(
 // scored, never counted as a question, never shown to a reviewer as one.
 const backchannelSchema = new mongoose.Schema(
   {
-    kind: { type: String, enum: ["reassure", "repeat", "acknowledge", "confirm"], required: true },
+    kind: {
+      type: String,
+      enum: ["reassure", "repeat", "acknowledge", "confirm", "decline", "withdraw_confirm", "withdraw_cancel", "pause", "clarify", "technical"],
+      required: true,
+    },
     phrase: { type: String, required: true },
     turnIndex: { type: Number }, // index in `turns` of the answer this happened during
+    at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
+// One reading of what the candidate wanted. See `intents` below for why these are stored and why
+// nothing that scores a candidate may read them.
+const intentSchema = new mongoose.Schema(
+  {
+    // Verbatim, and truncated rather than summarised: the whole value of this row is that it lets
+    // a human re-run the judgement on the actual words.
+    utterance: { type: String, required: true, maxlength: 500 },
+    action: { type: String, required: true },
+    // 0 = the deterministic matchers (a stated rule, reproducible forever).
+    // 1 = the semantic classifier (a model call, reproducible from model + promptVersion).
+    tier: { type: Number, enum: [0, 1], required: true },
+    confidence: { type: Number },
+    // The trigger phrase (tier 0) or the model's stated reading (tier 1).
+    reason: { type: String, maxlength: 300 },
+    // Present only for tier 1, and required to reproduce the call months later.
+    model: { type: String, trim: true },
+    promptVersion: { type: String, trim: true },
+    latencyMs: { type: Number },
+    // True when the classifier was unavailable or unsure and the utterance was therefore treated
+    // as part of the answer. Surfaced so "the interviewer ignored me" can be distinguished from
+    // "the interviewer never got the chance to understand me".
+    degraded: { type: Boolean, default: false },
+    turnIndex: { type: Number },
     at: { type: Date, default: Date.now },
   },
   { _id: false }
@@ -295,7 +363,12 @@ const backchannelSchema = new mongoose.Schema(
 // candidate). See services/aiInterviewService.js for the orchestration.
 const aiInterviewSchema = new mongoose.Schema(
   {
-    status: { type: String, enum: ["not_started", "in_progress", "completed"], default: "not_started" },
+    // "ended_early" is the exit that did not exist. Before it, a candidate who wanted to stop had
+    // no way to: the only route out of in_progress was answering every remaining question. It is
+    // a DISTINCT state rather than a flag on "completed" because everything downstream has to be
+    // able to tell them apart — a partial transcript must never be evaluated as if the candidate
+    // had simply performed badly on the questions they never heard.
+    status: { type: String, enum: ["not_started", "in_progress", "completed", "ended_early"], default: "not_started" },
     engine: { type: String, enum: ["ai", "fallback"], default: "ai" },
     // How the candidate answered — set to "voice" once any spoken answer is received.
     modality: { type: String, enum: ["text", "voice"], default: "text" },
@@ -310,6 +383,21 @@ const aiInterviewSchema = new mongoose.Schema(
     maxQuestions: { type: Number, default: 8 },
     // Non-evaluative interviewer speech, kept out of `turns` on purpose. See backchannelSchema.
     backchannels: { type: [backchannelSchema], default: () => [] },
+    // What the interviewer UNDERSTOOD the candidate to want, each time it had to decide
+    // (utils/conversationIntent.js). Distinct from `backchannels`, which record what was SAID:
+    // this is the reading that produced it.
+    //
+    // Recorded because the semantic tier is a model call, and the standard this codebase holds
+    // model calls to is that the decision must be reconstructible afterwards from stored data
+    // rather than from what the model felt at the time. {utterance, action, tier, model,
+    // promptVersion} is that record. It is also the only way to answer the complaint this whole
+    // path invites — "it stopped me mid-answer" / "it ignored me" — with evidence.
+    //
+    // NEVER READ BY ANY SCORING PATH. An intent is a fact about the conversation, not about the
+    // candidate: how often someone asks for a repeat correlates with their accent, their hearing
+    // and their connection, and barely at all with whether they can do the job. Same structural
+    // exclusion as the repeat count (utils/repeatIntent.js) and for the same reason.
+    intents: { type: [intentSchema], default: () => [] },
     // Every attempt to make the interviewer say something that was NOT authored by the
     // rubric-bound engine and was NOT in the approved phrase bank (utils/speechAuthorization.js).
     // Normally empty, permanently: the allowed set is exactly what this server produced, so an
@@ -368,6 +456,26 @@ const aiInterviewSchema = new mongoose.Schema(
     probeEngine: { type: String, enum: ["ai", "none"], default: "none" },
     probePromptVersion: { type: String },
     evaluation: { type: interviewEvaluationSchema, default: () => ({}) },
+    // Set when status is "ended_early". Records who ended it and on what evidence, because
+    // "the candidate chose to stop" is a claim this system will one day have to substantiate —
+    // to the candidate, or to a regulator asking whether the interview was really voluntary.
+    //
+    // `confirmedBy` is the point. A withdrawal is never taken on one utterance: the interviewer
+    // asks, and this records the reply that actually ended it (utils/dialogueActs.js). An
+    // interview that ended without a recorded confirmation is a bug, and this is where it shows.
+    endedEarly: {
+      by: { type: String, enum: ["candidate"] },
+      // The verbatim utterance that triggered the request, and the trigger it matched.
+      requestText: { type: String, trim: true },
+      matchedTrigger: { type: String, trim: true },
+      // How it was confirmed: "spoken" (they said yes) or "explicit" (they pressed the button,
+      // which needs no confirmation because a button press is already unambiguous).
+      confirmedBy: { type: String, enum: ["spoken", "explicit"] },
+      confirmText: { type: String, trim: true },
+      questionsAsked: { type: Number },
+      questionsAnswered: { type: Number },
+      at: { type: Date },
+    },
     startedAt: { type: Date },
     completedAt: { type: Date },
   },

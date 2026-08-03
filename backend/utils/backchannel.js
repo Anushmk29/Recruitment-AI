@@ -57,6 +57,64 @@ const BANK = {
   // makes the end of a turn their decision rather than a timer's, and it costs ~3 seconds
   // instead of the fixed minute-long wait that would otherwise be needed to feel unhurried.
   confirm: ["Anything you'd like to add?", "Is there anything else you'd like to add?"],
+
+  // ---- Dialogue acts (utils/dialogueActs.js) -------------------------------
+  //
+  // The interviewer's reply when the candidate says something ABOUT the interview rather than
+  // answering it. These are the phrases that decide whether "I don't know" feels like a normal
+  // moment in a conversation or like a scoring event, so the wording is load-bearing.
+
+  // "I don't know" / "can we skip this". Acknowledge, don't dwell, move on.
+  //
+  // Note how hard these work to say NOTHING about the decline. No "that's okay" (which implies it
+  // might not have been), no "don't worry", no "no problem at all, plenty of people find that
+  // one hard" — reassurance calibrated to the answer is differential encouragement, the exact
+  // thing the acknowledge bank above exists to avoid. A decline is a normal turn and gets the
+  // same flat, uniform courtesy every other turn gets.
+  decline: [
+    "That's no problem — let's move on.",
+    "Understood. Let's move on to the next one.",
+    "No problem at all — I'll move us on.",
+  ],
+
+  // Asked before ANY withdrawal takes effect. The one irreversible action in the interview is
+  // never taken on a single utterance — see the asymmetry note in utils/dialogueActs.js. The
+  // phrasing states both options plainly, because a candidate who triggered this by accident
+  // needs to know that saying nothing keeps them in the interview.
+  withdraw_confirm: [
+    "Just to confirm — would you like to end the interview here? Say yes to finish now, or just carry on and we'll keep going.",
+  ],
+
+  // They said no, or said nothing recognisable. Back to the interview with no fuss and, in
+  // particular, no comment on the fact that it happened.
+  withdraw_cancel: ["No problem — let's carry on then.", "Understood — let's carry on."],
+
+  // "Give me a second." Patience, said out loud, so the candidate knows the silence is theirs.
+  pause: [
+    "Of course — take the time you need.",
+    "No problem. Just let me know when you're ready.",
+  ],
+
+  // "What do you mean by that?" — spoken BEFORE the question's pre-approved restatement.
+  //
+  // Distinct from the `repeat` preamble on purpose, and the distinction is the point of the whole
+  // clarify path: someone who did not hear us wants the same sentence again, and someone who did
+  // not understand us is not helped by it. What follows this preamble is the restatement frozen
+  // alongside the question itself — never something composed in the moment, which would mean two
+  // candidates were asked measurably different questions.
+  clarify: [
+    "Of course — let me put that a different way.",
+    "Sure — here's another way of asking it.",
+  ],
+
+  // The audio is broken. Not a decline and not a repeat: reading the question again into a dead
+  // speaker helps nobody, so this names the problem and points at the path that still works.
+  // Deliberately says the typed answer is assessed the same way — a candidate who believes
+  // speaking is the graded path will fight a failing microphone instead of switching, and every
+  // part of that outcome is worse for both sides.
+  technical: [
+    "It sounds like the audio isn't coming through properly. You can switch to typing your answer at any point — typed answers are assessed the same way.",
+  ],
 };
 
 const KINDS = Object.keys(BANK);
@@ -190,6 +248,14 @@ function clientPolicy() {
     acknowledgements: phrases("acknowledge"),
     repeatPreambles: phrases("repeat"),
     confirmations: phrases("confirm"),
+    // Replies to the dialogue acts (utils/dialogueActs.js). Sent with the same guarantee as
+    // everything else here: the browser decides WHEN one is due, never WHAT it says.
+    declineReplies: phrases("decline"),
+    withdrawConfirmations: phrases("withdraw_confirm"),
+    withdrawCancellations: phrases("withdraw_cancel"),
+    pauseReplies: phrases("pause"),
+    clarifyPreambles: phrases("clarify"),
+    technicalReplies: phrases("technical"),
     // How long the candidate has to answer "anything you'd like to add?" before the turn really
     // ends. Long enough to draw breath and start a sentence — any new speech cancels the ending
     // outright and hands the floor straight back.

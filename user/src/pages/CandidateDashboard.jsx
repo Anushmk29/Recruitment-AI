@@ -659,12 +659,14 @@ export default function CandidateDashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
+      {/* Greeting band. The wash sits behind the title only — nothing on a
+          tinted ground here is a status, a deadline, or a score. */}
+      <header className="overflow-hidden rounded-2xl border border-brand-100 bg-aurora px-6 py-7 shadow-card">
         <h1 className="text-2xl font-bold text-slate-900">My Dashboard</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 max-w-prose text-sm text-slate-600">
           Every step shows who it's waiting on and when it closes — so nothing is a black box.
         </p>
-      </div>
+      </header>
 
       {/* Session-open failures are raised here rather than inside the "Needs
           you" card. That card is one of four places a session can be opened
@@ -691,8 +693,12 @@ export default function CandidateDashboard() {
 
       {/* The hero. Only rendered when something is genuinely owed, so an empty
           state here is meaningful rather than decorative. */}
+      {/* Brand tone on the card below, never ember or amber: this is the
+          candidate's own to-do list, and the reserved pending channel means "a
+          recruiter has not got to you yet". Those two must not look alike — one
+          is work you can do now, the other is waiting you cannot affect. */}
       {needsYou.length > 0 ? (
-        <Card as="section" className="border-brand-200">
+        <Card as="section" tone="brand">
           <h2 className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-900">
             <ListChecks className="h-4.5 w-4.5 text-brand-600" aria-hidden="true" /> Needs you
             <Badge tone="brand">{needsYou.length}</Badge>

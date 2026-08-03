@@ -584,6 +584,10 @@ async function buildInterviewReport(candidateId, companyId) {
   const verdict = computeVerdict({
     responsiveCount: substance.responsiveCount,
     totalAnswers: substance.totalAnswers,
+    declinedCount: substance.declinedCount,
+    // An interview the candidate ended themselves never produces an automated adverse verdict —
+    // the transcript is short by their choice, not by their performance (rule 6).
+    endedEarly: ai.status === "ended_early",
     engineRan,
     overallScore: ai.evaluation?.overallScore,
   });
@@ -609,7 +613,14 @@ async function buildInterviewReport(candidateId, companyId) {
       evaluation: ai.evaluation || null,
       competencyTriplet: competencyTripletOrNull(ai.evaluation),
       competencyTable: buildCompetencyTable(ai.turns),
-      substance: { responsiveCount: substance.responsiveCount, totalAnswers: substance.totalAnswers },
+      substance: {
+        responsiveCount: substance.responsiveCount,
+        totalAnswers: substance.totalAnswers,
+        declinedCount: substance.declinedCount,
+      },
+      // Surfaced so the report can say the interview was ended by the candidate rather than
+      // leaving a reviewer to infer it from a short transcript.
+      endedEarly: ai.status === "ended_early" ? ai.endedEarly || { by: "candidate" } : null,
       durationFlag,
       sessionQuality,
       verdict,

@@ -19,9 +19,16 @@ const usageEventSchema = new mongoose.Schema(
     // tenant for visibility but deliberately draws no quota — a tenant must not
     // be billed against their screening allowance for applicants who never
     // finish applying.
+    //
+    // `intent` is the live conversational classifier (services/intentService.js):
+    // many small calls per interview, one per utterance the deterministic matchers
+    // could not read. Tagged separately because its cost curve is nothing like a
+    // per-turn call — it scales with how much the candidate talks, not with how
+    // many questions were asked — and conflating the two would make interview unit
+    // economics unreadable.
     kind: {
       type: String,
-      enum: ["plan", "question", "evaluation", "rubric_compile", "question_set_compile", "claim_extract", "match", "probe_gen", "verdict", "report", "stt", "tts", "autofill", "other"],
+      enum: ["plan", "question", "evaluation", "rubric_compile", "question_set_compile", "claim_extract", "match", "probe_gen", "verdict", "report", "stt", "tts", "autofill", "intent", "other"],
       default: "other",
     },
     provider: { type: String, trim: true },

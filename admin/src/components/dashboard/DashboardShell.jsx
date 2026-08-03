@@ -43,7 +43,7 @@ function SidebarContent({ onNavigate }) {
       {/* Monogram, not a sparkle. DESIGN.md's Don't list names sparkle icons
           explicitly — on a product whose credibility rests on looking measured,
           the AI-hype glyph works against the pitch. */}
-      <div className="flex h-16 items-center gap-2 px-5 font-display text-lg font-bold text-white">
+      <div className="flex h-16 items-center gap-2 px-5 font-display text-lg font-bold text-slate-900">
         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-sm font-bold text-white">
           H
         </span>
@@ -59,8 +59,16 @@ function SidebarContent({ onNavigate }) {
             className={({ isActive }) =>
               // Named properties, not `transition`: the bare utility animates
               // box-shadow too, which would fade the focus ring in.
-              `flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium whitespace-nowrap transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400 ${
-                isActive ? "bg-brand-600 text-white shadow-soft" : "text-slate-300 hover:bg-white/5 hover:text-white"
+              //
+              // The active state is a filled violet pill, which is now the
+              // loudest thing on a light sidebar rather than the one bright
+              // patch on a dark one. Inactive rows sit at slate-600 (7.0:1 on
+              // white) — the old slate-300 was tuned for the dark panel and
+              // would fall to 1.6:1 here.
+              `flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium whitespace-nowrap transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 ${
+                isActive
+                  ? "bg-brand-600 text-white shadow-soft"
+                  : "text-slate-600 hover:bg-brand-50 hover:text-brand-700"
               }`
             }
           >
@@ -175,7 +183,7 @@ function ShellInner({ children }) {
   }, [pathname]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50">
+    <div className="flex min-h-screen flex-col bg-canvas">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[60] focus:rounded-xl focus:bg-brand-600 focus:px-4 focus:py-2.5 focus:text-sm focus:font-semibold focus:text-white focus:shadow-deep"
@@ -202,7 +210,7 @@ function ShellInner({ children }) {
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-      <aside className="hidden w-64 shrink-0 flex-col bg-slate-900 lg:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
         <SidebarContent />
       </aside>
 
@@ -211,10 +219,10 @@ function ShellInner({ children }) {
         onClose={() => setMobileOpen(false)}
         placement="left"
         label="Navigation menu"
-        panelClassName="w-64 bg-slate-900"
+        panelClassName="w-64 bg-white"
       >
         <button
-          className="absolute right-3 top-4 inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-400"
+          className="absolute right-3 top-4 inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
           onClick={() => setMobileOpen(false)}
           aria-label="Close menu"
         >

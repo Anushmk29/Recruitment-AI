@@ -394,7 +394,7 @@ export default function PlatformConsole() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-canvas">
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-slate-900 px-5 py-3 text-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
           <p className="flex items-center gap-2 font-display text-base font-bold">

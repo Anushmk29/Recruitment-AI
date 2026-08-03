@@ -1,5 +1,5 @@
 /* Hallmark · genre: modern-minimal · macrostructure: Bento Grid (app-scope)
- * theme: HireFlow AI (DESIGN.md, locked) · accent: verification blue
+ * theme: HireFlow AI (DESIGN.md, locked) · accent: signal violet
  * pre-emit critique: P5 H5 E5 S5 R5 V5
  *
  * Every figure on this screen is derived from data the workspace already holds
@@ -10,9 +10,9 @@
 
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Briefcase, Users, Bot, Scale, ArrowUpRight, AlertTriangle, Clock } from "lucide-react";
+import { Briefcase, Users, Bot, Scale, ArrowUpRight, AlertTriangle, Clock, TrendingUp, Layers, UserCheck, Inbox } from "lucide-react";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
-import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
+import { Card, Badge, Skeleton, EmptyState, IconTile, SectionHeader } from "../../components/ui/Card.jsx";
 import { stageLabel, stageTone } from "../../lib/pipeline.js";
 import TrendChart from "../../components/dashboard/TrendChart.jsx";
 
@@ -139,30 +139,37 @@ export default function DashboardHome() {
 
   return (
     <div className="space-y-6">
-      <header>
+      {/* Greeting band. The aurora wash is the one decorative surface on this
+          screen — it sits behind the salutation, which carries no data, so
+          nothing measurable is ever rendered on a tinted ground. */}
+      <header className="overflow-hidden rounded-2xl border border-brand-100 bg-aurora px-6 py-7 shadow-card">
         <h1 className="text-2xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere]">
           {greeting()}
           {/* /auth/me returns the sanitized user directly, with `company` nested
               inside it — the name is me.name, not me.user.name. */}
           {me?.name ? `, ${me.name.split(" ")[0]}` : ""}
         </h1>
-        <p className="mt-1 text-sm text-slate-500">A live view of the pipeline. Every figure here is computed from your own workspace.</p>
+        <p className="mt-1 max-w-prose text-sm text-slate-600">
+          A live view of the pipeline. Every figure here is computed from your own workspace.
+        </p>
       </header>
 
       {/* KPI strip — one surface divided by hairlines, rather than four separate
-          floating cards. The figures belong to one reading. */}
+          floating cards. The figures belong to one reading, and four detached
+          tiles would invite four separate conclusions.
+          The icon tiles are new; the single-surface decision is not. */}
       <Card className="p-0">
         <div className="grid divide-y divide-slate-200 sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 lg:divide-x">
           {stats.map((s) => (
             <div key={s.label} className="p-5 sm:border-b sm:border-slate-200 lg:border-b-0">
-              <div className="flex items-center gap-2 text-slate-600">
-                <s.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span className="text-xs font-semibold">{s.label}</span>
+              <div className="flex items-center gap-2.5">
+                <IconTile icon={s.icon} size="sm" />
+                <span className="text-xs font-semibold text-slate-600">{s.label}</span>
               </div>
               {loading ? (
                 <Skeleton className="mt-3 h-8 w-20" />
               ) : (
-                <p className="mt-2 text-3xl font-bold tabular-nums tracking-tight text-slate-900">{s.value}</p>
+                <p className="font-display mt-3 text-3xl font-bold tabular-nums tracking-tight text-slate-900">{s.value}</p>
               )}
               <p className="mt-1">{s.delta !== undefined ? <Delta value={s.delta} /> : <span className="text-xs text-slate-500">{s.foot}</span>}</p>
             </div>
@@ -172,16 +179,16 @@ export default function DashboardHome() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-            <h2 className="text-base font-semibold text-slate-900">Applications received</h2>
-            <p className="text-xs text-slate-500">Weekly, last 12 weeks</p>
-          </div>
+          <SectionHeader
+            icon={TrendingUp}
+            title="Applications received"
+            action={<p className="text-xs text-slate-500">Weekly, last 12 weeks</p>}
+          />
           {loading ? <Skeleton className="mt-4 h-44 w-full" /> : <TrendChart buckets={model.buckets} />}
         </Card>
 
         <Card>
-          <h2 className="text-base font-semibold text-slate-900">Pipeline distribution</h2>
-          <p className="mt-1 text-xs text-slate-500">Where candidates currently sit</p>
+          <SectionHeader icon={Layers} title="Pipeline distribution" description="Where candidates currently sit" />
           {loading ? (
             <Skeleton className="mt-4 h-44 w-full" />
           ) : model.stages.length === 0 ? (
@@ -211,15 +218,19 @@ export default function DashboardHome() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <div className="mb-2 flex items-center justify-between gap-4">
-            <h2 className="text-base font-semibold text-slate-900">Recent applicants</h2>
-            <Link
-              to="/candidates"
-              className="inline-flex items-center gap-1 rounded-lg text-xs font-semibold whitespace-nowrap text-brand-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
-            >
-              View all <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
-            </Link>
-          </div>
+          <SectionHeader
+            icon={UserCheck}
+            title="Recent applicants"
+            className="mb-3"
+            action={
+              <Link
+                to="/candidates"
+                className="inline-flex items-center gap-1 rounded-lg text-xs font-semibold whitespace-nowrap text-brand-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+              >
+                View all <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+              </Link>
+            }
+          />
 
           {!loading && model.recent.length === 0 ? (
             <EmptyState
@@ -257,9 +268,12 @@ export default function DashboardHome() {
 
         {/* Needs attention — the tile that replaces a decorative "insights"
             panel with the two states that actually block a recruiter. */}
+        {/* Needs attention. Stays a plain white card on purpose — this panel is
+            about work awaiting a human, which is precisely what the reserved
+            amber channel means. Wrapping it in a decorative fill would put a
+            brand colour in front of a queue state. */}
         <Card>
-          <h2 className="text-base font-semibold text-slate-900">Needs a person</h2>
-          <p className="mt-1 text-xs text-slate-500">Nothing here resolves itself</p>
+          <SectionHeader icon={Inbox} title="Needs a person" description="Nothing here resolves itself" />
 
           <div className="mt-5 space-y-4">
             <Link

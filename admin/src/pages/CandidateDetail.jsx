@@ -34,7 +34,11 @@ const PROVENANCE_LABELS = {
   autofill_edited: {
     label: "From résumé · edited",
     title: "Read from the résumé, then changed by the candidate before submitting. Compare the entry against the quoted source below.",
-    className: "border-violet-200 bg-violet-50 text-violet-800",
+    // Slate, not violet. This tag used to be violet back when the brand was
+    // blue and violet was a free hue; now that the brand ramp *is* violet, a
+    // violet chip here would read as a brand accent rather than as a
+    // provenance warning about where a field came from.
+    className: "border-slate-300 bg-slate-100 text-slate-700",
   },
 };
 

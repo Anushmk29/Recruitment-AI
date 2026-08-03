@@ -10,6 +10,89 @@ Legend: 🆕 new file · ✏️ modified · 🗑️ removed
 
 ---
 
+## 2026-08-03 — Product: an interviewer you can interrupt, that understands what you meant
+
+**What:** Two changes to how the live interview behaves in the room, plus the plumbing they need.
+
+1. **The microphone stays open while the interviewer speaks — on every device.** Interruption used
+   to be armed only where the pre-check tone measured that the mic could not hear its own speakers
+   (`portal/audioIsolation.js`), so every candidate without headphones got an interviewer they
+   could not talk over. New `utils/echoAlignment.js` decides it differently: we know exactly what
+   we are saying, so a transcript arriving during playback is struck word-for-word against our own
+   outgoing sentence — anything our text accounts for is echo and is dropped, and a run of words we
+   did not say is a person. Contiguous-run matching (not a percentage) is what makes it work on the
+   only case that matters, the mixed transcript at the instant of a barge-in, where the echo tail is
+   longer than the candidate's first words. Ambiguity resolves to **echo**, because a falsely
+   truncated question does not count as asked and therefore does not cover its claim-probe, whereas
+   a missed interruption only costs a second of overlap with the mic still recording.
+2. **The interviewer reads intent instead of matching phrases.** Two tiers, composed by
+   `utils/conversationIntent.js`: the existing deterministic matchers answer the plain phrasings in
+   zero milliseconds, and `services/intentService.js` (the `cheap` model role) reads only the tail
+   they miss — given the interviewer's own last sentence and the question in flight as context,
+   which is what lets "sorry, what?" resolve to *repeat* after a question and *clarify* after an
+   unfamiliar term. Understanding is open-ended; **consequences are a closed set** of eight actions
+   declared in code, the words spoken back still come from the approved bank, and every reading is
+   stored on the session with the model and prompt version that produced it.
+
+   Three of those actions are new: **clarify** (heard it, didn't understand it — distinct from
+   repeat, because replaying an identical sentence to someone who already heard it is the most
+   machine-like thing an interviewer can do), **meta_question** (asking about the interview rather
+   than answering it — answered from this session's real state via `utils/metaAnswers.js`), and
+   **technical_problem**.
+
+**Why:** requested — "I want it more interactive… mic should be on all the time… it should read
+between the lines and understand what the candidate wants, not be like you give a command then I do
+a particular stuff." Before this, a candidate asking "how many more of these are there?" had it
+transcribed and scored as their answer to whatever had just been asked: they lost the question and
+had a non-answer recorded against them for asking it.
+
+**The rule this does not break.** "The model never emits the score" governs *evaluation*. Reading
+what someone wants conversationally is *conduct* — it never touches a rubric criterion, an answer
+score, a probe verdict or a recommendation, and nothing downstream reads an intent as evidence. The
+property that was actually at risk — being able to say afterwards why the interviewer did what it
+did — is preserved by the stored `{utterance, action, tier, model, promptVersion}` row.
+
+**Backend**
+
+| File | Change |
+|---|---|
+| 🆕 `backend/utils/echoAlignment.js` | Live echo rejection by text alignment. Pure + shared; thresholds ship to the browser via `clientPolicy()`. `VOICE_FULL_DUPLEX=false` restores the old pausing behaviour. |
+| 🆕 `backend/utils/conversationIntent.js` | The closed action set, the precedence between actions, and `gateSemantic()` — the gate every inferred reading passes before anything acts on it. Everything that fails any check becomes `answer_continues`. |
+| 🆕 `backend/utils/metaAnswers.js` | Approved answers to process questions, composed from session state. Boot-checked for evaluative language like the phrase bank. "How am I doing?" is deliberately absent and defers. |
+| 🆕 `backend/services/intentService.js` | Tier-1 classifier over the `cheap` role. Own 1.5s timeout; every failure returns `answer_continues`; metered as `kind: "intent"`. |
+| ✏️ `backend/controllers/interviewPortalController.js` | New `voiceIntent` (`POST /voice/intent`): re-runs the deterministic tier server-side rather than trusting the client's "nothing matched", composes meta answers from state, writes them into the transcript as turns (which is what makes them speakable at all under `speechAuthorization`). |
+| ✏️ `backend/routes/interviewPortalRoutes.js` | Route + its own rate limiter (120/min — this fires per utterance, not per turn). |
+| ✏️ `backend/utils/backchannel.js` | New `clarify` and `technical` banks; both reach the browser via `clientPolicy()`. |
+| ✏️ `backend/services/personaService.js` | Ships the echo + intent policies with the streaming credential. |
+| ✏️ `backend/models/InterviewSession.js` | Turn kinds `meta_question`/`meta_answer`; backchannel kinds `clarify`/`technical`; new `aiInterview.intents[]` audit array. |
+| ✏️ `backend/models/UsageEvent.js` | `kind` enum gains `intent` — its cost curve scales with how much the candidate talks, not with how many questions were asked, so conflating it with per-turn spend would make unit economics unreadable. |
+| ✏️ `backend/services/aiInterviewService.js` | `scoreUnscoredAnswers` now scores **only** `kind === "answer"`. It excluded `warmup_answer` by name, which meant every candidate turn kind added later was scored by default — and the first one added is a candidate asking how many questions are left. |
+| ✏️ `backend/.env.example` | 10 new vars documented with the consequence of leaving each unset. |
+
+**Frontend (`user/`)**
+
+| File | Change |
+|---|---|
+| 🆕 `user/src/portal/echoAlignment.js` | Browser mirror of the server module (same split as `portal/endpointing.js`: classification here, thresholds from the server). |
+| ✏️ `user/src/portal/useVoiceInterview.js` | Echo gate replaces the naive barge-in test; `withSpokenText()` makes every interviewer utterance echo-rejectable; the mic no longer closes around backchannels; `askAndListen` opens the mic before the question on every path; semantic tier wired in with staleness guards; diarization tallying now skipped whenever we have a voice in the air (it was only skipped during questions, so a backchannel would have flagged the candidate for a second speaker). |
+| ✏️ `user/src/pages/InterviewRoom.jsx` | "You can start answering whenever you're ready" now shown from the hook's `canInterrupt` rather than only on measured-isolated hardware. |
+
+**Bug found and fixed on the way:** `stopSpeaking()` called `audio.pause()`, which fires neither
+`ended` nor `error` — so the promise `askAndListen` was awaiting never resolved and the turn hung
+after a barge-in, mic open, with nothing listening for the end of the answer. Latent while
+interruption needed measured-isolated hardware; universal the moment every candidate can interrupt.
+`playUrl` now hands its resolver to `stopSpeaking`.
+
+**Verified:** 604/604 backend tests pass (34 new — 31 behavioural in `voiceInteractivity.test.js`,
+3 in `echoParity.test.js`). The parity test runs 648 cases through both copies of the echo gate and
+asserts identical verdict, residue and novel-run — the mirrored `portal/endpointing.js` has never
+had such a guard, and silent drift here would start cutting candidates off mid-question with no
+other signal. `npm run check:env` green. `user` Vite build passes. Backend module graph loads.
+**Not yet exercised live:** a real voice interview against Deepgram — the echo gate's behaviour on
+actual room acoustics, and Tier-1 latency against the live provider, still need a smoke test.
+
+---
+
 ## 2026-07-27 — Fix: phone-cam QR + interview links dead on a phone (LAN/multi-origin CORS)
 
 **What:** The phone-cam pairing QR and every interview magic link were built from `CLIENT_ORIGIN_USER`, hardcoded to `http://localhost:5174` — meaningless once scanned/opened on an actual phone, where "localhost" means the phone itself. Added `utils/corsOrigins.js`: `CLIENT_ORIGIN_ADMIN`/`CLIENT_ORIGIN_USER` may now each hold a comma-separated list of origins — the **first** entry feeds every link-builder (interview invite email, phone-cam QR, password-reset link, public careers link), **all** entries feed the CORS and Socket.io allow-lists. Set `CLIENT_ORIGIN_USER` to the dev machine's LAN IP first, `localhost` second, so links/QRs are phone-reachable while the app still works from the machine's own browser.

@@ -24,16 +24,37 @@ function isResponsive(text, minWords = MIN_RESPONSIVE_WORDS) {
 
 // §2: per-answer word count / spoken duration / responsive tag, plus the aggregate
 // recruiters scan first ("Responsive answers: X / N").
+// A DECLINED turn ("I don't know") is separated out rather than counted as a non-responsive
+// answer, and that distinction decides outcomes — see computeVerdict, which rejects on a
+// responsiveness ratio below 50%. Left in the denominator, three honest declines out of four
+// questions would produce a CLEAR_REJECT at High confidence: an automated adverse decision whose
+// entire evidence is that the candidate said "I don't know" instead of bluffing.
+//
+// They are still reported — `declinedCount` is returned and surfaced — just not scored as failed
+// attempts to answer, because they were not attempts.
 function computeAnswerSubstance(turns) {
-  const answers = (turns || [])
-    .filter((t) => t.role === "candidate")
-    .map((t) => {
-      const text = t.text || "";
-      const durationSec = t.audioDurationMs != null ? Math.round(t.audioDurationMs / 1000) : null;
-      return { text, wordCount: wordCount(text), durationSec, responsive: isResponsive(text) };
-    });
-  const responsiveCount = answers.filter((a) => a.responsive).length;
-  return { answers, responsiveCount, totalAnswers: answers.length };
+  const candidateTurns = (turns || []).filter((t) => t.role === "candidate");
+  const answers = candidateTurns.map((t) => {
+    const text = t.text || "";
+    const durationSec = t.audioDurationMs != null ? Math.round(t.audioDurationMs / 1000) : null;
+    return {
+      text,
+      wordCount: wordCount(text),
+      durationSec,
+      declined: Boolean(t.declined),
+      // A decline is neither responsive nor non-responsive — it is outside the question the
+      // responsiveness measure asks. Flagged false so nothing downstream counts it as engagement,
+      // and excluded from the denominator below so nothing counts it as a failure either.
+      responsive: t.declined ? false : isResponsive(text),
+    };
+  });
+  const attempted = answers.filter((a) => !a.declined);
+  return {
+    answers,
+    responsiveCount: attempted.filter((a) => a.responsive).length,
+    totalAnswers: attempted.length,
+    declinedCount: answers.length - attempted.length,
+  };
 }
 
 // §4: flags a session that's too short to be a real read on the candidate.
@@ -92,8 +113,33 @@ function buildCompetencyTable(turns) {
 
 // §1 + §7: the single source of truth for the headline call. Every branch below is
 // stated directly in the report spec — simple and explainable, no black box.
-function computeVerdict({ responsiveCount, totalAnswers, engineRan, overallScore }) {
+function computeVerdict({ responsiveCount, totalAnswers, engineRan, overallScore, endedEarly, declinedCount = 0 }) {
+  // RULE 6, AT THE POINT IT ACTUALLY BITES. An interview the candidate ended themselves can never
+  // produce an automated adverse verdict here — not CLEAR_REJECT, and not an ADVANCE either.
+  // Every branch below reasons from a transcript, and this transcript is short because the
+  // candidate exercised an exit, not because they failed. Without this the withdrawal feature
+  // would auto-reject the people who used it: no answers recorded is the FIRST branch, at High
+  // confidence.
+  if (endedEarly) {
+    return {
+      verdict: "REVIEW",
+      reason:
+        "The candidate ended the interview before it finished, so most of the instrument was never run. " +
+        "A short transcript here is not a measurement of the candidate — a human must review it.",
+      confidence: "Low",
+    };
+  }
   if (!totalAnswers) {
+    // Declines are excluded from totalAnswers (see computeAnswerSubstance), so an interview
+    // consisting entirely of "I don't know" lands here. It is still not a machine's call to
+    // reject on: the candidate engaged with every question and told the truth about each one.
+    if (declinedCount > 0) {
+      return {
+        verdict: "REVIEW",
+        reason: `The candidate declined all ${declinedCount} question(s) and attempted none. Nothing was measured — a human must review this.`,
+        confidence: "Low",
+      };
+    }
     return { verdict: "CLEAR_REJECT", reason: "No answers were recorded.", confidence: "High" };
   }
   if (responsiveCount === 0) {

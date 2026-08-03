@@ -25,8 +25,11 @@ const ACCOUNT_LINKS = [
 // Every nav control shares one shell so focus, hit area, and hover read the
 // same across links and buttons. `tap-target` lifts these to 44px on a thumb;
 // on a mouse they stay at their text height, which is what keeps the bar tight.
+// The hover pill (px-3 + a brand-50 ground) is what makes a row of bare text
+// links read as navigation rather than as prose — it gives each item a visible
+// extent before the pointer commits to it.
 const NAV_ACTION =
-  "tap-target inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2";
+  "tap-target inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2";
 
 // The drawer the hamburger controls. A fixed id rather than useId(): the header
 // mounts once, and `aria-controls` has to name a node that exists.
@@ -42,7 +45,7 @@ function AccountLinks({ onNavigate }) {
         <Link
           to="/login"
           onClick={onNavigate}
-          className={`${NAV_ACTION} text-slate-600 hover:text-brand-700 focus-visible:ring-brand-200`}
+          className={`${NAV_ACTION} text-slate-600 hover:bg-brand-50 hover:text-brand-700 focus-visible:ring-brand-200`}
         >
           Log In
         </Link>
@@ -63,7 +66,7 @@ function AccountLinks({ onNavigate }) {
       <Link
         to="/account"
         onClick={onNavigate}
-        className={`${NAV_ACTION} text-slate-600 hover:text-brand-700 focus-visible:ring-brand-200`}
+        className={`${NAV_ACTION} text-slate-600 hover:bg-brand-50 hover:text-brand-700 focus-visible:ring-brand-200`}
       >
         <UserRound className="h-4 w-4" aria-hidden="true" />
         {/* A long display name should not push the nav wider than the viewport. */}
@@ -107,7 +110,7 @@ export default function AppNavbar() {
             <Link
               key={link.to}
               to={link.to}
-              className={`${NAV_ACTION} text-slate-600 hover:text-brand-700 focus-visible:ring-brand-200`}
+              className={`${NAV_ACTION} text-slate-600 hover:bg-brand-50 hover:text-brand-700 focus-visible:ring-brand-200`}
             >
               {link.icon && <link.icon className="h-4 w-4" aria-hidden="true" />}
               {link.label}
@@ -139,7 +142,7 @@ export default function AppNavbar() {
                 key={link.to}
                 to={link.to}
                 onClick={() => setOpen(false)}
-                className={`${NAV_ACTION} text-slate-700 hover:bg-slate-50 focus-visible:ring-brand-200`}
+                className={`${NAV_ACTION} text-slate-700 hover:bg-brand-50 hover:text-brand-700 focus-visible:ring-brand-200`}
               >
                 {link.icon && <link.icon className="h-4 w-4" aria-hidden="true" />}
                 {link.label}

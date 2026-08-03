@@ -10,11 +10,13 @@ const {
   startInterview,
   getInterviewState,
   submitAnswer,
+  submitDialogueAct,
   proctoringConsent,
   proctoringEvents,
   voiceConsent,
   voiceToken,
   voiceSpeak,
+  voiceIntent,
   uploadEvidenceClip,
   phoneEvidenceClip,
   phonePair,
@@ -54,6 +56,10 @@ router.post("/identity-verification", requireCandidateAuth, identityPhotoUpload.
 router.post("/start", requireCandidateAuth, asyncHandler(startInterview));
 router.get("/interview", requireCandidateAuth, asyncHandler(getInterviewState));
 router.post("/interview/answer", requireCandidateAuth, answerLimiter, asyncHandler(submitAnswer));
+// Conversational acts (decline / pause / withdraw). A decline advances the interview, so it costs
+// the same LLM call an answer does and shares the answer limiter's budget. Deliberately NOT a
+// looser limit: this is the one endpoint that can end an interview.
+router.post("/interview/act", requireCandidateAuth, answerLimiter, asyncHandler(submitDialogueAct));
 router.post("/proctoring/consent", requireCandidateAuth, proctoringLimiter, asyncHandler(proctoringConsent));
 router.post("/proctoring/events", requireCandidateAuth, proctoringLimiter, asyncHandler(proctoringEvents));
 
@@ -71,5 +77,10 @@ router.post("/phone/evidence", requirePhoneAuth, evidenceLimiter, evidenceClipUp
 router.post("/voice/consent", requireCandidateAuth, voiceTokenLimiter, asyncHandler(voiceConsent));
 router.get("/voice/token", requireCandidateAuth, voiceTokenLimiter, asyncHandler(voiceToken));
 router.post("/voice/speak", requireCandidateAuth, voiceSpeakLimiter, asyncHandler(voiceSpeak));
+// The semantic intent tier. Its own, much higher limit: this fires on utterances rather than on
+// turns, so a talkative candidate legitimately hits it far more often than they hit /speak — but
+// it is a metered model call, so it is still bounded rather than open.
+const voiceIntentLimiter = createLimiter({ windowMs: 60 * 1000, max: 120, prefix: "rl:voice-intent:", keyGenerator: portalKey });
+router.post("/voice/intent", requireCandidateAuth, voiceIntentLimiter, asyncHandler(voiceIntent));
 
 module.exports = wrapRouter(router);

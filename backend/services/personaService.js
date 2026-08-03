@@ -17,6 +17,9 @@ const backchannel = require("../utils/backchannel");
 const repeatIntent = require("../utils/repeatIntent");
 const endpointing = require("../utils/endpointing");
 const finishIntent = require("../utils/finishIntent");
+const echoAlignment = require("../utils/echoAlignment");
+const conversationIntent = require("../utils/conversationIntent");
+const dialogueActs = require("../utils/dialogueActs");
 const { PATIENCE_BOUNDS } = PersonaProfile;
 
 // The deployment default, used when a tenant has approved no persona of its own. Deliberately
@@ -91,6 +94,21 @@ function conversationPolicy(persona) {
     // are configured here so a tenant's interview conditions stay in one place.
     ...endpointing.clientPolicy(),
     ...finishIntent.clientPolicy(),
+    // What the candidate can say ABOUT the interview rather than into it — declining a question,
+    // asking for a moment, asking to stop (utils/dialogueActs.js). Same division of labour as
+    // everything above: the browser detects, the server owns the rules and the wording, and the
+    // server re-checks before any of it takes effect.
+    ...dialogueActs.clientPolicy(),
+    // Whether what the microphone just heard was the candidate or the interviewer's own voice
+    // coming back (utils/echoAlignment.js). This is what lets the microphone stay open while the
+    // interviewer speaks on EVERY device rather than only on the ones where a pre-check tone
+    // measured good hardware echo cancellation.
+    ...echoAlignment.clientPolicy(),
+    // The closed set of things the candidate can want, and the gate the semantic tier's answers
+    // have to pass (utils/conversationIntent.js). The browser runs the deterministic tier locally
+    // because a live turn cannot wait on the network for the common case, and calls the server for
+    // the semantic tier only when the deterministic one is silent.
+    ...conversationIntent.clientPolicy(),
   };
   const p = normalizePatience(persona?.patience);
   return {

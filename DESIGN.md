@@ -2,11 +2,15 @@
 name: HireFlow AI
 description: Evidence-bound hiring intelligence — a ledger-grade interface for screening, interviewing, and defending hiring decisions.
 colors:
-  verification-blue: "#2563eb"
-  verification-blue-deep: "#1d4ed8"
-  verification-blue-pale: "#bfdbfe"
-  verification-blue-tint: "#dbeafe"
-  verification-blue-wash: "#eff6ff"
+  signal-violet: "#6d4fe0"
+  signal-violet-deep: "#5b3fc4"
+  signal-violet-pale: "#d8d2fe"
+  signal-violet-tint: "#eae6ff"
+  signal-violet-wash: "#f4f2ff"
+  ember: "#bd3a14"
+  ember-bright: "#f96436"
+  ember-tint: "#ffe6dc"
+  ember-wash: "#fff5f1"
   ink: "#0f172a"
   ink-body: "#334155"
   slate-reading: "#475569"
@@ -14,7 +18,7 @@ colors:
   slate-faint: "#94a3b8"
   field-stroke: "#cbd5e1"
   hairline: "#e2e8f0"
-  canvas: "#f8fafc"
+  canvas: "#f6f5fb"
   surface: "#ffffff"
   verdict-positive: "#059669"
   verdict-positive-tint: "#d1fae5"
@@ -68,19 +72,19 @@ spacing:
   section: "96px"
 components:
   button-primary:
-    backgroundColor: "{colors.verification-blue}"
+    backgroundColor: "{colors.signal-violet}"
     textColor: "{colors.surface}"
     rounded: "{rounded.xl}"
     padding: "10px 16px"
     typography: "{typography.label}"
   button-primary-hover:
-    backgroundColor: "{colors.verification-blue-deep}"
+    backgroundColor: "{colors.signal-violet-deep}"
   button-primary-disabled:
-    backgroundColor: "#93c5fd"
+    backgroundColor: "#bcb1fb"
     textColor: "{colors.surface}"
   button-secondary:
     backgroundColor: "{colors.surface}"
-    textColor: "{colors.verification-blue-deep}"
+    textColor: "{colors.signal-violet-deep}"
     rounded: "{rounded.xl}"
     padding: "10px 16px"
   button-outline:
@@ -110,19 +114,19 @@ components:
     padding: "10px 14px"
     typography: "{typography.body}"
   badge:
-    backgroundColor: "{colors.verification-blue-tint}"
-    textColor: "{colors.verification-blue-deep}"
+    backgroundColor: "{colors.signal-violet-tint}"
+    textColor: "{colors.signal-violet-deep}"
     rounded: "{rounded.full}"
     padding: "4px 10px"
     typography: "{typography.label}"
   nav-item-active:
-    backgroundColor: "{colors.verification-blue}"
+    backgroundColor: "{colors.signal-violet}"
     textColor: "{colors.surface}"
     rounded: "{rounded.xl}"
     padding: "10px 14px"
   nav-item-rest:
     backgroundColor: "transparent"
-    textColor: "#cbd5e1"
+    textColor: "{colors.slate-reading}"
     rounded: "{rounded.xl}"
     padding: "10px 14px"
 ---
@@ -146,16 +150,17 @@ has to learn a new visual language to do their job, and it carries enough weight
 screens decide people's livelihoods. Restraint here is not timidity; it is the correct register for a
 product whose entire claim is trustworthiness.
 
-The implemented system is a light, cool, blue-accented SaaS environment: near-white slate canvas, white
-cards on hairline borders, one blue accent, and a small semantic set for outcome. It is coherent and
-disciplined — the same UI kit ships byte-identical in both frontends — but its accent ramp is **inherited,
-not authored** (see The Inherited Palette Rule). Treat the structure as settled and the palette as the
-open question.
+The implemented system is a light, violet-accented SaaS environment: a faintly tinted canvas, white cards
+on hairline borders, one violet accent, one rationed warm secondary, and a small semantic set for outcome.
+The same UI kit ships byte-identical in both frontends. The palette is now **authored rather than
+inherited** — the ramp was swapped from Tailwind `blue` to Signal Violet in one edit, which is the whole
+argument for the One-Place Rule below.
 
 **Key Characteristics:**
 
-- Light, cool, near-white canvas (`#f8fafc`) with pure-white surfaces and hairline slate borders
-- A single blue accent carrying navigation, primary action, and focus — restrained, never decorative
+- Light, faintly violet canvas (`#f6f5fb`) with pure-white surfaces and hairline slate borders
+- A single violet accent carrying navigation, primary action, and focus — restrained, never decorative
+- One warm secondary (Ember) for emphasis and rhythm, structurally barred from every status surface
 - Two-family type: Lexend for headings and the wordmark, Inter for everything else
 - Soft radii (12px controls, 16px containers) with pill-shaped status badges
 - A generous 4px focus ring — the single loudest element in the system, and deliberately so
@@ -163,26 +168,46 @@ open question.
 
 ## Colors
 
-A cool, low-chroma environment where one blue does all the work and three outcome hues are held in reserve
-for meaning.
+A quiet violet environment with one warm secondary held on a short leash, and three outcome hues held in
+reserve for meaning.
 
 ### Primary
 
-- **Verification Blue** (`#2563eb`): The single accent. Carries the active navigation item, primary
-  buttons, focus borders, link hovers, and the icon tiles on marketing cards. Named for the job it does in
-  the product — pass, verified, proceed — not for what it looks like.
-- **Verification Blue Deep** (`#1d4ed8`): Hover state for primary buttons; text color for secondary
-  buttons and brand-toned badges where the flat accent would fail on a tint background.
-- **Verification Blue Pale** (`#bfdbfe`): Borders on secondary buttons and the `::selection` background.
-- **Verification Blue Tint** (`#dbeafe`): Badge and avatar backgrounds, the icon-tile fill in empty
-  states.
-- **Verification Blue Wash** (`#eff6ff`): The lightest surface tint — hero gradient origin, secondary
-  button hover, feature icon tiles.
+- **Signal Violet** (`#6d4fe0`, `brand-600`): The primary accent. Carries the active navigation item,
+  primary buttons, focus borders, link hovers, and the icon tiles on marketing cards. 5.46:1 against
+  white, so it can hold small white text anywhere it appears.
+- **Signal Violet Deep** (`#5b3fc4`, `brand-700`): Hover state for primary buttons; text color for
+  secondary buttons and brand-toned badges, where the flat accent would fail on a tint background.
+  5.85:1 on `brand-100`.
+- **Signal Violet Pale** (`#d8d2fe`, `brand-200`): Borders on secondary buttons and the `::selection`
+  background.
+- **Signal Violet Tint** (`#eae6ff`, `brand-100`): Badge and avatar backgrounds, the icon-tile fill in
+  empty states.
+- **Signal Violet Wash** (`#f4f2ff`, `brand-50`): The lightest surface tint — `surface-brand` card faces,
+  secondary button hover, nav hover pills, feature icon tiles.
+
+### Secondary — Ember
+
+One warm hue, and it is rationed. Ember exists so the system has a second voice for *emphasis and
+rhythm* — the filled orange block in a row of white cards, the icon tile that breaks up a grid of eight.
+
+- **Ember** (`#bd3a14`, `accent-700`): The value anything with small white text must use — 5.18:1. The
+  marketing CTA button, the "Most Popular" pricing flag, the lightest stop of `fill-ember`.
+- **Ember Bright** (`#f96436`, `accent-500`): Borders, tints, and chart marks only. 3.04:1 against white,
+  so nothing small is ever written on it.
+- **Ember Tint** (`#ffe6dc`, `accent-100`) / **Ember Wash** (`#fff5f1`, `accent-50`): Icon-tile fills and
+  `surface-ember` card faces.
+
+### Canvas
+
+- **Canvas** (`#f6f5fb`): The app background behind all cards, and the marketing sections' alternating
+  band. A faint violet wash rather than a cold slate, so a white card reads as lifted off a tinted plane.
 
 ### Neutral
 
-- **Ink** (`#0f172a`): Primary text, and the dashboard sidebar's full-bleed background. The one place the
-  system goes genuinely dark.
+- **Ink** (`#0f172a`): Primary text. The dashboard sidebar used to carry this as a full-bleed background
+  and no longer does — it is now white with a hairline right border, and the active nav item is a filled
+  violet pill. The system has no genuinely dark surface any more.
 - **Ink Body** (`#334155`): Secondary headings and outline-button text.
 - **Slate Reading** (`#475569`): Body copy on marketing surfaces; form labels.
 - **Slate Muted** (`#64748b`): Supporting copy, descriptions, inactive icons.
@@ -203,11 +228,35 @@ Reserved. These three hues are the system's only semantic color and they carry t
 
 ### Named Rules
 
-**The Inherited Palette Rule.** The `--color-brand-*` ramp in `src/index.css` is unmodified Tailwind
-`blue`, and both apps ship it identically. It is recorded here as the current truth and named for its
-function, but it is **provisional** — the product has no owned accent yet. Any future brand work should
-replace the eleven ramp values in one place and expect the entire system to follow. Do not build new
-surfaces that depend on this specific hue being permanent.
+**The One-Place Rule.** The `--color-brand-*` and `--color-accent-*` ramps in `src/index.css` are the only
+place a brand colour is decided, and both apps ship them identically. This is not aspirational — it is
+how the palette was swapped from blue to violet in a single edit, because all ~433 brand surfaces read
+`brand-*` rather than a raw Tailwind hue. Never write a raw `blue-600` / `violet-500` / `orange-500` into
+a component. The one permitted exception is documented at its call site: the Razorpay checkout modal is a
+third-party iframe that cannot read our tokens, so `Checkout.jsx` carries a hardcoded hex.
+
+**The Ember Containment Rule.** Ember is decorative. It may appear on filled feature cards, icon tiles,
+marketing CTAs, and chart series. It may **never** appear on a badge, a status pill, a score tile, a
+verdict, or any surface that reports state — and `<Badge>` deliberately ships no `ember` tone so the rule
+has an enforcement point rather than a convention.
+
+The reason is adjacency: orange's neighbour in this system is the reserved `verdict-pending` amber, which
+means *awaiting a human / not yet verified*. Pending is the fastest thing a recruiter reads and the one
+the product's own honesty rules lean on hardest. The moment a decorative orange can appear next to a
+pending amber, the recruiter has to stop and work out which one they are looking at — and the channel
+stops being worth anything. The two ramps are hue-separated on purpose (amber is gold, ~45°; ember is
+red-orange, ~14°) so that when both are legitimately on screen they do not read as the same signal.
+
+There is exactly one pill-shaped ember element in the system — the "Most Popular" flag on `Pricing.jsx` —
+and it is permitted only because the marketing pricing page renders no pipeline status anywhere on it, so
+there is nothing for it to be confused with. It is not a precedent. An ember pill on any screen that also
+shows a candidate, a stage, or a score is a bug.
+
+**The Lightest-Stop Rule.** Any gradient carrying text is contrast-checked at its **lightest** stop, not
+its average — a gradient gives the text no single background to be measured against. This is why
+`fill-brand` starts at `brand-600` and not the prettier `brand-500` (4.17:1), and `fill-ember` starts at
+`accent-700` and not `accent-500` (3.04:1). For the same reason, secondary text on a filled card is
+`white/90`, not the `white/70` that looks correct in a mock and lands at 3.8:1.
 
 **The Reserved Verdict Rule.** Emerald, amber, and red mean *pipeline stage or evaluation outcome*.
 Nothing else. A green button that merely means "continue", an amber banner that merely means "note", or a
@@ -258,7 +307,8 @@ recruiter scanning a queue.
 
 Two distinct spatial models, sharing one token set.
 
-**App (Operate).** The admin dashboard is a fixed 256px (`w-64`) ink sidebar plus a fluid main column. A
+**App (Operate).** The admin dashboard is a fixed 256px (`w-64`) white sidebar, separated from the content
+by a single hairline right border rather than by a change in value, plus a fluid main column. A
 sticky 64px (`h-16`) header sits on white at 90% opacity with a backdrop blur, underlined by a single
 hairline. Main content is padded 16px → 24px (`sm`) → 32px (`lg`) horizontally, 24px vertically, and is
 otherwise unconstrained — it fills the viewport. The sidebar collapses below `lg` (1024px) into an overlay

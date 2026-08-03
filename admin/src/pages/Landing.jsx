@@ -135,6 +135,11 @@ export default function Landing() {
           content paints immediately rather than waiting on an observer. */}
       {/* Bottom padding runs ≥1.4× the top so the hero pulls into the next
           section's rhythm rather than floating above it (gate 44a). */}
+      {/* The aurora wash is full-bleed, so it needs a wrapper the centred,
+          max-width hero cannot provide on its own. `-z-10` keeps it behind the
+          text without taking the section out of flow. */}
+      <div className="relative overflow-hidden">
+        <div className="absolute inset-x-0 top-0 -z-10 h-[620px] bg-aurora" aria-hidden="true" />
       <section className="mx-auto grid max-w-7xl items-center gap-x-12 gap-y-16 px-5 pt-20 pb-28 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,32rem)] lg:pt-24 lg:pb-36">
         <div className="max-w-2xl">
           <p className="flex items-center gap-2 text-sm font-semibold text-slate-500">
@@ -178,12 +183,13 @@ export default function Landing() {
           <EventNetwork />
         </div>
       </section>
+      </div>
 
       {/* Evidence strip — the honest occupant of the reference's logo-wall slot.
           Asymmetric tracks and hairline dividers, deliberately not three equal
           icon-tile cards. Tight vertical padding so it reads as a strip between
           two large sections rather than as a section of its own. */}
-      <section className="border-y border-slate-200 bg-slate-50">
+      <section className="border-y border-slate-200 bg-canvas">
         <div className="mx-auto max-w-7xl px-5 py-10 sm:px-8 lg:py-12">
           <p className="max-w-2xl text-lg font-semibold text-slate-800 [overflow-wrap:anywhere]">
             What you hand to the people who ask how a decision was made.
@@ -247,7 +253,7 @@ export default function Landing() {
 
       {/* Capability index — F3 spec sheet. A dense tabular read, deliberately
           unlike the diptychs above it. */}
-      <section id="features" className="border-t border-slate-200 bg-slate-50">
+      <section id="features" className="border-t border-slate-200 bg-canvas">
         <div className="mx-auto max-w-5xl px-5 py-24 sm:px-8">
           <h2 className="max-w-2xl text-3xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-4xl">
             What the platform does
@@ -291,7 +297,7 @@ export default function Landing() {
       </section>
 
       {/* Pricing — real plan data from the API. */}
-      <section className="border-t border-slate-200 bg-slate-50">
+      <section className="border-t border-slate-200 bg-canvas">
         <div className="mx-auto max-w-7xl px-5 py-20 sm:px-8">
           <h2 className="max-w-2xl text-3xl font-bold tracking-tight text-slate-900 [overflow-wrap:anywhere] sm:text-4xl">
             Pricing
