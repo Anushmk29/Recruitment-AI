@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, MapPin } from "lucide-react";
+import { ArrowLeft, MapPin, Building2, Clock, GraduationCap } from "lucide-react";
 import api from "../api/client.js";
-import { Card, Skeleton } from "../components/ui/Card.jsx";
+import { Card, Skeleton, IconTile } from "../components/ui/Card.jsx";
+import { TokenList, MetaItem } from "../components/ui/Panels.jsx";
 import Button from "../components/ui/Button.jsx";
 
 export default function JobDetail() {
@@ -67,31 +68,53 @@ export default function JobDetail() {
       </Link>
 
       <Card>
-        <h1 className="text-2xl font-bold text-slate-900">{job.title}</h1>
-        <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
-          {job.company?.name && <span className="font-medium text-slate-600">{job.company.name}</span>}
-          {job.department && <span>{job.department}</span>}
-          {job.location && (
-            <span className="flex items-center gap-1">
-              <MapPin className="h-3.5 w-3.5" /> {job.location}
-            </span>
-          )}
-        </p>
+        <div className="flex items-start gap-4">
+          <IconTile icon={Building2} size="lg" />
+          <div className="min-w-0 flex-1">
+            <h1 className="font-display text-2xl font-extrabold tracking-tight text-slate-900">{job.title}</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {job.company?.name && <span className="font-medium text-slate-600">{job.company.name}</span>}
+              {job.company?.name && job.department ? " · " : ""}
+              {job.department}
+            </p>
+          </div>
+        </div>
 
-        <div className="mt-5 border-t border-slate-100 pt-5">
-          <p className="whitespace-pre-line text-sm leading-relaxed text-slate-700">{job.description}</p>
+        {/* Location is stated once, in the meta line — same call as the listing
+            card, for the same reason. */}
+        <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2">
+          <MetaItem icon={MapPin}>{job.location}</MetaItem>
+          <MetaItem icon={Clock}>
+            {job.minExperienceYears > 0 ? `${job.minExperienceYears}+ yrs experience` : "No minimum experience"}
+          </MetaItem>
+          <MetaItem icon={GraduationCap}>{job.requiredEducation}</MetaItem>
+        </div>
+
+        {/* The full list, not the listing card's truncated set. This is the page
+            someone reads before deciding to apply — every skill they'll be
+            screened against belongs on it. */}
+        <TokenList className="mt-5" label="Skills this role asks for" items={job.requiredSkills} max={Infinity} />
+
+        <div className="mt-6 border-t border-slate-100 pt-6">
+          <h2 className="text-sm font-semibold text-slate-900">About this role</h2>
+          <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">{job.description}</p>
         </div>
 
         {job.requirements && (
-          <div className="mt-5">
-            <h3 className="text-sm font-semibold text-slate-900">Requirements</h3>
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-canvas p-5">
+            <h2 className="text-sm font-semibold text-slate-900">Requirements</h2>
             <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">{job.requirements}</p>
           </div>
         )}
 
-        <Button as={Link} to={`/jobs/${job.slug || id}/apply${window.location.search}`} size="lg" className="mt-6">
-          Apply Now
-        </Button>
+        <div className="mt-6 border-t border-slate-100 pt-6">
+          <Button as={Link} to={`/jobs/${job.slug || id}/apply${window.location.search}`} size="lg">
+            Apply Now
+          </Button>
+          <p className="mt-2.5 text-xs text-slate-500">
+            You'll be asked for your details and a resume. Screening starts as soon as you submit.
+          </p>
+        </div>
       </Card>
     </div>
   );

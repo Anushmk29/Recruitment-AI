@@ -221,7 +221,7 @@ function buildReportPdf(report) {
     bulletList(doc, "Weaknesses", ev.weaknesses);
     bulletList(doc, "Skills to probe", ev.missingSkills);
 
-    signalQualitySection(doc, ev);
+    spokenCommunicationSection(doc, ev);
 
     doc.moveDown(6);
     doc.text(
@@ -276,19 +276,37 @@ function buildReportPdf(report) {
   return doc.render();
 }
 
-// §6: delivery/confidence are voice-only signal-quality measurements (pace, filler
-// rate), not competency — kept clearly secondary and separately labelled to avoid
-// them reading as headline scores (accent/audio bias risk on ESL/voice interviews).
-function signalQualitySection(doc, ev) {
+// Spoken communication, printed only when this role's approved rubric declared that it is
+// assessed and a human recorded why.
+//
+// The justification is printed WITH the scores, not linked from them. This is the artefact that
+// gets produced in a discrimination claim, and the question it will be asked is "why was this
+// candidate assessed on how they explained things?" — an answer that lives on a different screen
+// is not on the document.
+//
+// An earlier version of this section printed "Delivery (voice)" and "Confidence (voice)" derived
+// from pace, filler rate and hesitation, under a caveat telling the reader to weigh them lightly.
+// That caveat was the tell: a score bar you have to disclaim does not belong here. The inputs are
+// now transcript-only (utils/communication.js) and there is nothing left to disclaim.
+function spokenCommunicationSection(doc, ev) {
   if (ev.delivery == null && ev.confidence == null) return;
   doc.moveDown(6);
-  doc.text("Signal quality (secondary — voice delivery, not competency)", { size: 9, bold: true, color: MUTED, gap: 4 });
-  if (ev.delivery != null) doc.scoreBar("Delivery (voice)", ev.delivery);
-  if (ev.confidence != null) doc.scoreBar("Confidence (voice)", ev.confidence);
+  doc.text("Spoken communication — assessed for this role", { size: 9, bold: true, color: MUTED, gap: 4 });
+  if (ev.delivery != null) doc.scoreBar("Clarity", ev.delivery);
+  if (ev.confidence != null) doc.scoreBar("Calibration", ev.confidence);
   doc.text(
-    "These measure speaking pace and fluency, not technical ability, and can reflect accent or audio quality rather than skill — weigh them lightly.",
+    "Measured from the transcript only — never from pace, accent, hesitation or filler words. " +
+      "Clarity: did the answer address the question, concretely and followably. Calibration: did " +
+      "they distinguish what they knew from what they did not — saying so counts in their favour." +
+      (ev.spokenCommunication?.answersScored != null
+        ? ` Over ${ev.spokenCommunication.answersScored} answer${ev.spokenCommunication.answersScored === 1 ? "" : "s"}.`
+        : ""),
     { size: 8, color: MUTED }
   );
+  if (ev.spokenCommunication?.justification) {
+    doc.text(`Why this role assesses it: ${ev.spokenCommunication.justification}`, { size: 8, color: MUTED });
+  }
+  doc.text("Not part of the overall score. It cannot decline a candidate on its own.", { size: 8, color: MUTED });
 }
 
 // §9: one row per question, tagged with the competency it probes and a quoted

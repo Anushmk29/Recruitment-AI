@@ -40,16 +40,33 @@ function norm(text) {
 }
 
 // Everything this session is allowed to say out loud, as a normalised set.
+//
+// The bank is rendered for THIS session's candidate, because some approved phrases carry their
+// first name ("Thank you, Priya."). Rendering per session rather than accepting every name means
+// one candidate's session can never authorise another candidate's sentence — a small hole, but
+// in a mechanism whose entire value is having none.
 function allowedFor(session) {
   const allowed = new Map(); // normalised text -> kind
-  for (const phrase of backchannel.allPhrases()) {
+  const firstName = session?.aiInterview?.candidateFirstName || "";
+  for (const phrase of backchannel.allPhrases({ firstName })) {
     allowed.set(norm(phrase), "backchannel");
   }
   const turns = session?.aiInterview?.turns || [];
   for (const turn of turns) {
-    if (turn?.role !== "ai" || !turn?.text) continue;
-    const key = norm(String(turn.text).slice(0, MAX_SPEAK_CHARS));
-    if (key) allowed.set(key, turn.kind || "question");
+    if (turn?.role !== "ai") continue;
+    if (turn.text) {
+      const key = norm(String(turn.text).slice(0, MAX_SPEAK_CHARS));
+      if (key) allowed.set(key, turn.kind || "question");
+    }
+    // The recruiter-approved plain-language rewording of this question, read to a candidate who
+    // said they did not understand it. It is speakable for the same reason the question is —
+    // a human approved this exact wording for this exact question and froze it — and it is
+    // recognised as its own kind so "which version did this candidate actually hear?" stays
+    // answerable from the divergence record.
+    if (turn.restatement) {
+      const key = norm(String(turn.restatement).slice(0, MAX_SPEAK_CHARS));
+      if (key) allowed.set(key, "restatement");
+    }
   }
   return allowed;
 }

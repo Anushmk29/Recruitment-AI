@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import MarketingNavbar from "../components/marketing/MarketingNavbar.jsx";
 import Button from "../components/ui/Button.jsx";
-import { Card, IconTile } from "../components/ui/Card.jsx";
+import { Card, IconTile, toneText } from "../components/ui/Card.jsx";
 
 const FEATURES = [
   { icon: UploadCloud, title: "One Resume, Every Job", desc: "Upload your resume once and reuse it for every application, with a full version history if you update it later." },
@@ -67,8 +67,13 @@ export default function Landing() {
 
       {/* Hero */}
       <section className="relative overflow-hidden bg-grid">
-        <div className="absolute inset-x-0 top-0 -z-10 h-[560px] bg-aurora" />
-        <div className="mx-auto max-w-3xl px-5 py-24 text-center sm:px-8">
+        {/* Layered explicitly rather than with `-z-10`. A negative z-index does
+            not stay inside `position: relative` — the parent creates no stacking
+            context, so the wash slid behind the page's own white background and
+            vanished. The content gets `relative` instead, which puts it above an
+            absolutely-positioned sibling by paint order. */}
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[560px] bg-aurora" />
+        <div className="relative mx-auto max-w-3xl px-5 py-24 text-center sm:px-8">
           <motion.div initial="hidden" animate="show" variants={fadeUp}>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-700">
               <Sparkles className="h-3.5 w-3.5" /> AI-Powered Hiring
@@ -165,15 +170,13 @@ export default function Landing() {
             // a grid where everything is filled has no focal point left to
             // spend, and the eye just bounces.
             const tone = i === 0 ? "filled-brand" : i === 1 ? "filled-ember" : "default";
-            const filled = tone !== "default";
+            const t = toneText(tone);
             return (
               <motion.div key={f.title} initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.3 }} variants={fadeUp} transition={{ delay: (i % 3) * 0.08 }}>
                 <Card tone={tone} className="h-full">
-                  <IconTile icon={f.icon} tone={filled ? "on-fill" : "brand"} className="mb-4" />
-                  <h3 className={`text-base font-semibold ${filled ? "text-white" : "text-slate-900"}`}>{f.title}</h3>
-                  <p className={`mt-1.5 text-sm leading-relaxed ${filled ? "text-white/90" : "text-slate-500"}`}>
-                    {f.desc}
-                  </p>
+                  <IconTile icon={f.icon} tone={t.tile} className="mb-4" />
+                  <h3 className={`text-base font-semibold ${t.strong}`}>{f.title}</h3>
+                  <p className={`mt-1.5 text-sm leading-relaxed ${t.soft}`}>{f.desc}</p>
                 </Card>
               </motion.div>
             );

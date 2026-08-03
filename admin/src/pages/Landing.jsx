@@ -139,8 +139,11 @@ export default function Landing() {
           max-width hero cannot provide on its own. `-z-10` keeps it behind the
           text without taking the section out of flow. */}
       <div className="relative overflow-hidden">
-        <div className="absolute inset-x-0 top-0 -z-10 h-[620px] bg-aurora" aria-hidden="true" />
-      <section className="mx-auto grid max-w-7xl items-center gap-x-12 gap-y-16 px-5 pt-20 pb-28 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,32rem)] lg:pt-24 lg:pb-36">
+        {/* Layered explicitly rather than with `-z-10` — a negative z-index does
+            not stay inside `position: relative`, and the wash would slide behind
+            the page's white background and disappear. */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-[620px] bg-aurora" aria-hidden="true" />
+      <section className="relative mx-auto grid max-w-7xl items-center gap-x-12 gap-y-16 px-5 pt-20 pb-28 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,32rem)] lg:pt-24 lg:pb-36">
         <div className="max-w-2xl">
           <p className="flex items-center gap-2 text-sm font-semibold text-slate-500">
             <Scale className="h-4 w-4 text-brand-600" aria-hidden="true" />

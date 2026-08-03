@@ -10,11 +10,12 @@ import {
   ShieldCheck,
   Send,
   ChevronRight,
+  ClipboardList,
   Lock,
 } from "lucide-react";
 import api from "../api/client.js";
 import { authHeader, getAuth } from "../portal/assessmentAuth.js";
-import { Card, Badge } from "../components/ui/Card.jsx";
+import { Card, Badge, IconTile } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 
 // Section hub (ASSESSMENT-ENGINE-PLAN A2.4): instructions → consent (when the
@@ -147,15 +148,17 @@ export default function AssessmentHub() {
 
   if (session.status === "completed") {
     return (
-      <Card className="text-center">
-        <CheckCircle2 className="mx-auto mb-3 h-10 w-10 text-emerald-500" />
-        <h1 className="text-lg font-semibold text-slate-900">Assessment submitted</h1>
-        <p className="mt-2 text-sm text-slate-500">
+      <Card className="py-10 text-center">
+        <span className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-verdict-positive-tint text-verdict-positive">
+          <CheckCircle2 className="h-7 w-7" aria-hidden="true" />
+        </span>
+        <h1 className="font-display text-xl font-bold tracking-tight text-slate-900">Assessment submitted</h1>
+        <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
           Thank you, {session.candidateName}. Your answers are in. If you advance, your AI interview invitation will arrive by
           email — keep an eye on your inbox.
         </p>
         {totals.items > 0 && (
-          <p className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-50 px-3.5 py-2 text-xs text-slate-500">
+          <p className="mt-5 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-canvas px-4 py-2.5 text-xs text-slate-600">
             <Lock className="h-3.5 w-3.5" aria-hidden="true" />
             {totals.answered} of {totals.items} questions answered across {sections.length} section
             {sections.length === 1 ? "" : "s"}
@@ -168,19 +171,39 @@ export default function AssessmentHub() {
   return (
     <div className="space-y-5">
       <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-bold text-slate-900">Skills Assessment — {session.jobTitle}</h1>
-            <p className="text-sm text-slate-500">Hi {session.candidateName}</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-4">
+            <IconTile icon={ClipboardList} size="lg" />
+            <div className="min-w-0">
+              <h1 className="font-display text-xl font-bold tracking-tight text-slate-900">
+                Skills assessment — {session.jobTitle}
+              </h1>
+              <p className="mt-0.5 text-sm text-slate-500">Hi {session.candidateName}</p>
+            </div>
           </div>
           <Badge tone={session.paused ? "amber" : "brand"}>{session.paused ? "Paused" : started ? "In progress" : "Ready"}</Badge>
         </div>
-        <div className="mt-3 flex flex-wrap gap-4 text-xs text-slate-500">
-          <span className="inline-flex items-center gap-1">
-            <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Start by {new Date(session.startDeadline).toLocaleString()}
-          </span>
-          <span>Link valid until {new Date(session.expiresAt).toLocaleString()}</span>
-        </div>
+        {/* Both deadlines get an equal, bordered slot. The "start by" date used
+            to be the only one with an icon, which read as the only one that
+            mattered — they are two different ways to lose the assessment. */}
+        <dl className="mt-5 grid gap-3 border-t border-slate-100 pt-5 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-canvas px-4 py-3">
+            <dt className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+              <Clock className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /> Start by
+            </dt>
+            <dd className="mt-1 text-sm font-semibold text-slate-900">
+              {new Date(session.startDeadline).toLocaleString()}
+            </dd>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-canvas px-4 py-3">
+            <dt className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+              <Lock className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /> Link valid until
+            </dt>
+            <dd className="mt-1 text-sm font-semibold text-slate-900">
+              {new Date(session.expiresAt).toLocaleString()}
+            </dd>
+          </div>
+        </dl>
       </Card>
 
       {actionError && (
@@ -210,7 +233,7 @@ export default function AssessmentHub() {
           {sections.length > 0 && (
             <ul className="mt-4 space-y-1.5">
               {sections.map((s) => (
-                <li key={s.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                <li className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm" key={s.id}>
                   <span className="min-w-0 truncate font-medium text-slate-700">{s.title}</span>
                   <span className="shrink-0 text-xs text-slate-500">
                     {s.itemCount} questions · {fmtDuration(s.timeLimitSec)}
@@ -265,13 +288,22 @@ export default function AssessmentHub() {
                 const total = section.itemCount || 0;
                 const pct = total ? Math.round((answered / total) * 100) : 0;
                 return (
-                  <div key={section.id} className="rounded-xl border border-slate-200 p-3">
+                  <div key={section.id} className="rounded-2xl border border-slate-200 bg-white p-4">
                     <div className="flex flex-wrap items-center gap-3">
-                      <div className="min-w-[10rem] flex-1">
-                        <p className="text-sm font-semibold text-slate-800">{section.title}</p>
-                        <p className="text-xs text-slate-400">
-                          {total} questions · {fmtDuration(section.timeLimitSec)} limit
-                        </p>
+                      <div className="flex min-w-[10rem] flex-1 items-center gap-3">
+                        <IconTile
+                          icon={ClipboardList}
+                          size="sm"
+                          tone={status === "completed" ? "positive" : status === "in_progress" ? "brand" : "slate"}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-800">{section.title}</p>
+                          {/* Was `slate-400` — 2.5:1 on white, under AA. This line
+                              is the time budget; it has to be readable. */}
+                          <p className="text-xs text-slate-500">
+                            {total} questions · {fmtDuration(section.timeLimitSec)} limit
+                          </p>
+                        </div>
                       </div>
                       <Badge tone={meta.tone}>{meta.label}</Badge>
                       {status !== "completed" && (
@@ -290,7 +322,11 @@ export default function AssessmentHub() {
                         <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
                           <div
                             className={`h-full ${
-                              status !== "completed" ? "bg-brand-600" : answered === total ? "bg-emerald-500" : "bg-slate-400"
+                              status !== "completed"
+                                ? "bg-brand-600"
+                                : answered === total
+                                  ? "bg-verdict-positive"
+                                  : "bg-slate-400"
                             }`}
                             style={{ width: `${pct}%` }}
                           />

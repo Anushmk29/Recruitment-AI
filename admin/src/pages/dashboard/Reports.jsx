@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import api from "../../api/client.js";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
+import { RecordCard, RecordGrid } from "../../components/ui/Panels.jsx";
 import Button from "../../components/ui/Button.jsx";
 import { useToast } from "../../components/ui/Toast.jsx";
 import { stageLabel, stageTone } from "../../lib/pipeline.js";
@@ -347,53 +348,50 @@ export default function Reports() {
                   Pass rate, interview verification, and advance rate by source — measured by what happened after the click, not by volume.
                   Source never influences a score.
                 </p>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-xs font-semibold text-slate-500">
-                        <th className="py-2 pr-4">Source</th>
-                        <th className="py-2 pr-4 text-right">Applied</th>
-                        <th className="py-2 pr-4 text-right">Pass rate</th>
-                        <th className="py-2 pr-4">Claims verified</th>
-                        <th className="py-2 pr-4 text-right">Advance rate</th>
-                        <th className="py-2 text-right">Hires</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sources.map((s) => (
-                        <tr key={s.channel} className="border-b border-slate-50 hover:bg-slate-50/60">
-                          <td className="py-2.5 pr-4 font-medium text-slate-700">{s.channel}</td>
-                          <td className="py-2.5 pr-4 text-right tabular-nums text-slate-600">{s.applied}</td>
-                          <td className="py-2.5 pr-4 text-right tabular-nums text-slate-600">
-                            {s.atsPassRate != null ? `${Math.round(s.atsPassRate * 100)}%` : "—"}
-                          </td>
-                          <td className="py-2.5 pr-4">
-                            {s.probed > 0 ? (
-                              <div className="flex items-center gap-2">
-                                <VerdictSplit
-                                  className="w-14"
-                                  verified={s.verified}
-                                  contradicted={s.contradicted}
-                                  inconclusive={Math.max(0, s.probed - s.verified - s.contradicted)}
-                                  total={s.probed}
-                                />
-                                <span className="shrink-0 tabular-nums text-xs text-slate-500">
-                                  {s.verified}/{s.probed}
-                                </span>
-                              </div>
+                <RecordGrid>
+                  {sources.map((s) => (
+                    <RecordCard
+                      key={s.channel}
+                      title={s.channel}
+                      subtitle={`${s.applied} applied`}
+                      trailing={<Badge tone="slate">{s.hires} hired</Badge>}
+                      meta={[
+                        {
+                          label: "Pass rate",
+                          value: s.atsPassRate != null ? `${Math.round(s.atsPassRate * 100)}%` : null,
+                        },
+                        {
+                          label: "Advance rate",
+                          value: s.advanceRate != null ? `${Math.round(s.advanceRate * 100)}%` : null,
+                        },
+                        {
+                          label: "Claims verified",
+                          // "no probes yet" rather than 0/0: a source nobody has
+                          // interviewed from has no verification record, which is
+                          // not the same reading as one that failed verification.
+                          value:
+                            s.probed > 0 ? (
+                              <span className="tabular-nums">
+                                {s.verified}/{s.probed}
+                              </span>
                             ) : (
                               <span className="text-xs text-slate-500">no probes yet</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 pr-4 text-right tabular-nums text-slate-600">
-                            {s.advanceRate != null ? `${Math.round(s.advanceRate * 100)}%` : "—"}
-                          </td>
-                          <td className="py-2.5 text-right tabular-nums text-slate-600">{s.hires}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                            ),
+                        },
+                      ]}
+                    >
+                      {s.probed > 0 && (
+                        <VerdictSplit
+                          className="mt-3"
+                          verified={s.verified}
+                          contradicted={s.contradicted}
+                          inconclusive={Math.max(0, s.probed - s.verified - s.contradicted)}
+                          total={s.probed}
+                        />
+                      )}
+                    </RecordCard>
+                  ))}
+                </RecordGrid>
               </Card>
             )}
 

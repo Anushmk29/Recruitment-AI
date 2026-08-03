@@ -48,6 +48,7 @@
 
 const repeatIntent = require("./repeatIntent");
 const dialogueActs = require("./dialogueActs");
+const finishIntent = require("./finishIntent");
 
 // ---------------------------------------------------------------------------
 // The closed action set
@@ -136,6 +137,24 @@ const ACTIONS = {
     tier1: true,
   },
 
+  // "That's my answer" / "I think that covers it" / "yeah, that's the whole of it really."
+  //
+  // The fastest end-of-turn signal there is. utils/finishIntent matches the plain phrasings; this
+  // is the tail it cannot cover, and the tail is large because there are a hundred ways to hand
+  // the floor back and a list will always hold about nine of them.
+  //
+  // GUARDED HARDER THAN ANY OTHER ACTION, because it is the only one that destroys evidence: act
+  // on it wrongly and a half-finished answer is submitted as a whole one. So the gate additionally
+  // requires a substantial answer already on the record (`minWordsForFinish`) — "that's it" three
+  // words into a turn is a sentence still forming, not a hand-back. The deterministic matcher
+  // carries the same guard for the same reason.
+  finished: {
+    consumesTurn: false, // their words ARE the answer; this only ends the turn
+    needsConfirmation: false,
+    reply: null, // the ordinary acknowledgement covers it
+    tier1: true,
+  },
+
   // The one irreversible act. Confirmation is required NO MATTER HOW THE READING WAS REACHED —
   // deterministic or inferred — and that is not a limitation of the classifier. Ending an
   // interview on a single utterance is wrong even when the utterance was understood perfectly,
@@ -175,9 +194,29 @@ const TIER1_ACTIONS = ACTION_NAMES.filter((a) => ACTIONS[a].tier1);
 //   decline last            — the reading that costs the candidate something is the reading of
 //                             last resort.
 //
+// `finished` sits at the very end, below even decline: it is the only action that can destroy
+// evidence (submitting a half-answer as a whole one), so any other reading that fits is preferred.
+//
 // meta_question and answer_continues are not in this list: the first is only ever reached by the
 // semantic tier, and the second is what you get when nothing else matched.
-const PRECEDENCE = ["withdraw", "repeat", "clarify", "pause", "technical_problem", "decline"];
+const PRECEDENCE = ["withdraw", "repeat", "clarify", "pause", "technical_problem", "decline", "finished"];
+
+// ---------------------------------------------------------------------------
+// WHY THERE IS NO SEMANTIC TIER FOR "yes, end the interview"
+// ---------------------------------------------------------------------------
+//
+// Answering the withdrawal confirmation ("would you like to end the interview here?") is matched
+// by a fixed yes/no list (utils/dialogueActs.detectConfirmation) with no model behind it, and that
+// looks like the same gap this module exists to close. It is not, and it must stay open.
+//
+// The asymmetry runs the other way here. An unrecognised reply is treated as "no" and the
+// interview continues — so a MISSED yes costs the candidate one more question they can decline,
+// or a tap of the End button that needs no words at all. A semantic tier could only change the
+// outcome by turning something ambiguous INTO a yes, and the cost of that error is ending an
+// interview somebody wanted to keep having. Everywhere else in this file, better understanding
+// makes the failure mode smaller. Here it would make it larger, so understanding is not the
+// improvement — and "we could infer it" is not a reason to.
+const CONFIRM_HAS_NO_SEMANTIC_TIER = true;
 
 // ---------------------------------------------------------------------------
 // Tier 0 — the deterministic matchers, composed
@@ -217,6 +256,20 @@ function detectDeterministic(transcript, opts = {}) {
     hits[act.act] = { action: act.act, matchedTrigger: act.matchedTrigger, residue: "" };
   }
 
+  // "That's my answer." Composed in here for the same reason as the other two: it used to be
+  // checked separately, at a different point in the browser's handler, so which reading won when
+  // it and a decline both matched came down to statement order. Running it through PRECEDENCE
+  // puts it last, below everything — ending a turn is the only one of these that can submit a
+  // half-answer as a whole one.
+  const fin = finishIntent.detect(text, {
+    triggers: opts.finishTriggers,
+    minAnswerWords: opts.finishMinAnswerWords,
+    maxTrailingWords: opts.finishMaxTrailingWords,
+  });
+  if (fin.honour) {
+    hits.finished = { action: "finished", matchedTrigger: fin.matchedTrigger, residue: "" };
+  }
+
   for (const name of PRECEDENCE) {
     if (hits[name]) {
       return {
@@ -248,6 +301,16 @@ const MIN_CONFIDENCE = 0.7;
 // much hedging language they used along the way.
 const MAX_META_WORDS = 25;
 
+// How much answer has to already exist before "I think that's it" is allowed to end the turn.
+// Matches utils/finishIntent's own floor: below this, a complete-sounding utterance is far more
+// likely to be a sentence still forming than a deliberate hand-back, and acting on it submits a
+// half-answer as a whole one — the only failure in this module that destroys evidence.
+const MIN_WORDS_FOR_FINISH = 12;
+
+// The longest utterance worth spending a classification on. Past this it is an answer whatever it
+// contains, and the call is pure cost on the hottest path in the interview.
+const MAX_UTTERANCE_WORDS = 45;
+
 function wordCount(text) {
   return (String(text || "").match(/[A-Za-z0-9']+/g) || []).length;
 }
@@ -261,7 +324,17 @@ function wordCount(text) {
  *
  * Returns the same shape as detectDeterministic, plus `tier: 1`.
  */
-function gateSemantic(raw, transcript, { minConfidence = MIN_CONFIDENCE, maxMetaWords = MAX_META_WORDS } = {}) {
+function gateSemantic(
+  raw,
+  transcript,
+  {
+    minConfidence = MIN_CONFIDENCE,
+    maxMetaWords = MAX_META_WORDS,
+    minWordsForFinish = MIN_WORDS_FOR_FINISH,
+    // How much answer this candidate has already given this turn. Only `finished` reads it.
+    answerWords = 0,
+  } = {}
+) {
   const fallback = (reason) => ({
     action: "answer_continues",
     tier: 1,
@@ -287,7 +360,20 @@ function gateSemantic(raw, transcript, { minConfidence = MIN_CONFIDENCE, maxMeta
 
   // The length guard, applied AFTER the action check so a long utterance that the classifier read
   // as an answer never even reaches it.
-  if (wordCount(transcript) > maxMetaWords) return fallback("too_long_to_be_about_the_interview");
+  //
+  // `finished` is exempt: "and that's basically the whole of how we did it, so yeah, that's me" is
+  // a hand-back, and it is long precisely BECAUSE they were finishing an answer. Every other
+  // action here means "I am not answering", which is a claim a long utterance contradicts.
+  if (action !== "finished" && wordCount(transcript) > maxMetaWords) {
+    return fallback("too_long_to_be_about_the_interview");
+  }
+
+  // Ending a turn is the one action that can destroy evidence. It is allowed only once there is a
+  // real answer to end — otherwise "yeah, that's it" three words in submits a sentence that was
+  // still forming as somebody's complete response.
+  if (action === "finished" && answerWords < minWordsForFinish) {
+    return fallback(`too_early_to_be_finished:${answerWords}`);
+  }
 
   return {
     action,
@@ -334,6 +420,14 @@ function clientPolicy() {
       semanticEnabled: process.env.VOICE_SEMANTIC_INTENT !== "false",
       minConfidence: Number(process.env.VOICE_INTENT_MIN_CONFIDENCE || MIN_CONFIDENCE),
       maxMetaWords: Number(process.env.VOICE_INTENT_MAX_META_WORDS || MAX_META_WORDS),
+      minWordsForFinish: Number(process.env.VOICE_INTENT_MIN_WORDS_FOR_FINISH || MIN_WORDS_FOR_FINISH),
+      // The ceiling on spending a model call at all, which is NOT the same number as maxMetaWords.
+      // "Every action except finished means 'I am not answering'" is why maxMetaWords is low — a
+      // long utterance contradicts that claim. But a hand-back is long precisely BECAUSE they were
+      // finishing ("...and that's basically the whole of how we did it, so yeah, that's me"), so
+      // refusing to classify it at 25 words would make `finished` unreachable for the phrasings
+      // people actually use. This is the cost guard; maxMetaWords stays the correctness guard.
+      maxUtteranceWords: Number(process.env.VOICE_INTENT_MAX_UTTERANCE_WORDS || MAX_UTTERANCE_WORDS),
       // Tier 1 is consulted on the INTERIM transcript so the reply is ready before the candidate
       // has finished — but not on the first syllable, or every answer would trigger a lookup.
       // Below this many words there is not enough to classify; past maxMetaWords it is an answer.
@@ -353,6 +447,9 @@ module.exports = {
   PRECEDENCE,
   MIN_CONFIDENCE,
   MAX_META_WORDS,
+  MIN_WORDS_FOR_FINISH,
+  MAX_UTTERANCE_WORDS,
+  CONFIRM_HAS_NO_SEMANTIC_TIER,
   detectDeterministic,
   gateSemantic,
   literalResidue,

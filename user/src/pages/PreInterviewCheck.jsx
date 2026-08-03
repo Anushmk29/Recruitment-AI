@@ -10,6 +10,15 @@ import { Card } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 import InterviewShell from "../components/portal/InterviewShell.jsx";
 
+// Below this the live voice path is unreliable and the candidate is told so before they commit.
+//
+// Deliberately generous. The interview streams compressed Opus up and short MP3 clips down — it
+// needs far less than this — so the floor is set where a connection stops having enough headroom
+// to survive a hiccup, not where the stream stops fitting. The cost of being too strict here is
+// telling someone their perfectly usable connection is a problem; the cost of having no floor at
+// all was a green tick followed by a voice interview that fell apart mid-answer.
+const VOICE_MIN_MBPS = 1.5;
+
 // Phase 14.3 — which version of the clip-capture consent wording is in force.
 // Bump when the wording below changes; the accepted version is stored with the
 // consent record.
@@ -119,15 +128,84 @@ export default function PreInterviewCheck() {
     }
   }
 
+  // The microphone check LISTENS. It used to request the stream, confirm the browser said yes,
+  // and stop the tracks immediately — so it verified PERMISSION, never AUDIO.
+  //
+  // That is the single most common total-failure mode in the product. A muted headset, the wrong
+  // default input device, a hardware mute switch, a mic captured by another app: all of them
+  // return a working MediaStream, all of them showed a green tick, and all of them produced total
+  // silence at question one — by which point the candidate is inside a proctored interview they
+  // cannot sit again, with no idea why nothing is happening.
+  //
+  // So this samples the actual level for a few seconds and requires the candidate to be heard.
+  const [micLevel, setMicLevel] = useState(0); // 0-1, live, for the meter
+  const [micPeak, setMicPeak] = useState(0); // loudest moment observed, decides pass/fail
+  const micStopRef = useRef(null);
+
+  // Below this the microphone is producing a flat line. Deliberately low: it has to clear the
+  // noise floor of a quiet room without demanding that anyone raise their voice, because "speak
+  // up to pass" is a test of confidence and not of hardware.
+  const MIC_PASS_PEAK = 0.03;
+
+  useEffect(() => () => micStopRef.current?.(), []);
+
   async function requestMicrophone() {
+    micStopRef.current?.();
+    setMicPeak(0);
+    setMicLevel(0);
+    setMicrophone("listening");
+    let stream;
     try {
       // Same constraints the interview itself uses (echo cancellation explicitly requested, not
       // left to the browser default) so this check exercises the real pipeline.
-      const stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
-      stream.getTracks().forEach((t) => t.stop());
-      setMicrophone("ok");
+      stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
     } catch {
       setMicrophone("failed");
+      return;
+    }
+
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) throw new Error("no audio context");
+      const ctx = new Ctx();
+      // Some browsers hand back a suspended context outside a gesture; a suspended analyser reads
+      // a permanent zero, which would fail every candidate on those browsers rather than the ones
+      // with a broken microphone.
+      if (ctx.state === "suspended") await ctx.resume();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      const frame = new Float32Array(analyser.fftSize);
+      let peak = 0;
+
+      const id = setInterval(() => {
+        analyser.getFloatTimeDomainData(frame);
+        let sum = 0;
+        for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
+        const rms = Math.sqrt(sum / frame.length);
+        setMicLevel(Math.min(1, rms * 12)); // scaled for the meter only, never for the verdict
+        if (rms > peak) {
+          peak = rms;
+          setMicPeak(peak);
+          if (peak >= MIC_PASS_PEAK) setMicrophone("ok");
+        }
+      }, 100);
+
+      micStopRef.current = () => {
+        clearInterval(id);
+        micStopRef.current = null;
+        try {
+          if (ctx.state !== "closed") ctx.close();
+        } catch { /* ignore */ }
+        stream.getTracks().forEach((t) => t.stop());
+        setMicLevel(0);
+      };
+    } catch {
+      // No Web Audio here. Fall back to the old behaviour rather than blocking the interview: an
+      // unmeasurable microphone is not a broken one, and refusing to let someone start because we
+      // could not sample it would be a worse failure than the one this check exists to prevent.
+      stream.getTracks().forEach((t) => t.stop());
+      setMicrophone("ok");
     }
   }
 
@@ -160,7 +238,13 @@ export default function PreInterviewCheck() {
       const seconds = (performance.now() - start) / 1000;
       const mbps = (res.data.byteLength * 8) / (seconds * 1e6);
       setSpeedMbps(mbps);
-      setSpeedStatus("ok");
+      // The result used to be measured, stored, and compared to nothing — a 0.4 Mbps connection
+      // passed with a green tick and then failed the voice stream mid-interview. Now it is
+      // actually read: below the floor the candidate is told, up front, that typing is the
+      // reliable path for them. It is a WARNING, never a block — the interview runs on any
+      // connection, and refusing someone for their broadband would be a worse outcome than a
+      // degraded one they were warned about.
+      setSpeedStatus(mbps < VOICE_MIN_MBPS ? "slow" : "ok");
     } catch {
       setSpeedStatus("failed");
     }
@@ -215,7 +299,10 @@ export default function PreInterviewCheck() {
     camera === "ok" &&
     microphone === "ok" &&
     deviceCompat.status === "ok" &&
-    speedStatus === "ok" &&
+    // "slow" counts as run. The speed test informs the advice; it never decides who is allowed to
+    // interview. Turning someone away for their broadband would be a worse outcome than the
+    // degraded voice they have now been warned about, and typing works on any connection.
+    (speedStatus === "ok" || speedStatus === "slow") &&
     identityStatus === "ok" &&
     consent;
 
@@ -232,6 +319,11 @@ export default function PreInterviewCheck() {
           deviceCompatible: deviceCompat.status === "ok",
           browserInfo: navigator.userAgent,
           downloadMbps: speedMbps,
+          // The loudest thing the microphone actually captured during the check. Recorded because
+          // it is the evidence behind "the microphone was working when they started" — the answer
+          // to a candidate who reports a silent interview, and to a recruiter looking at a session
+          // with no audio in it.
+          micPeak: micPeak || 0,
           // Sound check. The SERVER decides barge-in eligibility from these — skipping the check
           // leaves it "inconclusive", which fails closed to the turn-based interview.
           echoPath: sound.verdict || "inconclusive",
@@ -310,9 +402,44 @@ export default function PreInterviewCheck() {
           </CheckCard>
 
           <CheckCard icon={Mic} title="Microphone" state={microphone}>
-            <Button variant={microphone === "ok" ? "outline" : "primary"} size="sm" onClick={requestMicrophone} disabled={microphone === "ok"}>
-              {microphone === "ok" ? "Microphone Enabled" : "Enable Microphone"}
+            <Button
+              variant={microphone === "ok" ? "outline" : "primary"}
+              size="sm"
+              onClick={requestMicrophone}
+              disabled={microphone === "listening"}
+            >
+              {microphone === "ok" ? "Test again" : microphone === "listening" ? "Listening…" : "Enable Microphone"}
             </Button>
+
+            {/* The meter is not decoration. Permission alone never proved a candidate could be
+                heard, and a muted headset or a wrong default device passed every check and then
+                produced total silence at question one. Seeing the bar move is the proof. */}
+            {(microphone === "listening" || microphone === "ok") && (
+              <div className="mt-3">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200" aria-hidden="true">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-100 ${
+                      microphone === "ok" ? "bg-emerald-500" : "bg-brand-500"
+                    }`}
+                    style={{ width: `${Math.round(micLevel * 100)}%` }}
+                  />
+                </div>
+                <p className="mt-1.5 text-xs text-slate-600" role="status" aria-live="polite">
+                  {microphone === "ok"
+                    ? "We can hear you."
+                    : micPeak > 0
+                      ? "Say something — a little louder, or check you're not muted."
+                      : "Say something so we know we can hear you."}
+                </p>
+              </div>
+            )}
+
+            {microphone === "failed" && (
+              <p className="mt-2 text-xs text-slate-600">
+                We couldn't reach your microphone. Check that no other app is using it, and that
+                your browser is allowed to. You can also take this interview by typing.
+              </p>
+            )}
           </CheckCard>
 
           {/* Sound check — recommended, never required. It answers two things at once: can you
@@ -408,10 +535,31 @@ export default function PreInterviewCheck() {
             )}
           </CheckCard>
 
-          <CheckCard icon={Gauge} title="Internet Speed Check" state={speedStatus === "testing" ? "pending" : speedStatus}>
+          <CheckCard
+            icon={Gauge}
+            title="Internet Speed Check"
+            state={speedStatus === "testing" ? "pending" : speedStatus === "slow" ? "ok" : speedStatus}
+          >
             {speedMbps !== null && <p className="mb-2 text-sm text-slate-600">Estimated download speed: {speedMbps.toFixed(1)} Mbps</p>}
-            <Button variant={speedStatus === "ok" ? "outline" : "primary"} size="sm" onClick={runSpeedTest} disabled={speedStatus === "testing"}>
-              {speedStatus === "testing" ? "Testing…" : speedStatus === "ok" ? "Run Again" : "Run Speed Test"}
+            {/* A slow connection does not block the interview — it changes the advice. The old
+                behaviour measured this and compared it to nothing, so a 0.4 Mbps line passed with
+                a green tick and then dropped the voice stream mid-answer, which the candidate
+                experienced as the interview breaking rather than as something they could have
+                planned around. */}
+            {speedStatus === "slow" && (
+              <p className="mb-2 rounded-lg bg-amber-50 p-2 text-xs text-amber-900">
+                That's on the slow side for live voice. You can still speak your answers, but if the
+                audio struggles, switching to typing at any point is completely fine — typed answers
+                are assessed the same way.
+              </p>
+            )}
+            <Button
+              variant={speedStatus === "ok" || speedStatus === "slow" ? "outline" : "primary"}
+              size="sm"
+              onClick={runSpeedTest}
+              disabled={speedStatus === "testing"}
+            >
+              {speedStatus === "testing" ? "Testing…" : speedMbps !== null ? "Run Again" : "Run Speed Test"}
             </Button>
           </CheckCard>
 

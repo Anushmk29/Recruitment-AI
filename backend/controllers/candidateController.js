@@ -761,9 +761,11 @@ function buildTranscript(turns, answers) {
       difficulty: t.difficulty,
       answerScore: t.answerScore,
       inputMode: t.inputMode,
-      deliveryScore: t.acoustic?.deliveryScore,
-      // Surfaced so the turn-quality strip can show WHY a turn is flagged rather
-      // than just that it is — a silent turn and a rushed one look different.
+      // A per-answer "delivery" score used to be sent here and rendered on every spoken answer as
+      // "Delivery: 64/100". It is gone: it scored candidates on pace and hesitation, which is an
+      // accent and disability proxy no rubric approved (utils/prosody.js). What remains is the
+      // raw evidence a reviewer needs to see WHY a turn was flagged as unusable audio — a silent
+      // turn and a rushed one look different, and neither is a statement about the person.
       pauseRatio: t.acoustic?.pauseRatio,
       wordsPerMinute: t.acoustic?.wordsPerMinute,
       at: t.at,

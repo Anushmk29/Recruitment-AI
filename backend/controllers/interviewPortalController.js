@@ -12,6 +12,7 @@ const speechAuth = require("../utils/speechAuthorization");
 const speakable = require("../utils/speakable");
 const personaService = require("../services/personaService");
 const intentService = require("../services/intentService");
+const intentPhraseService = require("../services/intentPhraseService");
 const conversationIntent = require("../utils/conversationIntent");
 const metaAnswers = require("../utils/metaAnswers");
 const proctoring = require("../utils/proctoring");
@@ -163,6 +164,8 @@ async function submitChecks(req, res) {
     browserInfo,
     echoPath,
     echoRatio: clampNum(req.body?.echoRatio, 0, 1000),
+    // Proof the microphone was heard at pre-check, not merely permitted.
+    micPeak: clampNum(req.body?.micPeak, 0, 1),
     audioOutputConfirmed,
     // Fails closed: anything short of a measured isolated path plus a confirmed working output
     // leaves the interview turn-based, which is exactly what it was before this existed.
@@ -283,14 +286,17 @@ function sanitizeAcoustic(a) {
 // transcript. The cap bounds a client that decides to report thousands.
 const MAX_REPORTED_BACKCHANNELS = 12;
 
-function sanitizeBackchannels(list) {
+// `firstName` is this session's, because some approved phrases carry it ("Thank you, Priya.").
+// Checking against the bank rendered for THIS candidate is what stops a client reporting another
+// candidate's name-bearing phrase — and therefore stripping a real name out of its own transcript.
+function sanitizeBackchannels(list, { firstName = "" } = {}) {
   if (!Array.isArray(list)) return [];
   const out = [];
   for (const item of list) {
     if (out.length >= MAX_REPORTED_BACKCHANNELS) break;
     if (!item || typeof item !== "object") continue;
     if (!backchannel.KINDS.includes(item.kind)) continue;
-    if (!backchannel.isBankPhrase(item.phrase)) continue;
+    if (!backchannel.isBankPhrase(item.phrase, { firstName })) continue;
     const at = Number(item.at);
     out.push({ kind: item.kind, phrase: item.phrase, at: Number.isFinite(at) ? new Date(at) : new Date() });
   }
@@ -323,6 +329,18 @@ function sanitizeEndOfTurn(e) {
   return out;
 }
 
+// Did the transcription socket drop while this answer was being recorded? Only the browser can
+// know, and the trust runs the same way as questionDelivery: reporting a drop can only ever mark
+// this answer as LESS reliable evidence, so there is nothing to gain by inventing one. What a
+// candidate cannot do is hide a drop — a hidden drop just leaves a short answer looking short,
+// which is exactly the failure this field exists to make visible.
+function sanitizeConnection(c) {
+  if (!c || typeof c !== "object") return undefined;
+  const drops = clampNum(c.drops, 0, 50);
+  if (!drops) return undefined; // a clean recording records nothing, not a zero
+  return { drops, gapMs: clampNum(c.gapMs, 0, 60 * 60 * 1000) || 0 };
+}
+
 // Candidate submits an answer (typed OR the transcript of a spoken answer, with optional voice
 // metadata). Returns the next question or completion.
 async function submitAnswer(req, res) {
@@ -333,7 +351,7 @@ async function submitAnswer(req, res) {
     transcriptConfidence: clampNum(b.transcriptConfidence, 0, 1),
     audioDurationMs: clampNum(b.audioDurationMs, 0, 60 * 60 * 1000),
     acoustic: sanitizeAcoustic(b.acoustic),
-    backchannels: sanitizeBackchannels(b.backchannels),
+    backchannels: sanitizeBackchannels(b.backchannels, { firstName: session.aiInterview?.candidateFirstName }),
     // Client-reported and deliberately trusted: a repeat count feeds no score, so there is nothing
     // to gain by lying about it. Clamped only so a bad value can't land in the document.
     repeatCount: clampNum(b.repeatCount, 0, 20),
@@ -342,6 +360,12 @@ async function submitAnswer(req, res) {
     // feeds no score, so there is nothing to gain by lying about it. Constrained to the known
     // states so a bad value can't land in the document.
     endOfTurn: sanitizeEndOfTurn(b.endOfTurn),
+    // What they said between the last answer and this question. Trusted like the other
+    // conditions of the interview — it feeds no score, so there is nothing to gain by lying — and
+    // bounded so a client cannot use it to grow the document.
+    spokeBetweenTurns: String(b.spokeBetweenTurns || '').trim().slice(0, 500) || undefined,
+    // Whether this transcript has holes in it because the socket dropped mid-answer.
+    connection: sanitizeConnection(b.connection),
   };
   const state = await aiInterview.submitAnswer(session, b.text, opts);
 
@@ -426,7 +450,7 @@ async function submitDialogueAct(req, res) {
     inputMode: b.inputMode === "voice" ? "voice" : "text",
     transcriptConfidence: clampNum(b.transcriptConfidence, 0, 1),
     audioDurationMs: clampNum(b.audioDurationMs, 0, 60 * 60 * 1000),
-    backchannels: sanitizeBackchannels(b.backchannels),
+    backchannels: sanitizeBackchannels(b.backchannels, { firstName: session.aiInterview?.candidateFirstName }),
   });
   res.json(state);
 }
@@ -567,7 +591,18 @@ async function voiceToken(req, res) {
   // that decided the patience is stamped on the session as part of the interview's conditions.
   const persona = await personaService.resolveForSession(req.interviewSession);
   await personaService.stampOnSession(req.interviewSession, persona);
-  cred.conversation = personaService.conversationPolicy(persona);
+  cred.conversation = personaService.conversationPolicy(persona, {
+    // Some approved acknowledgements carry the candidate's first name. Rendered here, from the
+    // value stamped on the session when the interview began, so the browser receives finished
+    // sentences and never does the substitution itself — a client that could compose the text it
+    // speaks is a client that could speak something nobody approved.
+    firstName: req.interviewSession.aiInterview?.candidateFirstName || "",
+    // Phrasings this tenant's own candidates kept using, that the built-in trigger lists missed
+    // and a recruiter has since approved. They become 0 ms deterministic matches from here on —
+    // additive only, so a tenant can teach the interviewer new wording but can never configure
+    // away a candidate's ability to ask for a repeat or to stop.
+    approvedTriggers: await intentPhraseService.approvedTriggers(req.interviewSession.company),
+  });
   cred.persona = { name: persona.name, source: persona.source };
   res.json(cred);
 }
@@ -634,6 +669,19 @@ async function voiceIntent(req, res) {
     },
   ].slice(-INTENT_TAIL);
 
+  // A Tier-1 reading is, by definition, a phrasing the deterministic matchers missed — they ran
+  // first and said nothing. Counted so a recruiter can promote the recurring ones into instant
+  // rules (services/intentPhraseService). Fire-and-forget: a live turn never waits on bookkeeping,
+  // and a lost data point is not worth a second of somebody's interview.
+  if (intent.tier === 1 && intent.action !== "answer_continues" && session.company) {
+    void intentPhraseService.recordMiss({
+      company: session.company,
+      action: intent.action,
+      utterance,
+      confidence: intent.confidence,
+    });
+  }
+
   const payload = {
     action: intent.action,
     tier: intent.tier,
@@ -664,6 +712,160 @@ async function voiceIntent(req, res) {
 
 // Text-to-speech proxy for spoken questions — the browser posts the question text and gets back
 // MP3 audio. Server-side so the Deepgram key never reaches the client.
+// ---------------------------------------------------------------------------
+// Progressive playback (W8)
+// ---------------------------------------------------------------------------
+//
+// A long question used to begin with a second or more of silence: the whole MP3 was synthesized
+// on this server, buffered, transferred, and only then played. None of that wait bought anything.
+//
+// The fix has to keep the authorization boundary exactly where it was, and that is why this is
+// TWO steps rather than one. A browser cannot put an Authorization header on an <audio> element,
+// so the audio URL has to carry its own credential — and a URL that carried the portal JWT would
+// put a session token into browser history and server logs. So:
+//
+//   1. POST /voice/speak/stream — authenticated, authorises the TEXT exactly as before, and
+//      returns a single-purpose ticket bound to this session and that one sentence.
+//   2. GET  /voice/speak/stream/:ticket — streams the audio for that ticket and nothing else.
+//
+// The ticket cannot name new text: it names text this server already checked and stored. So the
+// question "what is this session allowed to say out loud?" is still answered in exactly one place
+// (utils/speechAuthorization), and step 2 has no power to widen it.
+//
+// Tickets are reusable within their lifetime ON PURPOSE. A repeat has to replay the identical
+// audio rather than re-synthesise — "could you say that again?" must not be able to hand this
+// candidate a subtly different question from the one they were first asked — so the first stream
+// caches its bytes and every later request for the same ticket serves them.
+const speakTickets = new Map(); // ticket -> { sessionId, text, voice, audio, expiresAt }
+const SPEAK_TICKET_TTL_MS = 15 * 60 * 1000;
+const SPEAK_TICKET_MAX = 500;
+
+function sweepSpeakTickets() {
+  const now = Date.now();
+  for (const [k, v] of speakTickets) if (v.expiresAt <= now) speakTickets.delete(k);
+  // Hard cap as a backstop against a client that requests thousands: oldest first.
+  while (speakTickets.size > SPEAK_TICKET_MAX) speakTickets.delete(speakTickets.keys().next().value);
+}
+
+// Shared by both speak endpoints: check the text, record a divergence, convert to spoken form.
+// Returns { spoken } or throws a { status } error the caller surfaces.
+async function authorizeSpeech(session, text) {
+  const verdict = speechAuth.authorize(text, session);
+  if (!verdict.authorized) {
+    const enforced = speechAuth.isEnforcing();
+    session.aiInterview.speechDivergences = [
+      ...(session.aiInterview.speechDivergences || []),
+      { spoken: verdict.spoken, enforced, at: new Date() },
+    ].slice(-speechAuth.DIVERGENCE_TAIL);
+    session.markModified("aiInterview.speechDivergences");
+    await session.save();
+    console.error(
+      `[voice] refusing to speak text that is neither an authored turn nor an approved phrase ` +
+        `(session ${session._id}, enforced=${enforced}): ${JSON.stringify(verdict.spoken.slice(0, 120))}`
+    );
+    if (enforced) {
+      throw Object.assign(new Error("That text was not part of this interview and will not be spoken"), {
+        status: 422,
+        code: "SPEECH_NOT_AUTHORED",
+      });
+    }
+  }
+  // Written form -> spoken form, AFTER authorization and never before it.
+  return speakable.toSpeakable(verdict.spoken);
+}
+
+// Step 1: authorise the sentence and hand back a ticket for it.
+async function voiceSpeakPrepare(req, res) {
+  if (!speech.isEnabled()) {
+    return res.status(503).json({ error: "Voice interview is not configured", code: "VOICE_DISABLED" });
+  }
+  const session = req.interviewSession;
+  let spoken;
+  try {
+    spoken = await authorizeSpeech(session, req.body?.text);
+  } catch (err) {
+    if (err.status === 422) return res.status(422).json({ error: err.message, code: err.code });
+    throw err;
+  }
+
+  const persona = await personaService.resolveForSession(session);
+  sweepSpeakTickets();
+  const ticket = crypto.randomBytes(24).toString("hex");
+  speakTickets.set(ticket, {
+    sessionId: String(session._id),
+    text: spoken.text,
+    voice: persona.voice.model,
+    audio: null,
+    expiresAt: Date.now() + SPEAK_TICKET_TTL_MS,
+  });
+
+  res.json({
+    ticket,
+    // How long this will take to say, for the browser to use until the audio element knows its
+    // own duration — a streamed response has no Content-Length, so `audio.duration` reads
+    // Infinity for the first moments, and the echo gate needs some idea of playback position or
+    // it explains away more and lets fewer real interruptions through.
+    estimatedMs: speech.estimateSpeechMs(spoken.text),
+  });
+}
+
+// Step 2: stream the audio for a ticket. Can only ever produce text step 1 already approved.
+//
+// THE TICKET IS THE CREDENTIAL, and this route carries no other authentication. That is a
+// deliberate choice, not an omission: an <audio> element cannot send an Authorization header, and
+// the alternative — putting the portal JWT in the URL — would write a live session token into
+// browser history, referrer headers and every access log it passes through. A capability URL is
+// the smaller exposure by a wide margin.
+//
+// What the capability actually grants is one sentence of synthesised speech that this server
+// wrote and already approved. It is 24 random bytes, it expires in fifteen minutes, and it
+// carries no candidate data, no session access and no ability to name new text.
+async function voiceSpeakStream(req, res) {
+  const entry = speakTickets.get(String(req.params.ticket || ""));
+  if (!entry || entry.expiresAt <= Date.now()) {
+    return res.status(404).json({ error: "That audio is no longer available" });
+  }
+
+  res.setHeader("Content-Type", "audio/mpeg");
+  res.setHeader("Cache-Control", "no-store");
+
+  // A repeat: serve the identical bytes rather than re-synthesising, so a re-asked question
+  // cannot drift from the one first asked.
+  if (entry.audio) {
+    res.setHeader("Content-Length", entry.audio.length);
+    return res.send(entry.audio);
+  }
+
+  const { audio, model } = await speech.synthesizeTo(res, entry.text, { voice: entry.voice });
+  entry.audio = audio;
+  res.end();
+
+  // Metered after the fact so nothing about billing can delay a spoken question. Best-effort, and
+  // the session is re-read here because this route has no authenticated request behind it — the
+  // ticket recorded which session it belongs to precisely so spend stays attributable.
+  try {
+    const usageService = require("../services/usageService");
+    const owner = await InterviewSession.findById(entry.sessionId).select("company candidate").lean();
+    if (owner) {
+      await usageService.recordUsage({
+        company: owner.company,
+        session: owner._id,
+        candidate: owner.candidate,
+        kind: "tts",
+        provider: speech.provider(),
+        model,
+        usage: { costCents: speech.ttsCostCents(entry.text.length) },
+        engine: "ai",
+      });
+    }
+  } catch (err) {
+    console.error("[voice] TTS metering failed:", err.message);
+  }
+}
+
+// The original, buffered endpoint. Still used for the SHORT phrases — backchannels, preambles,
+// meta answers — which are pre-synthesised once and cached for the whole session, so streaming
+// them would add a round trip and save nothing.
 async function voiceSpeak(req, res) {
   if (!speech.isEnabled()) {
     return res.status(503).json({ error: "Voice interview is not configured", code: "VOICE_DISABLED" });
@@ -867,6 +1069,8 @@ module.exports = {
   voiceConsent,
   voiceToken,
   voiceSpeak,
+  voiceSpeakPrepare,
+  voiceSpeakStream,
   voiceIntent,
   uploadEvidenceClip,
   phoneEvidenceClip,

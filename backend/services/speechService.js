@@ -135,6 +135,78 @@ function requestTts(apiKey, model, text) {
   });
 }
 
+// Stream a spoken question straight through to the candidate's browser.
+//
+// The difference from `synthesize` below is the whole point: that one waits for Deepgram to
+// finish the entire utterance, buffers it on this server, and only then starts sending. A long
+// question therefore begins with a second or more of silence, every single time, and none of that
+// wait buys anything — the first clause is ready long before the last one is.
+//
+// This pipes each chunk onward as it arrives, so the browser's <audio> element starts playing on
+// the opening words. It ALSO tees the bytes into a buffer, because a repeat has to replay the
+// identical audio rather than a fresh synthesis: "could you say that again?" must not be able to
+// hand this candidate a subtly different question from the one they were first asked.
+//
+// `onComplete(buffer)` receives the full audio once the stream ends. Never called on failure.
+function streamTts(apiKey, model, text, out, onComplete) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ text });
+    const req = https.request(
+      {
+        host: GRANT_HOST,
+        path: `/v1/speak?model=${encodeURIComponent(model)}&encoding=mp3`,
+        method: "POST",
+        headers: {
+          Authorization: `Token ${apiKey}`,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 20000,
+      },
+      (res) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          let e = "";
+          res.on("data", (c) => (e += c));
+          res.on("end", () => reject(new Error(`Deepgram TTS failed (${res.statusCode}): ${e.slice(0, 200)}`)));
+          return;
+        }
+        const chunks = [];
+        res.on("data", (c) => {
+          chunks.push(c);
+          // Backpressure is the browser's problem to signal and Node's to honour; `write`
+          // returning false is handled by the socket buffering, which for a few hundred KB of
+          // audio is entirely fine and much simpler than pausing the upstream.
+          out.write(c);
+        });
+        res.on("end", () => {
+          const full = Buffer.concat(chunks);
+          try {
+            onComplete?.(full);
+          } catch { /* caching is best-effort — never fail a spoken question over it */ }
+          resolve(full);
+        });
+        res.on("error", reject);
+      }
+    );
+    req.on("error", reject);
+    req.on("timeout", () => req.destroy(new Error("Deepgram TTS request timed out")));
+    req.write(body);
+    req.end();
+  });
+}
+
+// Roughly how long this text will take to say, for the browser to use before the audio element
+// knows its own duration. A streamed response has no Content-Length and `audio.duration` reads
+// Infinity until enough has buffered — and the echo gate needs SOME idea of how far through the
+// utterance playback is, or it falls back to comparing against the whole sentence and lets fewer
+// interruptions through. Deliberately approximate: it is a hint, and the real duration replaces
+// it the moment the browser has one.
+function estimateSpeechMs(text) {
+  const chars = String(text || "").trim().length;
+  // ~14ms per character at an ordinary speaking rate, plus a beat of lead-in.
+  return Math.round(300 + chars * 14);
+}
+
 // Synthesize a spoken question. Returns { audio: Buffer, contentType, model }.
 // `voice` optionally overrides the deployment TTS voice with the session's persona voice
 // (services/personaService) — an unknown/empty value falls back to the configured default rather
@@ -146,6 +218,17 @@ async function synthesize(text, { voice } = {}) {
   if (!clean) throw Object.assign(new Error("text is required"), { status: 400 });
   const model = String(voice || "").trim() || c.ttsModel;
   const audio = await requestTts(c.apiKey, model, clean);
+  return { audio, contentType: "audio/mpeg", model };
+}
+
+// Same, but written to `out` as it arrives. Returns the full buffer when done.
+async function synthesizeTo(out, text, { voice } = {}) {
+  const c = cfg();
+  if (!c.apiKey) throw Object.assign(new Error("Voice interview is not configured"), { status: 503 });
+  const clean = String(text || "").trim().slice(0, 2000);
+  if (!clean) throw Object.assign(new Error("text is required"), { status: 400 });
+  const model = String(voice || "").trim() || c.ttsModel;
+  const audio = await streamTts(c.apiKey, model, clean, out);
   return { audio, contentType: "audio/mpeg", model };
 }
 
@@ -216,6 +299,9 @@ module.exports = {
   provider,
   grantStreamingToken,
   synthesize,
+  synthesizeTo,
+  streamTts,
+  estimateSpeechMs,
   ttsCostCents,
   sttCostCents,
   models,

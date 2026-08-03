@@ -7,7 +7,8 @@ import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
 import Button from "../components/ui/Button.jsx";
 import Modal from "../components/ui/Modal.jsx";
 import PageHeader from "../components/ui/PageHeader.jsx";
-import { TableWrap, Table, THead, TH, TBody, TR, TD, RowAction } from "../components/ui/DataTable.jsx";
+import { RecordCard, RecordGrid } from "../components/ui/Panels.jsx";
+import { RowAction } from "../components/ui/DataTable.jsx";
 
 const CANDIDATE_PORTAL_URL = import.meta.env.VITE_CANDIDATE_PORTAL_URL || "http://localhost:5174";
 
@@ -212,130 +213,116 @@ export default function JobList() {
 
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
 
-      <Card className="p-0">
-        {loading ? (
-          <div className="space-y-3 p-6">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-14 w-full" />
-            ))}
-          </div>
-        ) : jobs.length === 0 ? (
-          <div className="p-6">
-            <EmptyState
-              icon={Briefcase}
-              title="No jobs yet"
-              description="Create your first job posting to start receiving applications."
-              action={
-                <Button as={Link} to="/jobs/new">
-                  <Plus className="h-4 w-4" /> New Job
-                </Button>
-              }
-            />
-          </div>
-        ) : (
-          <TableWrap>
-            <Table>
-              <THead>
-                <tr>
-                  <TH>Title</TH>
-                  <TH>Department</TH>
-                  <TH>Status</TH>
-                  <TH>Scoring rubric</TH>
-                  <TH>Candidates</TH>
-                  <TH>Actions</TH>
-                </tr>
-              </THead>
-              <TBody>
-                {jobs.map((job) => (
-                  <TR key={job._id}>
-                    <TD className="font-medium text-slate-800">{job.title}</TD>
-                    <TD className="text-slate-600">{job.department || "—"}</TD>
-                    <TD>
-                      <Badge tone={job.status === "published" ? "green" : "amber"}>{job.status}</Badge>
-                    </TD>
-                    <TD>
-                      <Link
-                        to={`/jobs/${job._id}/rubric`}
-                        className="inline-flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
-                      >
-                        <Badge tone={(RUBRIC_STATUS_META[job.rubricStatus] || RUBRIC_STATUS_META.none).tone}>
-                          {(RUBRIC_STATUS_META[job.rubricStatus] || RUBRIC_STATUS_META.none).label}
-                        </Badge>
-                      </Link>
-                    </TD>
-                    <TD>
-                      <Link
-                        to={`/jobs/${job._id}/candidates`}
-                        className="inline-flex items-center gap-1.5 rounded-lg font-medium whitespace-nowrap text-brand-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
-                      >
-                        <Users className="h-3.5 w-3.5" aria-hidden="true" /> View
-                      </Link>
-                    </TD>
-                    <TD>
-                      <div className="flex items-center gap-0.5">
-                        <RowAction as={Link} to={`/jobs/${job._id}/edit`} label="Edit job" icon={Pencil} />
-                        {job.status === "published" && (
-                          <RowAction
-                            onClick={() => setPublishModalJob(job)}
-                            label="Publish to job boards"
-                            icon={Globe2}
-                          />
-                        )}
-                        {job.status === "published" && (
-                          <span className="relative">
-                            <RowAction
-                              onClick={() => setLinkPickerFor(linkPickerFor === job._id ? null : job._id)}
-                              label="Copy apply link"
-                              icon={Link2}
-                              aria-expanded={linkPickerFor === job._id}
-                            />
-                            {linkPickerFor === job._id && (
-                              <span
-                                className="absolute right-0 top-6 z-20 w-44 rounded-xl border border-slate-200 bg-white py-1.5 shadow-soft"
-                                onMouseLeave={() => setLinkPickerFor(null)}
+      {loading ? (
+        <RecordGrid>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} padding="compact">
+              <Skeleton className="h-28 w-full" />
+            </Card>
+          ))}
+        </RecordGrid>
+      ) : jobs.length === 0 ? (
+        <EmptyState
+          icon={Briefcase}
+          title="No jobs yet"
+          description="Create your first job posting to start receiving applications."
+          action={
+            <Button as={Link} to="/jobs/new">
+              <Plus className="h-4 w-4" /> New Job
+            </Button>
+          }
+        />
+      ) : (
+        <RecordGrid>
+          {jobs.map((job) => {
+            const rubric = RUBRIC_STATUS_META[job.rubricStatus] || RUBRIC_STATUS_META.none;
+            return (
+              <RecordCard
+                key={job._id}
+                icon={Briefcase}
+                title={job.title}
+                subtitle={job.department || "No department set"}
+                // The card leads to the applicants, not to the edit form: the
+                // job exists to collect candidates, and editing is a deliberate
+                // act that belongs on its own icon action.
+                link={{ as: Link, to: `/jobs/${job._id}/candidates` }}
+                trailing={<Badge tone={job.status === "published" ? "green" : "amber"}>{job.status}</Badge>}
+                footer={
+                  // The rubric badge stays its own link because it navigates
+                  // somewhere the card doesn't, and it keeps the amber
+                  // "needs approval" state in the fastest-read position — a
+                  // job on the legacy engine is the one thing a recruiter
+                  // must not scroll past.
+                  <Link
+                    to={`/jobs/${job._id}/rubric`}
+                    className="relative z-10 inline-flex rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+                  >
+                    <Badge tone={rubric.tone}>{rubric.label}</Badge>
+                  </Link>
+                }
+                footerTrailing={
+                  <span className="inline-flex items-center gap-1.5 font-medium text-brand-700">
+                    <Users className="h-3.5 w-3.5" aria-hidden="true" /> View applicants
+                  </span>
+                }
+                actions={
+                  <div className="flex items-center gap-0.5">
+                    <RowAction as={Link} to={`/jobs/${job._id}/edit`} label="Edit job" icon={Pencil} />
+                    {job.status === "published" && (
+                      <RowAction
+                        onClick={() => setPublishModalJob(job)}
+                        label="Publish to job boards"
+                        icon={Globe2}
+                      />
+                    )}
+                    {job.status === "published" && (
+                      <span className="relative">
+                        <RowAction
+                          onClick={() => setLinkPickerFor(linkPickerFor === job._id ? null : job._id)}
+                          label="Copy apply link"
+                          icon={Link2}
+                          aria-expanded={linkPickerFor === job._id}
+                        />
+                        {linkPickerFor === job._id && (
+                          <span
+                            className="absolute right-0 top-9 z-20 w-44 rounded-xl border border-slate-200 bg-white py-1.5 shadow-soft"
+                            onMouseLeave={() => setLinkPickerFor(null)}
+                          >
+                            {LINK_SOURCES.map((s) => (
+                              <button
+                                key={s.key}
+                                onClick={() => handleCopyApplyLink(job, s.key)}
+                                className="block w-full px-3.5 py-1.5 text-left text-xs font-medium text-slate-600 hover:bg-slate-50"
                               >
-                                {LINK_SOURCES.map((s) => (
-                                  <button
-                                    key={s.key}
-                                    onClick={() => handleCopyApplyLink(job, s.key)}
-                                    className="block w-full px-3.5 py-1.5 text-left text-xs font-medium text-slate-600 hover:bg-slate-50"
-                                  >
-                                    {s.label} link
-                                  </button>
-                                ))}
-                                <button
-                                  onClick={() => handleCopyApplyLink(job)}
-                                  className="block w-full border-t border-slate-100 px-3.5 py-1.5 text-left text-xs text-slate-500 hover:bg-slate-50"
-                                >
-                                  Untagged link
-                                </button>
-                              </span>
-                            )}
+                                {s.label} link
+                              </button>
+                            ))}
+                            <button
+                              onClick={() => handleCopyApplyLink(job)}
+                              className="block w-full border-t border-slate-100 px-3.5 py-1.5 text-left text-xs text-slate-500 hover:bg-slate-50"
+                            >
+                              Untagged link
+                            </button>
                           </span>
                         )}
-                        {job.status !== "published" && (
-                          <RowAction
-                            onClick={() => handlePublish(job._id)}
-                            label="Publish job"
-                            icon={UploadCloud}
-                            tone="positive"
-                          />
-                        )}
-                        <RowAction
-                          onClick={() => handleDelete(job._id)}
-                          label="Delete job"
-                          icon={Trash2}
-                          tone="danger"
-                        />
-                      </div>
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          </TableWrap>
-        )}
-      </Card>
+                      </span>
+                    )}
+                    {job.status !== "published" && (
+                      <RowAction
+                        onClick={() => handlePublish(job._id)}
+                        label="Publish job"
+                        icon={UploadCloud}
+                        tone="positive"
+                      />
+                    )}
+                    <RowAction onClick={() => handleDelete(job._id)} label="Delete job" icon={Trash2} tone="danger" />
+                  </div>
+                }
+              />
+            );
+          })}
+        </RecordGrid>
+      )}
 
       {publishModalJob && <PublishBoardsModal job={publishModalJob} onClose={() => setPublishModalJob(null)} />}
     </div>

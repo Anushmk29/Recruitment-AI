@@ -2,6 +2,202 @@
 
 A running log of every change made to this codebase: **what** was done, **why**, and **which files/folders** were touched. Newest entries at the top. Companion to `IMPLEMENTATION-PLAN.md` (roadmap) and `MULTI-TENANT-PLAN.md` (production-readiness plan).
 
+---
+
+## 2026-08-04 (later) — Fair communication scoring, a persistent session, and streaming speech
+
+**655/655 backend tests (+14), `check:env` clean, all three apps build.**
+
+### `delivery` and `confidence` are back, measuring something defensible
+
+They were removed earlier today for scoring candidates on pace, filler rate and hesitation. The
+decision was to keep them and make them fair — and the honest finding is that the presentation was
+never the problem, so nothing about it was softened. **The inputs changed.**
+
+They are now derived from the **transcript**, which is accent-neutral by construction: the same
+words are the same words whether said quickly or slowly, in Lagos or Leeds. Clarity asks whether
+the answer addressed the question, was concrete, and could be followed by someone who was not
+there. The model observes yes/no features and quotes each one; **code does the arithmetic**;
+anything it cannot quote is dropped.
+
+**`confidence` means the opposite of what it used to.** It was "sounds self-assured" — filler rate
+times four plus a hesitation penalty, which is a personality read that punished exactly the
+candidate being careful. It now means **calibration**: did they mark the boundary of what they
+knew. Hedging counts in a candidate's favour; unhedged overclaiming is what costs. Under the old
+scorer a fluent vague answer beat a halting specific one; that is now reversed, and there is a test
+that says so in those words.
+
+The scaffolding that makes it defensible, all of it enforced rather than documented:
+
+- **Off unless the rubric declares it**, and it cannot be declared without a written reason why the
+  role requires it — a mongoose validator, so there is no route into the database that assesses
+  how someone speaks with no recorded basis. Job-relatedness is the whole legal basis; a switch
+  with no reason beside it is not a declaration.
+- **The candidate is told at the start**, including the part that matters most: thinking aloud is
+  fine, pausing is fine, and saying you are not sure counts in your favour.
+- **An accommodation excludes it**, and the exclusion is recorded rather than silently applied.
+- **Never decisive** — reported beside the competency scores, absent from `overallScore`, cannot
+  reject anyone.
+- The justification prints **on the report and in the PDF, next to the number**. That artefact is
+  what gets produced in a discrimination claim, and the question it will be asked is "why was this
+  candidate assessed on how they explained things?"
+
+### W7 — one session, not one per question
+
+The microphone, socket and recorder used to be torn down and rebuilt for **every question**: a
+token grant, a `getUserMedia`, and a WebSocket handshake per turn, and a candidate who was deaf for
+the whole ten-second gap while the next question was prepared and spoken. That gap is where "oh —
+and one more thing" lives.
+
+They now belong to the session. `openMic` is idempotent about the session and fresh about the turn;
+`Finalize` flushes the trailing transcript instead of `CloseStream` closing the pipe. Between-turn
+speech is captured and used to **hold the next question until the candidate stops talking** — and
+deliberately not spliced into any answer, because it followed the previous one and filing it under
+the next question would be worse than losing it. It is recorded on the following turn so a reviewer
+can see it was said.
+
+### W8 — the voice starts on the first clause
+
+A question was synthesised whole on the server, buffered, transferred, and only then played. Now it
+streams: two steps, because an `<audio>` element cannot send an Authorization header. `POST
+/voice/speak/stream` authorises the **text** through exactly the same check as before and returns a
+ticket; `GET /voice/speak/stream/:ticket` streams it. The ticket is the credential — 24 random
+bytes, 15-minute TTL, one already-approved sentence — because putting the portal JWT in a URL would
+write a live session token into browser history and every access log it passes.
+
+The repeat guarantee survives: the first stream caches its bytes, so a re-asked question replays
+identical audio rather than re-synthesising. Short phrases stay on the buffered endpoint — they are
+pre-synthesised once and cached, so streaming them would add a round trip and save nothing.
+
+### Files
+
+| Area | Files |
+|---|---|
+| Fair communication scoring | **`backend/utils/communication.js`** (new), `utils/interviewPrompts.js`, `services/aiInterviewService.js`, `models/RoleRubric.js`, `models/InterviewSession.js`, `models/Candidate.js`, `services/interviewReportPdf.js`, `admin/src/pages/InterviewReport.jsx` |
+| Persistent session | `user/src/portal/useVoiceInterview.js`, `user/src/pages/InterviewRoom.jsx`, `models/InterviewSession.js`, `controllers/interviewPortalController.js`, `services/aiInterviewService.js` |
+| Streaming speech | `backend/services/speechService.js`, `controllers/interviewPortalController.js`, `routes/interviewPortalRoutes.js`, `user/src/portal/useVoiceInterview.js` |
+| Tests | **`test/unit/communicationFairness.test.js`** (new), **`test/unit/voicePersistence.test.js`** (new), `test/unit/voiceConversation.test.js` |
+
+### Still not exercised live
+
+Both W7 and W8 are latency work on the live audio path and both fail silently when they fail: a
+session that stops transcribing looks exactly like a candidate who stopped talking. The unit tests
+cover what can be covered without a browser or a provider — the authorization boundary, the route
+shapes, the estimate, the scoring arithmetic. **The reconnect path, progressive playback on real
+browsers, and a whole interview on one socket have still never been run against live Deepgram.**
+That smoke test is now the highest-value thing left to do.
+
+---
+
+## 2026-08-04 — Weak points in the voice pipeline, closed
+
+Eleven of the thirteen weaknesses found in the voice-pipeline audit. Two remain and are named at the
+bottom. **641/641 backend tests pass (+37), `check:env` clean, all three apps build.**
+
+### The two that were dangerous
+
+**Candidates were being scored on how they sound.** Every spoken answer got a `deliveryScore` from
+pace, filler rate and hesitation; those were averaged into `evaluation.delivery` / `.confidence` and
+printed to recruiters as score bars, with a caption admitting they "can reflect accent or audio
+quality rather than skill". A score bar that has to disclaim itself does not belong on a hiring
+document: it is an unapproved criterion, correlated with national origin and disability, sitting
+beside the competency scores on the artefact produced in a discrimination claim. Removed from the
+evaluation, the schema, the report UI and the PDF — and the schema paths are gone, so historical
+values stop surfacing too. What survives is `audioQuality`, which asks only "could we hear this
+answer", can only ever REMOVE trust from a turn, and is reported in those words.
+
+**A dropped socket silently truncated the answer and scored it as complete.** There was no
+`ws.onclose` handler at all: the recorder kept running, every chunk was discarded by the
+`readyState === OPEN` guard, the green "Listening" light kept pulsing over a dead pipe, and the
+candidate's remaining ninety seconds went nowhere. Now the drop is detected, one silent reconnect is
+attempted with a fresh credential, the turn cannot end while we are deaf, and a failed reconnect
+refuses to submit. Even a RECOVERED drop travels with the answer (`connection.drops` / `gapMs`),
+marks the turn degraded, and — on its own, with no threshold — withholds the recommendation. There
+is no honest way to recommend against someone on a transcript we know has a hole in it.
+
+### The reason it sounded like a machine
+
+**~8.4 seconds of tail on every single turn**, and up to ~30 when the last transcript chunk arrived
+without a full stop — the interviewer offering time to someone who stopped talking half a minute
+ago. The patience machinery was well built and aimed at the wrong problem: it treated "I am not
+certain you are finished" as "you need encouragement". The ending is now chosen by how much doubt
+there actually is: a completed clause with a real answer behind it ends on ~0.6s with no check-in;
+anything less certain still gets the full ladder. Safe only because barge-in now works on every
+device — "oh, one more thing" said a second late interrupts instead of being lost.
+
+**Warmth, within the rules.** The acknowledgement bank went from four phrases to eight, and the
+candidate's first name is now usable mid-interview rather than only at hello and goodbye. A name
+passes the test the bank exists to enforce: it cannot vary with how the candidate is doing. Added a
+`bridge` bank for questions that change the subject, because approved questions are delivered
+verbatim and landed cold every other turn.
+
+**Clarify stopped being a promise it broke.** It announced "let me put that a different way" and
+replayed the identical sentence. Restatements are now authored and frozen alongside approved
+questions, vetted to the same standard (they are read to a candidate in place of a question), and
+where none exists the interviewer honestly repeats rather than announcing a rewording it cannot give.
+
+### Understanding phrasings nobody listed
+
+The trigger lists match word sequences; the semantic tier covers the rest. It had three holes: it
+was gated so tightly that a short request forty words into an answer was never looked up, it could
+not reach "I'm done", and it added a visible beat of silence because it only ran on final
+transcripts. All three closed — and the lookup now starts on the interim, so the answer is usually
+waiting by the time the candidate stops.
+
+**The misses now close the gap permanently.** Every Tier-1 reading is, by construction, a phrasing
+the deterministic lists missed. They are counted per tenant, and the recurring ones go to a
+recruiter who can promote one into a 0 ms deterministic trigger. Merging is additive by
+construction — a tenant can teach the interviewer new wording, never remove a candidate's ability to
+ask for a repeat or to stop. The list stops being a developer's one-time guess and becomes what the
+candidates actually said.
+
+**One gap left open deliberately.** Answering "yes, end the interview" still has no model tier. The
+asymmetry runs the other way there: an unrecognised reply continues the interview, so a missed yes
+costs one more question they can decline, while a model could only change the outcome by turning
+something ambiguous INTO a yes. Everywhere else better understanding shrinks the failure; there it
+would grow it.
+
+### Found while building
+
+- `vetQuestions` let **"do you have any criminal convictions?"** straight through. The pattern was
+  `criminal record` and `convicted`; the most natural phrasing of a banned question was an adjective
+  and a noun it happened not to put next to each other. Fixed and regression-tested.
+- **`endpointing.js`, `dialogueActs.js` and `finishIntent.js` are each written twice with no drift
+  protection** — only `echoAlignment` had a parity test, and these three are older. Drift there is
+  silent and lands as candidates being cut off. `test/unit/mirrorParity.test.js` now compares
+  behaviour case by case.
+- Test 2.10 asserted `consumesTurn === (name !== "answer_continues")`, which was a coincidence, not
+  the rule. Rewritten to state the actual invariant.
+- The pre-check verified microphone PERMISSION, never audio — a muted headset passed every tick and
+  produced silence at question one. It now listens, shows a level meter, and requires being heard.
+  The speed test result was measured and compared to nothing; it now warns (never blocks).
+
+### Files
+
+| Area | Files |
+|---|---|
+| Scoring surfaces removed | `backend/utils/prosody.js` (rewritten), `models/InterviewSession.js`, `services/aiInterviewService.js`, `services/interviewReportPdf.js`, `controllers/candidateController.js`, `utils/interviewReportEngine.js`, `admin/src/pages/InterviewReport.jsx` |
+| Socket survival | `user/src/portal/useVoiceInterview.js`, `user/src/pages/InterviewRoom.jsx`, `controllers/interviewPortalController.js`, `utils/interviewReportEngine.js` |
+| Turn tail + warmth | `backend/utils/backchannel.js`, `services/personaService.js`, `utils/speechAuthorization.js`, `user/src/portal/useVoiceInterview.js` |
+| Clarify restatements | `backend/models/QuestionSet.js`, `utils/questionVetting.js`, `services/questionSetService.js`, `services/aiInterviewService.js` |
+| Intent + promotion loop | `backend/utils/conversationIntent.js`, `services/intentService.js`, **`models/IntentPhrase.js`** (new), **`services/intentPhraseService.js`** (new), **`controllers/intentPhraseController.js`** (new), **`routes/intentPhraseRoutes.js`** (new), `server.js` |
+| Candidate controls + pre-check | `user/src/pages/InterviewRoom.jsx`, `user/src/pages/PreInterviewCheck.jsx` |
+| Tests | **`test/unit/mirrorParity.test.js`** (new), `test/unit/voiceInteractivity.test.js`, `test/unit/reportCoverage.test.js`, `test/unit/voiceConversation.test.js` |
+
+### Not done
+
+**W7/W15 (one persistent socket across turns) and W8 (streaming TTS) are not built.** Both
+restructure the live audio path rather than adding to it — W7 changes the mic/socket lifecycle, W8
+replaces `new Audio()` playback with Web Audio scheduling of PCM chunks and is entangled with the
+echo gate's `spokenRatio`, barge-in's `stopSpeaking`, and repeat's same-bytes guarantee. Their
+failure mode is silent and total, and the live smoke test that would catch it has still never run.
+They are the remaining latency work; the mic is open through all interviewer speech and for the
+whole turn, but still torn down between turns.
+
+**Nothing here has been exercised against live Deepgram.** Everything above is verified by unit
+tests, parity tests and builds. Real room acoustics, real Tier-1 latency, and the reconnect path
+against a genuinely dropped socket all still need a smoke test with a real person.
+
 > **To see what's done vs still left at a glance, use [STATUS.md](STATUS.md)** — the checkbox status board. This file is the detailed history; STATUS.md is the tracker.
 
 > **How to maintain this file:** add a new `## <date> — <title>` section at the top for each unit of work. Under it, a short **What / Why**, then a **Files** table (`path` · `change`). Mark verification status. Keep paths repo-relative.

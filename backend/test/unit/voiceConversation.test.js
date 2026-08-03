@@ -471,16 +471,36 @@ test("4.6: BIAS GATE — a repeat count can never reach a score", () => {
   // Repeat frequency tracks accent, hearing, first language and connection quality. If it leaked
   // into scoring, the product would be a disparate-impact machine with an audit trail proving it.
   const acoustic = { wordsPerMinute: 130, fillerRate: 4, pauseRatio: 0.3, energyVariance: 0.002 };
-  const clean = { role: "candidate", inputMode: "voice", acoustic };
-  const repeated = { role: "candidate", inputMode: "voice", acoustic, repeatCount: 5 };
+  assert.equal(prosody.audioQuality(acoustic), prosody.audioQuality({ ...acoustic, repeatCount: 5 }));
+});
 
-  assert.equal(prosody.scoreDelivery(acoustic), prosody.scoreDelivery({ ...acoustic, repeatCount: 5 }));
-  assert.equal(prosody.scoreConfidence(acoustic), prosody.scoreConfidence({ ...acoustic, repeatCount: 5 }));
+test("4.6b: BIAS GATE — how a candidate SOUNDS never reaches a score", () => {
+  // `evaluation.delivery` and `.confidence` DO exist — and that is deliberate. They used to be
+  // computed from pace, filler rate and hesitation, which are accent, nervousness and
+  // speech-difference proxies. The field names survived; the inputs did not, and they are now
+  // derived from the transcript alone (utils/communication.js, and see communicationFairness.test).
+  //
+  // So the rule this pins is not "those fields must not exist" — that was the shape of one fix,
+  // not the invariant. The invariant is that nothing about how someone SOUNDED may become a
+  // number about them, and prosody is now structurally incapable of producing one.
+  assert.equal(typeof prosody.scoreConfidence, "undefined", "there is no 'sounds confident' score");
+  assert.equal(typeof prosody.aggregateVoiceScores, "undefined", "prosody does not aggregate into the evaluation");
   assert.deepEqual(
-    prosody.aggregateVoiceScores([clean, clean]),
-    prosody.aggregateVoiceScores([repeated, repeated]),
-    "aggregate voice scores must be identical whether or not questions were repeated"
+    Object.keys(prosody),
+    ["audioQuality"],
+    "prosody may derive exactly one thing from a voice: was the audio usable"
   );
+
+  // Filler rate is the clearest case: saying "um" is not a measurement of the recording, so it
+  // must not move the one number still derived from prosody.
+  const base = { wordsPerMinute: 130, pauseRatio: 0.3 };
+  assert.equal(
+    prosody.audioQuality(base),
+    prosody.audioQuality({ ...base, fillerRate: 40 }),
+    "audio usability must not move with how many filler words were spoken"
+  );
+  // Nor may a deliberate, considered speaking pace read as unusable audio.
+  assert.ok(prosody.audioQuality({ wordsPerMinute: 75, pauseRatio: 0.45 }) > 50);
 });
 
 test("4.7: repeatCount lives on the question turn, and carries no score of its own", () => {

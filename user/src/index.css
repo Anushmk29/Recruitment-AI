@@ -137,9 +137,9 @@
      paint and has no reduced-motion story to tell. */
   .bg-aurora {
     background-image:
-      radial-gradient(58rem 32rem at 12% -10%, rgba(124, 92, 240, 0.16), transparent 60%),
-      radial-gradient(46rem 28rem at 92% 6%, rgba(249, 100, 54, 0.09), transparent 62%),
-      radial-gradient(52rem 34rem at 50% 108%, rgba(188, 177, 251, 0.22), transparent 65%);
+      radial-gradient(58rem 32rem at 12% -10%, rgba(124, 92, 240, 0.3), transparent 62%),
+      radial-gradient(46rem 28rem at 92% 6%, rgba(249, 100, 54, 0.16), transparent 64%),
+      radial-gradient(52rem 34rem at 50% 108%, rgba(157, 140, 246, 0.34), transparent 66%);
   }
 
   /* The reference deck's signature: a soft violet-to-white card face. Used on
@@ -154,26 +154,35 @@
   }
 
   /* Filled feature tiles — the violet and ember blocks in the reference deck.
-     Both carry white text, so the LIGHTEST stop is the binding constraint and
-     it is chosen, not picked for looks: whatever sits at 0% must clear 4.5:1
-     against white on its own, because a gradient gives the text no single
-     background to be measured against.
 
-       brand-600  #6d4fe0 + white → 5.46:1   ← lightest stop of fill-brand
-       accent-700 #bd3a14 + white → 5.56:1   ← lightest stop of fill-ember
+     A gradient gives its text no single background to measure against, so each
+     fill is checked at whichever stop is WORST for the text sitting on it.
+     fill-brand carries white, so its binding stop is the lightest:
 
-     The brighter values are deliberately *not* used as stops here. brand-500 is
-     4.17:1 and accent-500 is 3.04:1 against white — both would have put 14px
-     body copy under AA across the top third of the card, which is exactly the
-     failure that looks fine to a designer on a big monitor and is unreadable on
-     a phone in daylight. Those values stay available for borders and tints,
-     where nothing is written on them. */
+       brand-600 #6d4fe0 + white → 5.46:1   ← lightest stop of fill-brand
+
+     brand-500 is deliberately not a stop: 4.17:1 against white would have put
+     14px body copy under AA across the top third of the card, which is exactly
+     the failure that looks fine on a designer's monitor and is unreadable on a
+     phone in daylight. It stays available for borders and tints, where nothing
+     is written on it. */
   .fill-brand {
     background-image: linear-gradient(150deg, var(--color-brand-600) 0%, var(--color-brand-800) 100%);
   }
 
+  /* Ember inverts: vivid coral ground, near-black ink. This is the one place
+     the two fills do not behave alike, and it is forced rather than chosen.
+     No orange light enough to still read as *coral* can carry white body text
+     at AA — accent-500 tops out at 3.04:1 against white, and darkening it far
+     enough to pass (accent-700, 5.56:1) turns it brown, which is not the
+     colour anybody asked for. Flipping the text is what buys the vividness
+     back.
+
+     So the binding stop here is the DARKEST one, not the lightest:
+       accent-950 #421107 on accent-500 #f96436 →  5.25:1   ← darkest stop
+       accent-950 #421107 on accent-400 #ff8256 → 12.40:1 */
   .fill-ember {
-    background-image: linear-gradient(150deg, var(--color-accent-700) 0%, var(--color-accent-900) 100%);
+    background-image: linear-gradient(150deg, var(--color-accent-400) 0%, var(--color-accent-500) 100%);
   }
 
   /* Touch comfort floor, applied only where the pointer is actually coarse.

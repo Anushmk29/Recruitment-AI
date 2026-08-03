@@ -62,6 +62,47 @@ const roleRubricSchema = new mongoose.Schema(
 
     criteria: { type: [criterionSchema], default: [] },
 
+    // Whether this role assesses HOW WELL THE CANDIDATE COMMUNICATED, on top of what they said.
+    //
+    // Off unless a human turns it on, and it cannot be turned on without writing down why this
+    // role requires it. That justification is not paperwork — job-relatedness is the entire legal
+    // basis for assessing someone's communication, and a declaration with no stated reason is not
+    // a declaration. It is frozen with the rubric like everything else here, so a decision
+    // defended later can state that a named person decided this role needed it, and why.
+    //
+    // What is measured is derived from the TRANSCRIPT only (utils/communication.js) — never from
+    // pace, filler rate, or hesitation, which are accent, nervousness and disability proxies. A
+    // previous version of this feature scored those and was removed for it.
+    //
+    // The score is reported beside the competency scores and can route to a human. It never
+    // enters the overall score and can never, by itself, reject anyone.
+    spokenCommunication: {
+      enabled: { type: Boolean, default: false },
+      // Why this role needs it. A VALIDATOR rather than a save-time check, deliberately: it then
+      // runs on `validateSync()` too, which means the rule can be exercised without a database and
+      // therefore actually is. A guard that can only be tested against live Mongo is a guard
+      // nobody re-tests after changing it.
+      justification: {
+        type: String,
+        trim: true,
+        default: "",
+        maxlength: 600,
+        validate: {
+          validator(v) {
+            if (!this.spokenCommunication?.enabled) return true;
+            return Boolean(String(v || "").trim());
+          },
+          message:
+            "Spoken communication cannot be assessed without a written justification of why this " +
+            "role requires it — job-relatedness is the whole basis for assessing how a candidate speaks.",
+        },
+      },
+      declaredBy: {
+        user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        at: { type: Date },
+      },
+    },
+
     // Two thresholds, not one (Phase 6): >= advance ⇒ advance; < review ⇒ decline
     // (human-in-the-loop rules permitting); in between ⇒ route to human review.
     thresholds: {

@@ -39,7 +39,7 @@ const PROVIDER = "openrouter";
 // Bump when the wording below changes, so a stored classification records which prompt produced
 // it. Part of the cache key and the replay fixture key (llmService), so an edit invalidates
 // cleanly rather than silently serving decisions made under the old wording.
-const PROMPT_VERSION = "2026-08-03.1";
+const PROMPT_VERSION = "2026-08-04.1";
 
 // ---------------------------------------------------------------------------
 // The prompt
@@ -89,6 +89,13 @@ Decide what the candidate wants, choosing exactly one action:
   audio is cutting out.
 
 - withdraw — they want to stop the interview entirely and not continue.
+
+- finished — they have finished this answer and are handing the floor back. "That's my answer",
+  "I think that covers it", "yeah, that's about all I've got on that one", "and that's how we did
+  it, so, yeah". Choose this ONLY when what they are handing back is a real, substantive answer
+  they have just given; a trailing "so yeah" in the middle of thinking is answer_continues. Getting
+  this wrong submits half an answer as a whole one, so when in doubt it is answer_continues and the
+  interviewer simply waits a moment longer.
 
 Use the context. The interviewer's last utterance usually settles it: "sorry, what?" right after a
 question means repeat; the same words right after an unfamiliar technical term mean clarify.
@@ -197,7 +204,11 @@ async function classify({
   // spending a model call to be told so is waste on the hottest path in the interview.
   const policy = conversationIntent.clientPolicy().intent;
   const words = (text.match(/[A-Za-z0-9']+/g) || []).length;
-  if (words > policy.maxMetaWords) return answering("too_long_to_be_about_the_interview");
+  // The COST guard, not the correctness one. `maxMetaWords` (the tighter number) is applied inside
+  // gateSemantic, where the action is known and `finished` can be exempted — a hand-back is long
+  // precisely because they were finishing an answer, so gating the call itself at 25 words would
+  // make that action unreachable for the phrasings people actually use.
+  if (words > policy.maxUtteranceWords) return answering("too_long_to_be_about_the_interview");
   if (words < policy.minWordsForLookup) return answering("too_short_to_classify");
   if (!policy.semanticEnabled) return answering("semantic_tier_disabled");
   if (!llm.isEnabled()) return answering("llm_unavailable");
@@ -220,6 +231,10 @@ async function classify({
     const gated = conversationIntent.gateSemantic(data, text, {
       minConfidence: policy.minConfidence,
       maxMetaWords: policy.maxMetaWords,
+      minWordsForFinish: policy.minWordsForFinish,
+      // How much answer already exists this turn. Only `finished` reads it, and only to refuse:
+      // ending a turn is the one action that can submit half an answer as a whole one.
+      answerWords: (String(answerSoFar || "").match(/[A-Za-z0-9']+/g) || []).length,
     });
 
     // Metered even when the answer was "they were just talking" — that call cost money and a

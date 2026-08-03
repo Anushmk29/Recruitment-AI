@@ -99,6 +99,10 @@ export default function InterviewRoom() {
     backchannel,
     personaName,
     canInterrupt,
+    connection,
+    endsAt,
+    speakingBetweenTurns,
+    keepListening,
     speak,
     askAndListen,
     acknowledge,
@@ -262,6 +266,20 @@ export default function InterviewRoom() {
     if (voiceError) setError(voiceError);
   }, [voiceError]);
 
+  // Seconds remaining before the turn ends, ticked once a second only while a countdown is
+  // actually running — a permanent interval would re-render the room for the whole interview.
+  const [secondsLeft, setSecondsLeft] = useState(null);
+  useEffect(() => {
+    if (!endsAt) {
+      setSecondsLeft(null);
+      return;
+    }
+    const tick = () => setSecondsLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [endsAt]);
+
   // Persist the typed draft as the candidate types, independent of submit state, so a refresh
   // or crash mid-answer doesn't lose it. Cleared on confirmed send (submitAnswer / draft init).
   const updateAnswer = useCallback((value) => {
@@ -410,6 +428,11 @@ export default function InterviewRoom() {
     const q = state.currentQuestion;
     if (!q || handledRef.current === q || busyRef.current) return;
     if (phase !== "idle") return;
+    // They are still talking. The microphone stays open between questions now, so this is a
+    // candidate adding something to the answer they just gave — "oh, and one more thing" — and
+    // asking the next question over them is precisely the behaviour that made the old pipeline
+    // feel like a form being read out. Wait; the effect re-runs the moment they stop.
+    if (speakingBetweenTurns) return;
     busyRef.current = true;
     handledRef.current = q;
     (async () => {
@@ -424,7 +447,17 @@ export default function InterviewRoom() {
           introSpokenRef.current = true;
           await speak(state.intro);
         }
-        await askAndListen(q, { bargeIn });
+        // `currentQuestionBridges` is the server saying this question changes the subject — it
+        // came from the recruiter-approved set and owes nothing to the answer just given. The
+        // browser cannot tell that from the question text, which is why it is told.
+        await askAndListen(q, {
+          bargeIn,
+          bridges: Boolean(state.currentQuestionBridges),
+          // The recruiter-approved plain-language rewording of this question, when the set
+          // carried one. It is what "let me put that a different way" actually delivers; without
+          // it that path honestly repeats the question instead of announcing a rewording.
+          restatement: state.currentQuestionRestatement || "",
+        });
       } catch {
         setError("Couldn't start the microphone — you can type your answer instead.");
         setMode("text");
@@ -432,20 +465,36 @@ export default function InterviewRoom() {
         busyRef.current = false;
       }
     })();
-  }, [mode, started, state, phase, speak, askAndListen, bargeIn]);
+  }, [mode, started, state, phase, speak, askAndListen, bargeIn, speakingBetweenTurns]);
 
   // Watchdog: `phase === "idle"` while voice mode is armed should always be momentary (the
   // orchestration effect above immediately re-arms it). If it isn't — the effect bailed because
   // handledRef still pointed at the current question, most commonly after switching typing ->
   // voice mid-question — the candidate was previously left staring at a "Preparing the next
   // question…" spinner that never resolved. Surface a real, actionable error instead.
+  //
+  // The message used to say "try switching to typing, or reload the page" and give the candidate
+  // neither control — instructions, in an error banner, to a person twelve minutes into a
+  // proctored interview they cannot repeat. `stuck` renders the two buttons instead.
+  const [stuck, setStuck] = useState(false);
   useEffect(() => {
-    if (!voiceMode || !started || phase !== "idle" || sending || pending) return;
-    const t = setTimeout(() => {
-      setError("This is taking longer than it should. Try switching to typing, or reload the page.");
-    }, 20000);
+    if (!voiceMode || !started || phase !== "idle" || sending || pending) {
+      setStuck(false);
+      return;
+    }
+    const t = setTimeout(() => setStuck(true), 20000);
     return () => clearTimeout(t);
   }, [voiceMode, started, phase, sending, pending]);
+
+  // Re-arm the microphone for the question already on screen. The usual cause of a stall is
+  // `handledRef` still pointing at the current question (most often after switching to typing and
+  // back), so clearing it is what actually unsticks the room — and it is worth trying before
+  // suggesting a reload, which costs the candidate their place.
+  const retryVoice = useCallback(() => {
+    setStuck(false);
+    setError("");
+    handledRef.current = null;
+  }, []);
 
   const handleDone = useCallback(async () => {
     if (finishingRef.current) return; // auto end-of-turn and the manual button must not both fire
@@ -455,6 +504,18 @@ export default function InterviewRoom() {
       if (!result?.transcript) {
         setError("That didn't come through — please try again, or switch to typing.");
         handledRef.current = null; // allow re-opening the mic for the same question
+        return;
+      }
+      // The socket died mid-answer and could not be restored. Whatever arrived before it went
+      // down is NOT this candidate's answer — it is the first part of one — and submitting it
+      // would send a truncated transcript to be scored as if it were complete. That was the old
+      // behaviour and it was invisible to everyone. Hand the turn back instead.
+      if (result.connection?.lost) {
+        setError(
+          "The voice connection dropped part-way through that answer, so it wasn't recorded in full. " +
+            "Nothing has been submitted — please answer again, or switch to typing."
+        );
+        handledRef.current = null; // re-open the mic for the same question
         return;
       }
       // Say "thank you" out loud while the next question is being prepared, instead of leaving
@@ -483,6 +544,16 @@ export default function InterviewRoom() {
         // Why this turn ended — the endpointing verdict, or that they said so outright. A
         // condition of the interview, recorded so "it cut me off" is checkable afterwards.
         endOfTurn: result.endOfTurn,
+        // The answer survived, but the socket dropped and came back during it — so some words
+        // are missing and we know roughly how many seconds of them. Sent so the turn carries
+        // that fact into the report rather than reading as a clean recording.
+        connection: result.connection,
+        // Anything they said in the gap before this question was asked. The microphone no longer
+        // closes between turns, so this is the "oh — and one more thing" that used to be lost
+        // entirely. It is NOT spliced into this answer: it followed the previous one, and filing
+        // it under the wrong question would be worse than losing it. Recorded as a condition of
+        // the interview so a reviewer can see it was said.
+        spokeBetweenTurns: result.spokeBetweenTurns,
       });
     } finally {
       finishingRef.current = false;
@@ -733,13 +804,45 @@ export default function InterviewRoom() {
             )
           )}
 
-          {voiceMode && phase === "listening" && (
-            <div className="flex items-center gap-2 pl-11 text-xs font-medium text-slate-500">
+          {/* The indicator must never claim to be listening when it isn't. It used to keep
+              pulsing green over a socket that had already died, which is how a truncated answer
+              reached the recruiter looking like a complete one. */}
+          {voiceMode && connection === "reconnecting" && (
+            <div
+              className="flex items-center gap-2 pl-11 text-xs font-medium text-amber-600"
+              role="status"
+              aria-live="assertive"
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              Reconnecting — hold on a moment before you carry on.
+            </div>
+          )}
+
+          {voiceMode && phase === "listening" && connection !== "reconnecting" && (
+            <div className="flex flex-wrap items-center gap-2 pl-11 text-xs font-medium text-slate-500">
               <span className="relative flex h-2 w-2" aria-hidden="true">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-75" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-500" />
               </span>
-              {endingSoon ? "Wrapping up your answer…" : "Listening…"}
+              {/* The countdown used to be the words "Wrapping up your answer…" over a timer nobody
+                  could see, which is the whole substance of "it cut me off" — the turn ended on a
+                  deadline that was never shown while the candidate was drawing breath for the rest
+                  of it. Showing the seconds costs nothing and turns an ambush into something they
+                  can act on, which is what the button next to it is for. */}
+              {endingSoon ? (
+                <>
+                  <span>Ending in {secondsLeft ?? 0}s</span>
+                  <button
+                    type="button"
+                    onClick={keepListening}
+                    className="rounded-full border border-slate-300 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700 hover:border-brand-400 hover:text-brand-700"
+                  >
+                    I'm still thinking
+                  </button>
+                </>
+              ) : (
+                "Listening…"
+              )}
               {/* Sighted candidates get the indicator; screen-reader users would otherwise have
                   no feedback at all that they are being heard, so they keep the words. */}
               <span className="sr-only">{interim}</span>
@@ -753,6 +856,41 @@ export default function InterviewRoom() {
                 <Loader2 className="h-3.5 w-3.5 animate-spin" /> Interviewer is thinking…
               </div>
             </>
+          )}
+
+          {/* The room has stalled. Two buttons rather than two instructions: this is a person
+              partway through a proctored interview they cannot sit again, and telling them to
+              "reload the page" while giving them nothing to press is the least useful thing this
+              screen could do. Re-arming comes first because it is what usually fixes it and it
+              costs them nothing. */}
+          {stuck && (
+            <div
+              className="ml-11 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"
+              role="status"
+              aria-live="polite"
+            >
+              <p className="font-medium">This is taking longer than it should.</p>
+              <p className="mt-1 text-amber-800">
+                Your answers so far are saved. Try the microphone again, or switch to typing — typed
+                answers are assessed the same way.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={retryVoice}
+                  className="rounded-full bg-amber-600 px-3 py-1 font-semibold text-white hover:bg-amber-700"
+                >
+                  Try the microphone again
+                </button>
+                <button
+                  type="button"
+                  onClick={switchToTyping}
+                  className="rounded-full border border-amber-300 px-3 py-1 font-semibold text-amber-900 hover:border-amber-500"
+                >
+                  Switch to typing
+                </button>
+              </div>
+            </div>
           )}
 
           {pending?.status === "failed" && (

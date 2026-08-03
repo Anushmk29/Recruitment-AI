@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Users, Search } from "lucide-react";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
-import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
+import { Card, Badge, Avatar, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
+import { RecordCard, RecordGrid } from "../../components/ui/Panels.jsx";
 import { Input, Select } from "../../components/ui/Field.jsx";
 import { ALL_STAGES, stageLabel, stageTone, normalizeStage } from "../../lib/pipeline.js";
 
@@ -44,58 +45,59 @@ export default function CandidatesAll() {
         </div>
       </div>
 
-      <Card className="p-0">
-        {loading ? (
-          <div className="space-y-3 p-6">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-14 w-full" />
+      {loading ? (
+        <RecordGrid>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Card key={i} padding="compact">
+              <Skeleton className="h-20 w-full" />
+            </Card>
+          ))}
+        </RecordGrid>
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={Users} title="No candidates found" description="Applicants will appear here once they apply to your jobs." />
+      ) : (
+        <>
+          <p className="text-xs text-slate-500">
+            {filtered.length} of {allCandidates.length} candidate{allCandidates.length === 1 ? "" : "s"}
+          </p>
+          <RecordGrid>
+            {filtered.map((c) => (
+              <RecordCard
+                key={c._id}
+                avatar={<Avatar name={c.basicDetails?.name} />}
+                title={c.basicDetails?.name || "Unnamed applicant"}
+                subtitle={c.job?.title || "No job on record"}
+                link={{ as: Link, to: `/candidates/${c._id}` }}
+                trailing={
+                  // The score is the headline figure, so it sits where the eye
+                  // lands first — but it stays a <Badge>, never a card fill.
+                  // The Reserved Verdict Rule holds: green here means the
+                  // engine's own pass decision, not "good candidate".
+                  c.ats?.overallScore != null ? (
+                    <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
+                      {c.ats.overallScore}%
+                    </Badge>
+                  ) : (
+                    <Badge tone="slate">Not scored</Badge>
+                  )
+                }
+                footer={
+                  // The footer states what produced the number, which the old
+                  // table had no column for. `engine !== "evidence"` means this
+                  // job has no approved rubric and the legacy keyword matcher
+                  // carried the decision — said in words, not a lone glyph.
+                  c.ats?.overallScore == null
+                    ? `Applied ${new Date(c.createdAt).toLocaleDateString()}`
+                    : c.ats.engine === "evidence"
+                      ? `Evidence engine · applied ${new Date(c.createdAt).toLocaleDateString()}`
+                      : `Legacy keyword match · applied ${new Date(c.createdAt).toLocaleDateString()}`
+                }
+                footerTrailing={<Badge tone={stageTone(c.status)}>{stageLabel(c.status)}</Badge>}
+              />
             ))}
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="p-6">
-            <EmptyState icon={Users} title="No candidates found" description="Applicants will appear here once they apply to your jobs." />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-200 text-xs font-semibold text-slate-600">
-                <tr>
-                  <th className="px-6 py-3 font-semibold">Name</th>
-                  <th className="px-6 py-3 font-semibold">Job</th>
-                  <th className="px-6 py-3 font-semibold">ATS Score</th>
-                  <th className="px-6 py-3 font-semibold">Status</th>
-                  <th className="px-6 py-3 font-semibold">Applied</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map((c) => (
-                  <tr key={c._id}>
-                    <td className="px-6 py-3 font-medium text-slate-800">
-                      <Link to={`/candidates/${c._id}`} className="hover:text-brand-700">
-                        {c.basicDetails?.name}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-3 text-slate-500">{c.job?.title || "—"}</td>
-                    <td className="px-6 py-3">
-                      {c.ats?.overallScore != null ? (
-                        <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
-                          {c.ats.overallScore}%
-                        </Badge>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="px-6 py-3">
-                      <Badge tone={stageTone(c.status)}>{stageLabel(c.status)}</Badge>
-                    </td>
-                    <td className="px-6 py-3 text-slate-500">{new Date(c.createdAt).toLocaleDateString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+          </RecordGrid>
+        </>
+      )}
     </div>
   );
 }

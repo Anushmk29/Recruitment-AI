@@ -192,11 +192,17 @@ function SessionQualityBanner({ quality }) {
 // One cell per answer, in order. Height = answer score; a marked cell is a turn
 // whose audio signature was degraded. This is the view that makes "eight
 // near-silent answers in a row" visible at a glance instead of averaged away.
+// Every label here describes the RECORDING, not the candidate. "very low delivery" used to sit
+// in this list and it read as a verdict on the person; what it actually meant was that almost no
+// audio came through. `low_delivery` is kept as a key so sessions recorded before the rename
+// still render a label instead of a raw flag name.
 const TURN_FLAG_LABEL = {
   stalled: "long recording, almost no words",
   mostly_silence: "mostly silence",
-  low_delivery: "very low delivery",
+  unusable_audio: "audio too poor to assess",
+  low_delivery: "audio too poor to assess",
   asked_to_repeat: "asked for the question again",
+  connection_dropped: "connection dropped — part of this answer was never recorded",
 };
 
 function TurnQualityStrip({ quality }) {
@@ -651,7 +657,11 @@ function IntegrityCard({ proctoring, evidenceClips }) {
   );
 }
 
-function Bubble({ role, text, score, delivery, spoken, wordCount, durationSec, responsive }) {
+// `delivery` is deliberately not a prop any more. Every spoken answer used to carry
+// "Delivery: 64/100" right next to its answer score, which put a number on how the candidate
+// SOUNDED — pace, hesitation, filler words — beside a number on what they said, in the same
+// type, on the same line. See backend/utils/prosody.js for why that had to go.
+function Bubble({ role, text, score, spoken, wordCount, durationSec, responsive }) {
   const isAi = role === "ai";
   return (
     <div className={`flex gap-2.5 ${isAi ? "" : "flex-row-reverse"}`}>
@@ -665,15 +675,12 @@ function Bubble({ role, text, score, delivery, spoken, wordCount, durationSec, r
       </div>
       <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${isAi ? "bg-slate-50 text-slate-700" : "bg-brand-600 text-white"}`}>
         <p>{text}</p>
-        {/* The two readouts below sit on the violet bubble at white/90, not
-            brand-100: on this ramp brand-100 over brand-600 lands at 4.49:1,
-            and these are 11px score figures — the smallest numbers in the
-            report and the ones most likely to be quoted back in a dispute. */}
-        {!isAi && (score != null || (spoken && delivery != null)) && (
-          <p className="mt-1 text-[11px] font-semibold text-white/90">
-            {score != null && <>Answer score: {score}/100</>}
-            {spoken && delivery != null && <>{score != null ? " · " : ""}Delivery: {delivery}/100</>}
-          </p>
+        {/* The readout below sits on the violet bubble at white/90, not brand-100:
+            on this ramp brand-100 over brand-600 lands at 4.49:1, and this is an
+            11px score figure — the smallest number in the report and the one most
+            likely to be quoted back in a dispute. */}
+        {!isAi && score != null && (
+          <p className="mt-1 text-[11px] font-semibold text-white/90">Answer score: {score}/100</p>
         )}
         {!isAi && wordCount != null && (
           <p className="mt-0.5 text-[11px] text-white/90">
@@ -954,17 +961,42 @@ export default function InterviewReport() {
                   </div>
                 )}
 
-                {/* §6: voice delivery/confidence are secondary signal quality, not competency —
-                    kept visually de-emphasized and clearly labeled to avoid accent/audio bias. */}
+                {/* Spoken communication. Present only when this role's approved rubric declared
+                    that it is assessed AND a human wrote down why — the justification is shown
+                    here, next to the number, because a score whose job-relatedness lives on
+                    another screen is a score nobody checks the basis of.
+
+                    These bars existed before and were removed: they were computed from pace,
+                    filler rate and hesitation, which are accent, nervousness and speech-difference
+                    proxies. The names came back; the inputs did not. Both are now derived from the
+                    transcript alone (backend/utils/communication.js). */}
                 {(ev.delivery != null || ev.confidence != null) && (
                   <div className="mt-4 border-t border-slate-100 pt-3">
-                    <p className="mb-2 text-xs font-medium text-slate-600">Signal quality (secondary — voice delivery, not competency)</p>
+                    <p className="mb-2 text-xs font-medium text-slate-600">
+                      Spoken communication — assessed for this role
+                    </p>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <ScoreBar label="Delivery (voice)" value={ev.delivery} />
-                      <ScoreBar label="Confidence (voice)" value={ev.confidence} />
+                      <ScoreBar label="Clarity" value={ev.delivery} />
+                      <ScoreBar label="Calibration" value={ev.confidence} />
                     </div>
                     <p className="mt-2 text-xs text-slate-500">
-                      Measures speaking pace and fluency, not technical ability — can reflect accent or audio quality rather than skill.
+                      Measured from the transcript only — never from pace, accent, hesitation or
+                      filler words. <strong>Clarity</strong>: did the answer address the question,
+                      concretely and followably. <strong>Calibration</strong>: did they distinguish
+                      what they knew from what they didn't — saying so counts in their favour.
+                      {ev.spokenCommunication?.answersScored != null && (
+                        <> Over {ev.spokenCommunication.answersScored} answer
+                          {ev.spokenCommunication.answersScored === 1 ? "" : "s"}.</>
+                      )}
+                    </p>
+                    {ev.spokenCommunication?.justification && (
+                      <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
+                        <span className="font-medium">Why this role assesses it: </span>
+                        {ev.spokenCommunication.justification}
+                      </p>
+                    )}
+                    <p className="mt-2 text-xs text-slate-500">
+                      Not part of the overall score. It cannot decline a candidate on its own.
                     </p>
                   </div>
                 )}
@@ -1035,7 +1067,6 @@ export default function InterviewReport() {
                   role={t.role}
                   text={t.text}
                   score={t.answerScore}
-                  delivery={t.deliveryScore}
                   spoken={t.inputMode === "voice"}
                   wordCount={t.wordCount}
                   durationSec={t.durationSec}

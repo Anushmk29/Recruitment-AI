@@ -21,7 +21,9 @@ const tenantContext = require("../utils/tenantContext");
 const { runInBackground } = require("../utils/backgroundTasks");
 const { applyTransition } = require("./pipelineService");
 const { notifyAdmin } = require("./notificationService");
-const { scoreDelivery, aggregateVoiceScores } = require("../utils/prosody");
+const { audioQuality } = require("../utils/prosody");
+const communication = require("../utils/communication");
+const RoleRubric = require("../models/RoleRubric");
 const { isResponsive, wordCount } = require("../utils/interviewReportEngine");
 const {
   PROMPT_VERSION,
@@ -35,6 +37,8 @@ const {
   answerScorePrompt,
   EVALUATION_SCHEMA,
   evaluationPrompt,
+  COMMUNICATION_SYSTEM,
+  communicationPrompt,
 } = require("../utils/interviewPrompts");
 
 const probeService = require("./probeService");
@@ -203,6 +207,21 @@ function loadSettings(companyId) {
   return CompanySettings.findOne({ company: companyId }).select("ai compliance");
 }
 
+// The approved rubric for this role, or null. Read only for its `spokenCommunication`
+// declaration — whether this role assesses how clearly a candidate explained things, and the
+// written reason a human gave for that. A lookup failure means NOT assessed, which is the safe
+// direction: the feature is off unless someone positively declared it on.
+async function loadRubric(session, job) {
+  try {
+    return await RoleRubric.findOne({ company: session.company, job: job._id, status: "approved" })
+      .sort({ version: -1 })
+      .lean();
+  } catch (err) {
+    console.error("[aiInterview] rubric lookup failed; spoken communication stays unassessed:", err.message);
+    return null;
+  }
+}
+
 // Whether the external LLM may process this candidate's data. Consent is required by
 // default; a tenant can waive the requirement via compliance.aiConsentRequired=false.
 function consentOk(candidate, settings) {
@@ -331,10 +350,20 @@ function estimatedMinutes(maxQuestions) {
   return Math.max(5, Math.ceil((maxQuestions * 2) / 5) * 5);
 }
 
-function openingScript({ candidate, job, persona, maxQuestions }) {
+function openingScript({ candidate, job, persona, maxQuestions, assessesCommunication = false }) {
   const first = String(candidate?.basicDetails?.name || "").trim().split(/\s+/)[0] || "there";
   const interviewer = String(persona?.name || "").trim() || "your interviewer";
   const role = job?.title ? ` for the ${job.title} role` : "";
+  // Told before a single question is asked, and told plainly — including the part candidates most
+  // need to hear, which is that thinking aloud and saying "I'm not sure" are not penalised. A
+  // candidate assessed on how clearly they explain things, who is not told, cannot adjust; and an
+  // assessment somebody was never informed of is one that cannot be defended for a moment.
+  const communicationNotice = assessesCommunication
+    ? " One more thing worth knowing: for this role, how clearly you explain things is part of what's " +
+      "looked at, alongside what you say. That means being specific and easy to follow — not " +
+      "speaking quickly or smoothly. Thinking out loud is fine, pausing is fine, and saying you're " +
+      "not sure about something counts in your favour rather than against you."
+    : "";
   return {
     intro:
       `Hi ${first} — my name is ${interviewer}, and I'll be running your interview${role} today. ` +
@@ -342,7 +371,8 @@ function openingScript({ candidate, job, persona, maxQuestions }) {
       `${maxQuestions} questions covering your background and your experience. It usually takes about ` +
       `${estimatedMinutes(maxQuestions)} minutes in total. ` +
       `There's no rush on any of it — take the time you need to think before you answer, and if you'd like me ` +
-      `to repeat a question at any point, just ask.`,
+      `to repeat a question at any point, just ask.` +
+      communicationNotice,
     warmup:
       `So, whenever you're ready — could you start with a short introduction? ` +
       `Just who you are, and what you've been working on recently.`,
@@ -487,6 +517,64 @@ async function scoreUnscoredAnswers({ session, candidate, job, settings, ai, use
   }
 }
 
+// How clearly each answer was communicated, when the role declares that it assesses that.
+//
+// Runs at finalisation rather than per turn, for the same reason answer scoring does: it is slow,
+// it is not needed to choose the next question, and doing it live would put a model call on the
+// hottest path in the interview to produce a number nobody reads until the end.
+//
+// The whole point of utils/communication.js is that this NEVER sees the audio. It is handed the
+// question and the transcript and nothing else — so pace, hesitation and filler rate cannot reach
+// it even by accident, which is what makes the result accent-neutral by construction.
+async function scoreCommunication({ session, candidate, ai, rubric, settings, useAi }) {
+  if (!useAi) return; // the deterministic fallback has no view on how clearly someone spoke
+  const excluded = Boolean(candidate?.accommodations?.excludeSpokenCommunication);
+  if (!communication.isEnabled(rubric, { excluded })) {
+    // Recorded rather than silently skipped: "this role does not assess it" and "this candidate
+    // asked to be excluded" are different facts, and the second is one a candidate may later ask
+    // us to confirm we honoured.
+    ai.spokenCommunication = {
+      assessed: false,
+      reason: excluded ? "excluded_at_candidate_request" : "not_declared_for_this_role",
+    };
+    return;
+  }
+
+  for (let i = 0; i < ai.turns.length; i += 1) {
+    const turn = ai.turns[i];
+    if (turn.role !== "candidate" || turn.kind !== "answer" || turn.declined) continue;
+    if (turn.communication) continue; // idempotent — finalisation can be retried
+    const questionTurn = [...ai.turns.slice(0, i)].reverse().find((t) => t.role === "ai" && t.kind === "question");
+    if (!questionTurn) continue;
+
+    const t0 = Date.now();
+    try {
+      const resolved = resolveRole("cheap", settings);
+      const { data, usage, model, cached } = await llm.generateJSON({
+        system: COMMUNICATION_SYSTEM,
+        prompt: communicationPrompt({ question: questionTurn.text, answer: turn.text }),
+        schema: communication.FEATURE_SCHEMA,
+        maxTokens: 600,
+        model: resolved.model,
+        temperature: 0,
+        promptVersion: PROMPT_VERSION,
+      });
+      await usageService.recordUsage({ company: session.company, session: session._id, candidate: candidate._id, kind: "evaluation", provider: PROVIDER, model, usage, latencyMs: Date.now() - t0, engine: "ai", promptVersion: PROMPT_VERSION, cached });
+      // Code does the arithmetic. The model returned observations; it never returned a number.
+      turn.communication = communication.scoreAnswer(data, turn.text);
+    } catch (err) {
+      // Left unscored — an honest gap beats a fabricated number, and this is the score least
+      // worth guessing at.
+      console.error("[aiInterview] communication scoring failed (left unscored):", err.message);
+    }
+  }
+
+  ai.spokenCommunication = {
+    assessed: true,
+    justification: String(rubric?.spokenCommunication?.justification || "").trim(),
+  };
+}
+
 async function makeEvaluation({ session, candidate, job, settings, ai, useAi }) {
   if (!useAi) return fallbackEvaluation(ai);
   const t0 = Date.now();
@@ -542,6 +630,29 @@ function publicState(session) {
     // The current turn is the opening self-introduction rather than a scored question, so the UI
     // can label it honestly instead of counting it as "Question 0 of 8".
     currentIsWarmup: ai.status === "in_progress" && lastAi?.kind === "warmup",
+    // Does this question change the subject? Recruiter-approved questions are delivered verbatim
+    // by code and owe nothing to the answer just given, so they arrive abruptly — and since the
+    // cadence alternates approved / adaptive follow-up / approved, that gear-change happens every
+    // other turn. A human says "let me move to a different area" first; the browser plays an
+    // approved bridge phrase when this is set.
+    //
+    // The BROWSER cannot work this out for itself: it sees only question text, with no way to
+    // tell an approved question from an adaptive follow-up. Guessing would put a change-of-subject
+    // announcement in front of a direct follow-up, which is worse than saying nothing.
+    currentQuestionBridges:
+      ai.status === "in_progress" &&
+      lastAi?.kind === "question" &&
+      Boolean(lastAi?.mustAskId) &&
+      // Not on the very first question — there is no previous subject to move away from.
+      (ai.questionCount || 0) > 1,
+    // The approved plain-language rewording of the current question, when one was authored.
+    //
+    // This is what "let me put that a different way" actually says. Without it the clarify path
+    // announced a rephrasing and then replayed the identical sentence, which is worse than not
+    // offering to rephrase at all — so when this is null the client falls back to an honest
+    // repeat instead of a promise it cannot keep.
+    currentQuestionRestatement:
+      ai.status === "in_progress" && lastAi?.kind === "question" ? lastAi?.restatement || null : null,
     awaitingAnswer: ai.status === "in_progress",
     // "Over" for the UI's purposes covers both endings — the room must show the end screen either
     // way, and must never leave a candidate who withdrew staring at an open microphone.
@@ -591,6 +702,11 @@ async function beginInterview(session) {
   ai.mustAsk = questionSet.questions.map((q) => ({
     questionId: q.id,
     text: q.text,
+    // The approved plain-language rewording, copied onto the session with the question for the
+    // same reason the question is: this session has to be able to state exactly what a candidate
+    // was asked — including the version they heard when they said they did not understand —
+    // after the set has been superseded. Empty is normal and means "cannot be rephrased".
+    restatement: q.restatement || "",
     topic: q.topic || "",
     status: "pending",
   }));
@@ -619,7 +735,20 @@ async function beginInterview(session) {
 
   // Greeted by name, in the persona's name, before anything is asked of them.
   const persona = await personaService.resolveForSession(session);
-  const script = openingScript({ candidate, job, persona, maxQuestions: ai.maxQuestions });
+  // Resolved once, here, and stored — the approved phrase bank contains name-bearing
+  // acknowledgements, and utils/speechAuthorization has to be able to check one without loading
+  // the candidate. Blank when there is no usable first name, and those phrases then do not exist
+  // for this session at all rather than being spoken with a gap in them.
+  ai.candidateFirstName = backchannel.firstNameOf(candidate?.basicDetails?.name);
+  // Whether this role assesses how clearly they explain things. Resolved HERE, before the first
+  // word is spoken, because the candidate has to be told at the start or not assessed at all —
+  // and because the same declaration must decide both the notice and the scoring, or we could
+  // score something we never mentioned.
+  const rubric = await loadRubric(session, job);
+  const assessesCommunication = communication.isEnabled(rubric, {
+    excluded: Boolean(candidate?.accommodations?.excludeSpokenCommunication),
+  });
+  const script = openingScript({ candidate, job, persona, maxQuestions: ai.maxQuestions, assessesCommunication });
   ai.turns.push({ role: "ai", kind: "intro", text: script.intro });
 
   // The opening turn is a self-introduction, not a question of the instrument. It eases the
@@ -651,7 +780,7 @@ async function submitAnswer(session, answerText, opts = {}) {
   // this text as the candidate's evidence — our words must never be scored as theirs. Only
   // phrases from the approved bank are removable, so the client cannot use this to delete its
   // own content (utils/backchannel.stripEcho).
-  const echo = backchannel.stripEcho(raw, opts.backchannels);
+  const echo = backchannel.stripEcho(raw, opts.backchannels, { firstName: ai.candidateFirstName });
   const text = echo.text;
   if (!text) throw Object.assign(new Error("An answer is required"), { status: 400 });
 
@@ -672,12 +801,30 @@ async function submitAnswer(session, answerText, opts = {}) {
     if (opts.transcriptConfidence !== undefined) answerTurn.transcriptConfidence = opts.transcriptConfidence;
     if (opts.audioDurationMs !== undefined) answerTurn.audioDurationMs = opts.audioDurationMs;
     if (opts.acoustic) {
-      // Derive the per-answer delivery score server-side (never trust a client-sent score).
-      answerTurn.acoustic = { ...opts.acoustic, deliveryScore: scoreDelivery(opts.acoustic) };
+      // Raw prosody measurements are kept, and exactly ONE thing is derived from them: whether
+      // this answer's AUDIO was usable. There used to be a `deliveryScore` here that fed the
+      // evaluation and was shown to recruiters as a score bar — that scored candidates on pace,
+      // filler rate and hesitation, which are accent, nervousness and disability proxies that no
+      // rubric ever approved. See utils/prosody.js for the full reasoning.
+      answerTurn.acoustic = { ...opts.acoustic, audioQuality: audioQuality(opts.acoustic) };
     }
     // Why the turn ended. Recorded next to the answer it belongs to so a disputed "it cut me
     // off" is checkable; read by no scorer.
     if (opts.endOfTurn) answerTurn.endOfTurn = opts.endOfTurn;
+    // Said in the gap before this question. Recorded on this turn because that is where it can be
+    // found; attributed to nothing, because it followed the PREVIOUS answer.
+    if (opts.spokeBetweenTurns) answerTurn.spokeBetweenTurns = opts.spokeBetweenTurns;
+    // The socket dropped and recovered part-way through this answer, so words are missing from
+    // the transcript. Recorded ONLY when it actually happened, so a clean answer stores nothing
+    // rather than a zero that reads like a measurement. The report marks the turn degraded; no
+    // scorer reads it, and it says nothing about the candidate — only about their connection.
+    if (opts.connection && opts.connection.drops > 0) {
+      answerTurn.connection = { drops: opts.connection.drops, gapMs: opts.connection.gapMs };
+      console.warn(
+        `[aiInterview] answer recorded across ${opts.connection.drops} connection drop(s), ` +
+          `~${opts.connection.gapMs}ms of audio lost (session ${session._id})`
+      );
+    }
     if (echo.removed.length) {
       answerTurn.backchannelEchoRemoved = echo.removed.length;
       console.warn(
@@ -779,6 +926,10 @@ async function advance(session) {
       text: must.text,
       topic: must.topic || "approved set",
       mustAskId: must.questionId,
+      // Carried onto the turn so it is speakable: utils/speechAuthorization allows only the
+      // approved phrase bank and text already present as an interviewer turn, and a restatement
+      // is neither until it is written here.
+      restatement: must.restatement || "",
       engine: "approved_set",
     });
     ai.askedQuestions.push(must.text);
@@ -876,7 +1027,7 @@ async function handlePause(session, opts) {
 async function handleDecline(session, opts) {
   const ai = session.aiInterview;
   const raw = String(opts.text || "").trim().slice(0, MAX_ANSWER_CHARS);
-  const echo = backchannel.stripEcho(raw, opts.backchannels);
+  const echo = backchannel.stripEcho(raw, opts.backchannels, { firstName: ai.candidateFirstName });
   const text = echo.text;
   if (!text) throw Object.assign(new Error("A transcript is required"), { status: 400 });
 
@@ -1021,13 +1172,27 @@ async function runFinalization(sessionId) {
   // the overall evaluation, so every mean is over complete data.
   await scoreUnscoredAnswers({ session, candidate, job, settings, ai, useAi });
 
+  // How clearly each answer was communicated — but only if this role declared that it assesses
+  // that, and only from the transcript. `delivery` and `confidence` used to be computed here from
+  // the candidate's pace, filler rate and hesitation, which are accent, nervousness and speech-
+  // difference proxies measured against no approved criterion. Same field names, entirely
+  // different inputs: see utils/communication.js for why the inputs were the problem and the
+  // presentation never was.
+  const rubric = await loadRubric(session, job);
+  await scoreCommunication({ session, candidate, ai, rubric, settings, useAi });
+
   const evaluation = await makeEvaluation({ session, candidate, job, settings, ai, useAi });
-  // Voice interviews get delivery + confidence scores derived from the answers' prosody
-  // (content is scored by the LLM; how it was spoken is measured, not guessed).
-  const voice = aggregateVoiceScores(ai.turns);
-  if (voice) {
-    if (voice.delivery !== undefined) evaluation.delivery = voice.delivery;
-    if (voice.confidence !== undefined) evaluation.confidence = voice.confidence;
+
+  const spoken = communication.aggregate(ai.turns);
+  if (spoken) {
+    if (spoken.delivery !== undefined) evaluation.delivery = spoken.delivery;
+    if (spoken.confidence !== undefined) evaluation.confidence = spoken.confidence;
+    evaluation.spokenCommunication = {
+      answersScored: spoken.answersScored,
+      // Carried onto the evaluation so the recruiter reading the number sees, on the same screen,
+      // the recorded reason this role assesses it at all.
+      justification: ai.spokenCommunication?.justification || "",
+    };
   }
 
   // How much of the instrument produced evidence, attached to the score so the two can never be

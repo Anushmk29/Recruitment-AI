@@ -20,6 +20,7 @@ const finishIntent = require("../utils/finishIntent");
 const echoAlignment = require("../utils/echoAlignment");
 const conversationIntent = require("../utils/conversationIntent");
 const dialogueActs = require("../utils/dialogueActs");
+const intentPhraseService = require("./intentPhraseService");
 const { PATIENCE_BOUNDS } = PersonaProfile;
 
 // The deployment default, used when a tenant has approved no persona of its own. Deliberately
@@ -85,9 +86,13 @@ async function resolveForSession(session) {
 // The conversational policy the browser gets: the code-resident phrase bank plus this tenant's
 // patience. The WORDS never come from the persona (utils/backchannel.js owns those, checked at
 // boot for evaluative language) — only how long the interviewer is willing to wait.
-function conversationPolicy(persona) {
+// `firstName` is the candidate's, and it is the only per-candidate value that ever reaches the
+// phrase bank. It is permissible for one reason: it is fixed before the interview starts and
+// cannot vary with how the candidate is doing, which is the test everything in this bank has to
+// pass. A topic, a score, or anything characterising the last answer would fail it.
+function conversationPolicy(persona, { firstName = "", approvedTriggers = null } = {}) {
   const base = {
-    ...backchannel.clientPolicy(),
+    ...backchannel.clientPolicy({ firstName }),
     ...repeatIntent.clientPolicy(),
     // When a turn has ENDED (utils/endpointing) and when the candidate has said so outright
     // (utils/finishIntent). Both run in the browser because only it knows in real time, and both
@@ -110,9 +115,13 @@ function conversationPolicy(persona) {
     // the semantic tier only when the deterministic one is silent.
     ...conversationIntent.clientPolicy(),
   };
+  // This tenant's own approved phrasings, folded into the trigger lists. Additive by construction
+  // (services/intentPhraseService.mergeIntoPolicy) — the built-in triggers cannot be removed, so
+  // no tenant configuration can take away a candidate's ability to ask for a repeat or to stop.
+  const withTenantPhrases = intentPhraseService.mergeIntoPolicy(base, approvedTriggers);
   const p = normalizePatience(persona?.patience);
   return {
-    ...base,
+    ...withTenantPhrases,
     maxReassurancesPerTurn:
       p.maxReassurancesPerTurn !== undefined && base.reassurances.length
         ? p.maxReassurancesPerTurn

@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Users, AlertTriangle } from "lucide-react";
 import api from "../api/client.js";
-import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
+import { Card, Badge, Avatar, Skeleton, EmptyState } from "../components/ui/Card.jsx";
+import { RecordCard, RecordGrid } from "../components/ui/Panels.jsx";
 import { Select } from "../components/ui/Field.jsx";
 import { useToast } from "../components/ui/Toast.jsx";
 import { allowedNextStages, stageLabel } from "../lib/pipeline.js";
@@ -61,77 +62,67 @@ export default function CandidateList() {
         </div>
       )}
 
-      <Card className="p-0">
-        {loading ? (
-          <div className="space-y-3 p-6">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-14 w-full" />
-            ))}
-          </div>
-        ) : candidates.length === 0 ? (
-          <div className="p-6">
-            <EmptyState icon={Users} title="No candidates yet" description="Applicants for this job will appear here." />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-slate-200 text-xs font-semibold text-slate-600">
-                <tr>
-                  <th className="px-6 py-3 font-semibold">Name</th>
-                  <th className="px-6 py-3 font-semibold">Email</th>
-                  <th className="px-6 py-3 font-semibold">ATS Score</th>
-                  <th className="px-6 py-3 font-semibold">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {candidates.map((c) => (
-                  <tr key={c._id}>
-                    <td className="px-6 py-3 font-medium text-slate-800">
-                      <Link to={`/candidates/${c._id}`} className="hover:text-brand-700">
-                        {c.basicDetails?.name}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-3 text-slate-500">{c.basicDetails?.email}</td>
-                    <td className="px-6 py-3">
-                      {c.ats?.overallScore != null ? (
-                        <div className="flex items-center gap-1.5">
-                          <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
-                            {c.ats.overallScore}%
-                          </Badge>
-                          {c.ats.engine !== "evidence" && (
-                            <span
-                              title="Legacy keyword match — this job's scoring rubric isn't approved yet"
-                              className="text-amber-500"
-                            >
-                              <AlertTriangle className="h-3.5 w-3.5" />
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="px-6 py-3">
-                      <Select
-                        value=""
-                        onChange={(e) => handleStatusChange(c._id, c.status, e.target.value)}
-                        className="w-auto py-1.5 text-xs"
-                      >
-                        <option value="">{stageLabel(c.status)}</option>
-                        {allowedNextStages(c.status).map((s) => (
-                          <option key={s} value={s}>
-                            → {stageLabel(s)}
-                          </option>
-                        ))}
-                      </Select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      {loading ? (
+        <RecordGrid>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Card key={i} padding="compact">
+              <Skeleton className="h-24 w-full" />
+            </Card>
+          ))}
+        </RecordGrid>
+      ) : candidates.length === 0 ? (
+        <EmptyState icon={Users} title="No candidates yet" description="Applicants for this job will appear here." />
+      ) : (
+        <RecordGrid>
+          {candidates.map((c) => (
+            <RecordCard
+              key={c._id}
+              avatar={<Avatar name={c.basicDetails?.name} />}
+              title={c.basicDetails?.name || "Unnamed applicant"}
+              subtitle={c.basicDetails?.email}
+              link={{ as: Link, to: `/candidates/${c._id}` }}
+              trailing={
+                c.ats?.overallScore != null ? (
+                  <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
+                    {c.ats.overallScore}%
+                  </Badge>
+                ) : (
+                  <Badge tone="slate">Not scored</Badge>
+                )
+              }
+              footer={
+                // The old table showed this as a lone amber triangle with a
+                // `title` tooltip — invisible on touch, invisible to a screen
+                // reader, and exactly the kind of caveat the Honest Reading
+                // Rule says must not be decorative. Here it is a sentence.
+                c.ats?.overallScore != null && c.ats.engine !== "evidence" ? (
+                  <span className="inline-flex items-center gap-1.5 font-medium text-amber-700">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    Legacy keyword match — rubric not approved
+                  </span>
+                ) : (
+                  <span>Stage: {stageLabel(c.status)}</span>
+                )
+              }
+              actions={
+                <Select
+                  value=""
+                  onChange={(e) => handleStatusChange(c._id, c.status, e.target.value)}
+                  aria-label={`Move ${c.basicDetails?.name || "candidate"} to another stage`}
+                  className="w-auto py-1.5 text-xs"
+                >
+                  <option value="">Move from {stageLabel(c.status)}…</option>
+                  {allowedNextStages(c.status).map((s) => (
+                    <option key={s} value={s}>
+                      → {stageLabel(s)}
+                    </option>
+                  ))}
+                </Select>
+              }
+            />
+          ))}
+        </RecordGrid>
+      )}
     </div>
   );
 }

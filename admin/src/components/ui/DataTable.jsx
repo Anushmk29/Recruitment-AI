@@ -1,6 +1,17 @@
 /**
- * Table primitives shared by every list screen (jobs, candidates, audit trail,
- * assessments, reports).
+ * Table primitives.
+ *
+ * **The table primitives below are currently unused.** Every list screen — jobs,
+ * candidates, interview queue, tenants, audit trail, reports — now renders
+ * `<RecordCard>` from `Panels.jsx` instead of rows; see DESIGN.md § The
+ * Record-Card Rule for why. `RowAction` at the bottom of this file is still very
+ * much live: it is the icon-only action affordance, and it moved onto the cards
+ * intact.
+ *
+ * They are kept rather than deleted because a genuinely columnar surface may yet
+ * need them (a reconciliation view, a diff), and because both accessibility
+ * fixes below are hard-won and would be re-lost if someone hand-rolled a
+ * `<table>` from scratch later. Do not reach for these to build a list screen.
  *
  * Two fixes baked in, because every page had drifted into the same two bugs:
  *

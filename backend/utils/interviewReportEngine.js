@@ -364,7 +364,10 @@ function buildCoverageMatrix({ criterionFindings, perCriterion, probes }) {
 // at 0.79+. These thresholds sit in that gap, so a slow-but-real answer is not
 // flagged and an open mic producing nothing is.
 const SILENCE_PAUSE_RATIO = 0.8;
-const LOW_DELIVERY = 10;
+// Bottom of the audio-usability range (utils/prosody.audioQuality). Only the very bottom is
+// meaningful: this fires on a recording that captured essentially nothing, and its consequence
+// is always to REMOVE trust from the turn, never to count against the candidate.
+const UNUSABLE_AUDIO = 10;
 // A turn that captured real audio but almost no speech is the clearest tell.
 // Measured as rate, not raw word count, so a long rambling non-answer
 // ("could you repeat… could you repeat…") is caught alongside a silent one.
@@ -379,22 +382,29 @@ function analyseTurnQuality(turns) {
       const words = wordCount(t.text);
       const audioMs = t.audioDurationMs || 0;
       const pauseRatio = t.acoustic?.pauseRatio ?? null;
-      const deliveryScore = t.acoustic?.deliveryScore ?? null;
+      // `deliveryScore` is the pre-2026-08 field name, kept only so sessions recorded before the
+      // rename still flag their bad audio. Nothing writes it any more, and neither name is ever
+      // shown to a recruiter as a number about the candidate — see utils/prosody.js.
+      const audioQuality = t.acoustic?.audioQuality ?? t.acoustic?.deliveryScore ?? null;
       // Prefer the rate the ASR reported; fall back to deriving it so a turn
       // without acoustics is still assessable.
       const wpm = t.acoustic?.wordsPerMinute ?? (audioMs > 0 ? (words / (audioMs / 60000)) : null);
       const flags = [];
       if (audioMs >= STALLED_MIN_AUDIO_MS && wpm != null && wpm < STALLED_MAX_WPM) flags.push("stalled");
       if (pauseRatio != null && pauseRatio >= SILENCE_PAUSE_RATIO) flags.push("mostly_silence");
-      if (deliveryScore != null && deliveryScore <= LOW_DELIVERY) flags.push("low_delivery");
+      if (audioQuality != null && audioQuality <= UNUSABLE_AUDIO) flags.push("unusable_audio");
       if (REPEAT_RE.test(t.text || "")) flags.push("asked_to_repeat");
+      // The socket died and recovered part-way through this answer, so the transcript is missing
+      // whatever was said during the gap. Without this flag a candidate whose broadband dropped
+      // reads as a candidate who had less to say — the same words, a completely different finding.
+      if (t.connection?.drops > 0) flags.push("connection_dropped");
       return {
         index,
         words,
         audioMs,
         wpm: wpm == null ? null : Math.round(wpm),
         pauseRatio,
-        deliveryScore,
+        audioQuality,
         answerScore: t.answerScore ?? null,
         flags,
         degraded: flags.length > 0,
@@ -415,11 +425,22 @@ function computeSessionQuality(turns) {
   const degradedCount = perTurn.filter((t) => t.degraded).length;
   const repeatRequests = perTurn.filter((t) => t.flags.includes("asked_to_repeat")).length;
   const stalled = perTurn.filter((t) => t.flags.includes("stalled")).length;
+  const droppedTurns = perTurn.filter((t) => t.flags.includes("connection_dropped")).length;
   const degradedRatio = degradedCount / total;
 
   const reasons = [];
   if (stalled >= 2) reasons.push(`${stalled} answers recorded several seconds of audio but produced almost no words`);
   if (repeatRequests >= 2) reasons.push(`the candidate asked for a question to be repeated ${repeatRequests} times`);
+  // Even ONE dropped connection is enough to withhold the recommendation. Every other signature
+  // here is a judgement call about ambiguous audio; this one is a known, recorded fact that part
+  // of an answer was never captured. There is no honest way to recommend against a candidate on
+  // a transcript we know has a hole in it, and no threshold below which that becomes acceptable.
+  if (droppedTurns >= 1) {
+    reasons.push(
+      `the transcription connection dropped during ${droppedTurns} answer${droppedTurns === 1 ? "" : "s"}, ` +
+        "so part of what was said was never recorded"
+    );
+  }
   if (degradedRatio >= 0.4) reasons.push(`${degradedCount} of ${total} answers show a degraded audio signature`);
 
   return {
@@ -433,6 +454,7 @@ function computeSessionQuality(turns) {
     degradedCount,
     repeatRequests,
     stalled,
+    droppedTurns,
     reasons,
   };
 }

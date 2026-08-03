@@ -252,11 +252,38 @@ and it is permitted only because the marketing pricing page renders no pipeline 
 there is nothing for it to be confused with. It is not a precedent. An ember pill on any screen that also
 shows a candidate, a stage, or a score is a bug.
 
+**Worked example**, because the line is finer than it first looks. On the recruiter dashboard's quick-action
+row, "Post a job" is filled ember and "Rubrics to approve" — sitting directly beside it — is not. Both are
+cards, both are the same size, both are urgent. The difference is that "Post a job" is a pure action with
+no state attached, whereas "Rubrics to approve" *reports* something ("3 jobs are still on the legacy
+keyword engine"). The reporting card takes a plain white surface and a verdict-toned `IconTile` instead,
+which is the honest channel for it. Ember decorates; it does not inform.
+
+The same call goes the other way on the candidate dashboard, where the hero panel is brand rather than
+ember: "applications still open" is a state, and the list immediately beneath it renders per-application
+stages in the reserved pending amber. Adjacency is the whole risk.
+
 **The Lightest-Stop Rule.** Any gradient carrying text is contrast-checked at its **lightest** stop, not
 its average — a gradient gives the text no single background to be measured against. This is why
 `fill-brand` starts at `brand-600` and not the prettier `brand-500` (4.17:1), and `fill-ember` starts at
 `accent-700` and not `accent-500` (3.04:1). For the same reason, secondary text on a filled card is
 `white/90`, not the `white/70` that looks correct in a mock and lands at 3.8:1.
+
+**The Tinted-Ground Rule.** *Added 2026-08-03.* `slate-500` (`#64748b`) is the muted-text default **on
+white only**. It clears AA there by 0.26 (4.76:1), which means it fails on every tinted ground in the
+system the moment it is moved onto one:
+
+| Ground | `slate-500` | `slate-600` |
+| --- | --- | --- |
+| White | 4.76:1 ✅ | 8.6:1 ✅ |
+| Canvas `#f6f5fb` | **4.39:1 ❌** | 6.99:1 ✅ |
+| `brand-50` | **4.30:1 ❌** | 6.85:1 ✅ |
+| `verdict-positive-tint` | **4.20:1 ❌** | 6.68:1 ✅ |
+
+So: **muted text on any tint is `slate-600`.** This is not a rounding argument — the failing cases are
+timestamps, file sizes, and step dates at 11–12px, which is exactly the copy someone leans in to read.
+The rule is easy to break by accident, because the fix looks like a no-op in a mock: the two slates are
+close enough that the eye reads the substitution as unchanged and the contrast ratio moves by 60%.
 
 **The Reserved Verdict Rule.** Emerald, amber, and red mean *pipeline stage or evaluation outcome*.
 Nothing else. A green button that merely means "continue", an amber banner that merely means "note", or a
@@ -315,7 +342,11 @@ otherwise unconstrained — it fills the viewport. The sidebar collapses below `
 drawer behind a scrim of ink at 50%.
 
 The candidate app has no sidebar: a top navbar over a centered 64rem (`max-w-5xl`) column padded 20px →
-32px (`sm`) horizontally, 32px vertically.
+32px (`sm`) horizontally, 32px vertically. This is a deliberate difference, not an unfinished one. The
+recruiter lives in the admin app all day and needs persistent wayfinding across a dozen destinations; a
+candidate visits four screens over several weeks, and a 256px rail of mostly-irrelevant links would spend
+a quarter of a phone-sized viewport saying so. Candidate screens open with a `PageHero` instead, which
+does the orienting a sidebar would otherwise do.
 
 **Marketing (Persuade).** A centered 80rem (`max-w-7xl`) container padded 20px → 32px (`sm`), with
 sections on a 96px (`py-24`) vertical rhythm and alternating canvas/white bands to separate them. The hero
@@ -460,13 +491,81 @@ attention. Five variants, three sizes, one shared shell.
   system should read quieter.
 - **Loading:** A spinning 16px `Loader2` prepends the label and the control disables itself.
 
+### Composite panels (`components/ui/Panels.jsx`)
+
+Shared byte-identical by both apps.
+
+- **`PageHero`** — the banner that opens a screen: eyebrow pill, title, one line of orientation, optional
+  supporting points and an action. Runs on `fill-brand`, because the reference deck puts these on
+  near-black and this system has no dark surface left (see § Neutral). Two contrast facts are baked in and
+  must not be "simplified": the body line is `white/90`, not the `/70` a mock uses, which lands at 3.8:1;
+  and the eyebrow is a **white pill with violet ink**, not the `white/15` chip used behind icons on a
+  fill — white text on that chip measures 4.12:1, under AA at 12px. A translucent chip is fine behind a
+  glyph and wrong behind a word.
+- **`StepTrack`** — the numbered pipeline stepper. Takes `steps`, `currentKey`, and a `reached` set;
+  green marks a completed stage, which is the reserved positive channel used for exactly what it is for.
+  Renders the whole ordered pipeline rather than a status word, because "Under Review" is equally true on
+  day 1 and day 60 and never says what comes next. Scrolls rather than wraps.
+- **`TokenList`** — the wrapped skill/requirement chips with a `+N more` overflow. Always slate, never
+  brand or verdict tinted: a skill token is a fact about the posting, not a judgement about the reader, and
+  a row of violet pills beside a match score reads as "these are the ones you have". The overflow keeps
+  the remainder in an `sr-only` span — truncation is a layout decision, not an editorial one.
+- **`MetaItem`** — one icon-and-text fact in a card's meta line. Returns `null` on an empty value rather
+  than rendering a lone icon, since every field it displays is optional on the underlying document.
+- **`Chip` / `ChipRow`** — the pill rail. Renders as `<button>` by default; pass `as={Link}` when it
+  navigates, and it sets `aria-pressed` or `aria-current` accordingly. The row scrolls rather than wraps,
+  because a filter bar that reflows to three lines pushes the content it filters below the fold on a phone.
+- **`HeroStat`** — the headline figure. **`basis` is a required prop**, and that is the entire reason the
+  component exists rather than being page markup: the reference this is modelled on leads with a giant
+  `4248%` naming no unit, no period, and no denominator, which is the exact shape of claim this product is
+  built to refuse. A number that large is the most persuasive thing on the page and does not get to be the
+  least accountable. If you cannot say what a figure is measured over, it is not ready to be a hero stat.
+- **`ActionCard`** — the 4-up feature card: icon chip, title, one line of copy, action pinned to the bottom
+  with `mt-auto` so buttons align across a stretched grid row without a hardcoded height. `iconTone`
+  overrides the tone-derived chip so a white card can still carry a verdict colour.
+- **`ListRow`** — the stacked chevron row. The chevron is `aria-hidden`; the row's text is its accessible
+  name, since "chevron right" announced after every item in a list of eight is noise.
+- **`RecordCard`** / **`RecordGrid`** — the compact record card and the grid it sits in. This is the app's
+  **list primitive**: every list screen renders one card per record instead of a `<tr>`. The slots are
+  fixed — `avatar`/`icon`, `title` (optionally a stretched link), `subtitle`, `trailing` for the one
+  headline figure, a `meta` grid for the old columns, and a hairline-separated `footer` strip. Cards take
+  the compact 16px padding, and `link` is passed as `{ as: Link, to }` so the shared kit still never
+  imports the router.
+
+  The footer strip is the reason the component exists. A table cell has nowhere to say *"this score came
+  from the legacy keyword engine, not the evidence engine"* — that caveat had degenerated into a bare
+  amber triangle with a `title` tooltip, invisible on touch and to a screen reader, which is precisely the
+  failure The Honest Reading Rule exists to prevent. The card gives the caveat a sentence.
+
+### Named Rules
+
+**The Record-Card Rule.** *Added 2026-08-03.* App list screens present records as `RecordCard`s, not
+tables. `DataTable.jsx`'s table primitives are retained but unused; reaching for them to build a list
+screen is a regression. The trade is deliberate and it is not free — a card grid gives up some
+column-aligned scanning, which is why the slots are fixed: if every card puts the score in the same
+top-right corner and the state in the same bottom-right corner, the eye still gets its columns.
+
+The exception is a genuine 2-D matrix, where one axis is not "records". The Evidence Ledger is the live
+example: criterion × interview round. It became one card per criterion with the round cells side by side
+*inside* it, because the comparison that matters there runs along the row, and a card per cell would have
+destroyed it.
+
+**The Row-Doesn't-Jump Rule.** A record card hovers to a tinted border and `shadow-soft` and does not
+translate — the one documented exception to The Lift-on-Intent Rule. Lift-on-Intent is written for panels
+a pointer addresses one at a time; a queue of forty cards that jump under the cursor is harder to track
+with the eye than one that holds still, which is the same call `<TR>` already made for table rows.
+
 ### Cards / Containers
 
 - **Corner Style:** 16px (`rounded-2xl`)
 - **Background:** Surface white on the canvas
 - **Border:** 1px Hairline (`#e2e8f0`)
 - **Shadow Strategy:** `shadow-card` at rest, `shadow-soft` plus `-translate-y-1` on interactive cards
-- **Internal Padding:** 24px, uniform
+- **Internal Padding:** 24px default, 16px `compact`, 0 `none` — selected with the `padding` prop, never
+  with a `className="p-4"` override. Tailwind decides which of two competing `p-*` utilities wins by its
+  own stylesheet order, not by the order they appear in a JSX string, so an override is a coin flip that
+  happens to be landing right. `compact` exists for `RecordCard`: a record card is a *row*, not a panel,
+  and 24px of padding on a list of forty candidates costs most of a screenful of queue.
 
 ### Inputs / Fields
 
@@ -482,9 +581,11 @@ attention. Five variants, three sizes, one shared shell.
 
 ### Navigation
 
-- **App sidebar:** 256px on Ink (`#0f172a`). Items are 12px-radius rows with a 18px icon and a 0.875rem
-  medium label. Rest is `#cbd5e1` on transparent; hover lifts to white on `rgba(255,255,255,0.05)`; active
-  is white on Verification Blue with `shadow-soft`. The wordmark sits in a 64px header above.
+- **App sidebar:** 256px, **white with a hairline right border** — not the Ink slab this line described
+  until 2026-08-03, which contradicted § Neutral for a release. Items are 12px-radius rows with a 18px
+  icon and a 0.875rem medium label. Rest is Slate Reading (`#475569`) on transparent; hover is
+  `brand-700` on `brand-50`; active is white on a filled `brand-600` pill with `shadow-soft`. The wordmark
+  sits in a 64px header above.
 - **App header:** 64px, sticky, white at 90% with a backdrop blur and a hairline underbar. Company name
   and code on the left, notification bell and an avatar-plus-chevron profile menu on the right.
 - **Marketing navbar:** Anchor links in slate, ending in a primary CTA button.

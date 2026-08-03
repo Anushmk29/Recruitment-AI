@@ -305,6 +305,22 @@ const candidateSchema = new mongoose.Schema(
       at: { type: Date },
       ipAddress: { type: String, trim: true },
     },
+
+    // Adjustments the candidate asked for. Recorded, honoured, and never a signal about them.
+    //
+    // Nothing here may reach a score, a recommendation, or anything a reviewer reads as a
+    // property of the candidate. A request for an adjustment frequently discloses a disability;
+    // treating it as information about the person is the exact harm the adjustment exists to
+    // prevent, so it is stored to be ACTED ON and for nothing else.
+    accommodations: {
+      // Excludes this candidate from the spoken-communication assessment on roles that declare
+      // one (RoleRubric.spokenCommunication). The exclusion is recorded on the session rather
+      // than applied silently, so we can show we honoured it if we are ever asked.
+      excludeSpokenCommunication: { type: Boolean, default: false },
+      // What they asked for, in their words. Free text, for a human, never parsed.
+      note: { type: String, trim: true, maxlength: 1000, default: "" },
+      requestedAt: { type: Date },
+    },
   },
   { timestamps: true }
 );

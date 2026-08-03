@@ -14,9 +14,11 @@ import {
   ChevronDown,
   ClipboardList,
   Video,
+  Briefcase,
   UserRound,
   CircleDot,
   ArrowRight,
+  Search,
 } from "lucide-react";
 import api from "../api/client.js";
 import { accountAuthHeader, clearAccountAuth } from "../auth/accountAuth.js";
@@ -26,7 +28,8 @@ import { accountAuthHeader, clearAccountAuth } from "../auth/accountAuth.js";
 import { saveAuth as savePortalAuth, clearAuth as clearPortalAuth } from "../portal/portalAuth.js";
 import { saveAuth as saveAssessmentAuth, clearAuth as clearAssessmentAuth } from "../portal/assessmentAuth.js";
 import { getSocket } from "../lib/socket.js";
-import { Card, Badge, Skeleton, EmptyState } from "../components/ui/Card.jsx";
+import { Card, Badge, Skeleton, EmptyState, IconTile, SectionHeader } from "../components/ui/Card.jsx";
+import { Chip, ChipRow, HeroStat, PageHero, StepTrack } from "../components/ui/Panels.jsx";
 import { Input, Textarea, Label, FormGroup } from "../components/ui/Field.jsx";
 import Button from "../components/ui/Button.jsx";
 import { stageLabel, stageTone, stageProgress, isRejected, STAGES, STAGE_LABELS } from "../lib/pipeline.js";
@@ -301,41 +304,25 @@ function StageTrack({ status, stageHistory }) {
   // 15-step pipeline does not drown the three steps that matter.
   const visible = STAGES.filter((s, i) => reached.has(s) || (atIndex >= 0 && i > atIndex && i <= atIndex + 2));
 
+  // The numbers are the position in the VISIBLE run, not in the full pipeline —
+  // "Step 01" is where this candidate's story starts, not where the schema's
+  // enum does. The dates come straight from stageHistory, so a step that has
+  // been reached says when, and one that has not says nothing rather than
+  // guessing.
+  const steps = visible.map((stage) => ({
+    key: stage,
+    label: STAGE_LABELS[stage] || stage,
+    meta: dates[stage] ? formatAbsolute(dates[stage]) : null,
+  }));
+
   return (
-    <ol className="mt-4 space-y-2.5">
-      {visible.map((stage) => {
-        const done = reached.has(stage);
-        const current = stage === status;
-        return (
-          // `aria-current` is what tells a screen reader which of these steps is
-          // the live one. The marker dot carries that visually and nothing else
-          // did programmatically.
-          <li key={stage} className="flex items-start gap-2.5" aria-current={current ? "step" : undefined}>
-            <span
-              aria-hidden="true"
-              className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
-                current
-                  ? "border-brand-600 bg-brand-600"
-                  : done
-                    ? "border-brand-300 bg-brand-300"
-                    : "border-slate-200 bg-white"
-              }`}
-            >
-              {done && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
-            </span>
-            <div className="min-w-0">
-              {/* Unreached steps were `slate-400` — 2.5:1 on white. They are
-                  meant to read as quieter, not as unreadable. */}
-              <p className={`text-xs ${current ? "font-semibold text-slate-900" : done ? "font-medium text-slate-600" : "text-slate-500"}`}>
-                {STAGE_LABELS[stage] || stage}
-                {current && <span className="sr-only"> (current step)</span>}
-              </p>
-              {dates[stage] && <p className="text-[11px] text-slate-500">{formatAbsolute(dates[stage])}</p>}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
+    <StepTrack
+      className="mt-4"
+      label="Application progress"
+      steps={steps}
+      currentKey={status}
+      reached={reached}
+    />
   );
 }
 
@@ -349,11 +336,18 @@ function ApplicationCard({ application, next, now, onOpen, openingId }) {
 
   return (
     // Container radius, not control radius — DESIGN.md § The 12/16 Rule.
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-slate-900">{job?.title || "Application"}</p>
-          <p className="truncate text-xs text-slate-500">{job?.company?.name}</p>
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          {/* Slate, not brand: this chip marks "an application" on a card whose
+              actual signal — the stage badge beside it — is the thing meant to
+              catch the eye. A violet tile competing with it would be the second
+              loudest element saying nothing. */}
+          <IconTile icon={Briefcase} tone="slate" size="sm" />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-slate-900">{job?.title || "Application"}</p>
+            <p className="truncate text-xs text-slate-500">{job?.company?.name}</p>
+          </div>
         </div>
         <Badge tone={stageTone(status)}>{stageLabel(status)}</Badge>
       </div>
@@ -419,16 +413,14 @@ function ApplicationCard({ application, next, now, onOpen, openingId }) {
 // These cards are siblings of the "Needs you" panel, not children of it, so
 // they sit at the same heading level. They were <h3> under an <h1>, which skips
 // a level and leaves a screen-reader user's section list with a hole in it.
-function SectionCard({ title, icon: Icon, children, action }) {
+function SectionCard({ title, icon: Icon, description, children, action }) {
   return (
     <Card as="section">
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-          <Icon className="h-4.5 w-4.5 text-brand-600" aria-hidden="true" /> {title}
-        </h2>
-        {action}
-      </div>
-      {children}
+      {/* Composes <SectionHeader> rather than re-rolling a title row, so the
+          icon chip, heading size, and action alignment match every other
+          section in both apps instead of drifting one screen at a time. */}
+      <SectionHeader icon={Icon} title={title} description={description} action={action} />
+      <div className="mt-5">{children}</div>
     </Card>
   );
 }
@@ -659,14 +651,14 @@ export default function CandidateDashboard() {
 
   return (
     <div className="space-y-6">
-      {/* Greeting band. The wash sits behind the title only — nothing on a
-          tinted ground here is a status, a deadline, or a score. */}
-      <header className="overflow-hidden rounded-2xl border border-brand-100 bg-aurora px-6 py-7 shadow-card">
-        <h1 className="text-2xl font-bold text-slate-900">My Dashboard</h1>
-        <p className="mt-1 max-w-prose text-sm text-slate-600">
-          Every step shows who it's waiting on and when it closes — so nothing is a black box.
-        </p>
-      </header>
+      {/* Greeting band. The fill sits behind the title only — nothing on this
+          ground is a status, a deadline, or a score. */}
+      <PageHero
+        eyebrow="Candidate portal"
+        eyebrowIcon={UserRound}
+        title="My dashboard"
+        description="Every step shows who it's waiting on and when it closes — so nothing is a black box."
+      />
 
       {/* Session-open failures are raised here rather than inside the "Needs
           you" card. That card is one of four places a session can be opened
@@ -693,21 +685,64 @@ export default function CandidateDashboard() {
 
       {/* The hero. Only rendered when something is genuinely owed, so an empty
           state here is meaningful rather than decorative. */}
+      {/* Destination chips — real screens, real counts. */}
+      <ChipRow label="Jump to">
+        <Chip as={Link} to="/" icon={Search}>
+          Browse roles
+        </Chip>
+        <Chip as={Link} to="/resume" icon={FileText}>
+          My resumes
+        </Chip>
+        <Chip as={Link} to="/notifications" icon={Bell}>
+          Notifications
+        </Chip>
+        <Chip as={Link} to="/account" icon={UserRound}>
+          Account
+        </Chip>
+      </ChipRow>
+
+      {/* Brand, not ember — the opposite call from the recruiter dashboard, and
+          for a reason specific to this screen. "Still open" is a state, and the
+          list directly below it states per-application stages in the reserved
+          pending amber. An ember panel sitting on top of that column is exactly
+          the adjacency the containment rule exists to prevent.
+
+          The basis line is required by the component and earns its place here:
+          "3" means nothing without "of 7 you've submitted". */}
+      {data.appliedJobs.length > 0 && (
+        <HeroStat
+          tone="brand"
+          label="Applications still open"
+          value={activeApplications.length}
+          basis={`Of ${data.appliedJobs.length} you've submitted. An application counts as open until a decision is recorded — closed ones stay in the list below with their outcome.`}
+          action={
+            <Button as={Link} to="/" size="sm" variant="secondary">
+              Browse more roles
+            </Button>
+          }
+        />
+      )}
+
       {/* Brand tone on the card below, never ember or amber: this is the
           candidate's own to-do list, and the reserved pending channel means "a
           recruiter has not got to you yet". Those two must not look alike — one
           is work you can do now, the other is waiting you cannot affect. */}
       {needsYou.length > 0 ? (
         <Card as="section" tone="brand">
-          <h2 className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-900">
-            <ListChecks className="h-4.5 w-4.5 text-brand-600" aria-hidden="true" /> Needs you
-            <Badge tone="brand">{needsYou.length}</Badge>
-          </h2>
-          <p className="mb-4 text-xs text-slate-500">
-            These are waiting on you. Deadlines are shown in your local time.
-          </p>
+          <div className="flex min-w-0 items-start gap-3">
+            <IconTile icon={ListChecks} size="sm" />
+            <div className="min-w-0">
+              <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
+                Needs you
+                <Badge tone="brand">{needsYou.length}</Badge>
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                These are waiting on you. Deadlines are shown in your local time.
+              </p>
+            </div>
+          </div>
 
-          <div className="space-y-3">
+          <div className="mt-5 space-y-3">
             {needsYou.map(({ action, application }) => (
               <ActionRow
                 key={`${action.kind}-${action.sessionId || application?._id}`}
@@ -783,7 +818,7 @@ export default function CandidateDashboard() {
           {data.assessments?.length ? (
             <div className="space-y-3">
               {data.assessments.map((s) => (
-                <div key={s._id} className="rounded-lg bg-slate-50 p-3">
+                <div key={s._id} className="rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-brand-200">
                   <div className="flex items-start justify-between gap-2">
                     <p className="min-w-0 truncate text-sm font-semibold text-slate-800">{s.job?.title}</p>
                     <Badge tone={s.status === "completed" ? "green" : s.status === "expired" ? "red" : "brand"}>
@@ -831,7 +866,7 @@ export default function CandidateDashboard() {
           ) : (
             <div className="space-y-3">
               {[...data.upcomingInterviews, ...data.aiInterviewHistory].map((s) => (
-                <div key={s._id} className="rounded-lg bg-slate-50 p-3">
+                <div key={s._id} className="rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-brand-200">
                   <div className="flex items-start justify-between gap-2">
                     <p className="min-w-0 truncate text-sm font-semibold text-slate-800">{s.job?.title}</p>
                     <Badge tone={s.status === "completed" ? "green" : s.status === "expired" ? "red" : "brand"}>
@@ -876,7 +911,7 @@ export default function CandidateDashboard() {
           {data.notifications.length === 0 && <p className="text-sm text-slate-500">No notifications yet.</p>}
           <div className="space-y-3">
             {data.notifications.slice(0, 5).map((n) => (
-              <div key={n._id} className="rounded-lg bg-slate-50 p-3">
+              <div key={n._id} className="rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-brand-200">
                 <p className="text-sm font-semibold text-slate-800">{n.title}</p>
                 <p className="text-xs text-slate-500">{n.message}</p>
                 {!n.read && (
@@ -907,7 +942,7 @@ export default function CandidateDashboard() {
           ) : (
             <div className="space-y-2">
               {data.savedJobs.map((job) => (
-                <div key={job._id} className="flex items-center justify-between rounded-lg bg-slate-50 p-3">
+                <div key={job._id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-brand-200">
                   <div>
                     <Link to={`/jobs/${job.slug || job._id}`} className="text-sm font-semibold text-slate-800 hover:text-brand-700">
                       {job.title}
@@ -934,7 +969,7 @@ export default function CandidateDashboard() {
           ) : (
             <div className="space-y-2">
               {data.recommendedJobs.map((job) => (
-                <div key={job._id} className="flex items-center justify-between rounded-lg bg-slate-50 p-3">
+                <div key={job._id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-brand-200">
                   <div className="min-w-0">
                     <Link
                       to={`/jobs/${job.slug || job._id}`}
@@ -962,17 +997,19 @@ export default function CandidateDashboard() {
       {/* Profile sits below the tracking work: it is useful, but it is the part
           every portal already has, and it is not why someone opens this page. */}
       <Card as="section">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900">
-            <UserRound className="h-4.5 w-4.5 text-brand-600" aria-hidden="true" /> Your profile
-          </h2>
-          {/* The bar below announces the same number as its value, so this is a
-              visual echo rather than a second thing to read out. */}
-          <span aria-hidden="true" className="text-lg font-bold text-brand-700">
-            {pct}%
-          </span>
-        </div>
-        <ProgressBar className="mb-6" trackClassName="h-2.5" value={pct} label="Profile completeness" />
+        <SectionHeader
+          icon={UserRound}
+          title="Your profile"
+          description="A fuller profile gives recommendations more to match against."
+          action={
+            /* The bar below announces the same number as its value, so this is
+               a visual echo rather than a second thing to read out. */
+            <span aria-hidden="true" className="font-display text-2xl font-extrabold tabular-nums text-brand-700">
+              {pct}%
+            </span>
+          }
+        />
+        <ProgressBar className="mt-4 mb-6" trackClassName="h-2.5" value={pct} label="Profile completeness" />
         <form onSubmit={handleProfileSave}>
           <div className="grid gap-4 sm:grid-cols-2">
             <FormGroup>
@@ -1012,7 +1049,7 @@ export default function CandidateDashboard() {
         ) : (
           <div className="space-y-3">
             {data.aiInterviewHistory.map((s) => (
-              <div key={s._id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 p-3">
+              <div key={s._id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-brand-200">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-slate-800">{s.job?.title}</p>
                   <p className="truncate text-xs text-slate-500">{formatAbsolute(s.interviewAt)}</p>

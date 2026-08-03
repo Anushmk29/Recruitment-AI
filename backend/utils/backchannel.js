@@ -46,11 +46,48 @@ const BANK = {
   // constant of the test conditions. Warmth that varied with how well someone answered would be
   // differential encouragement — a bias vector, a contamination of the measurement, and an
   // assessment delivered to the candidate with no human in the loop.
+  // `{name}` is the candidate's first name, substituted per session (see `render`). A phrase that
+  // needs a name is DROPPED entirely when we don't have one, rather than rendered with a hole in
+  // it — half the bank is nameless for exactly that reason.
+  //
+  // Using someone's name is the cheapest warmth available and the most conspicuous when absent:
+  // the interviewer greeted them by name and said goodbye by name, and for the twenty minutes in
+  // between never used it once. It is also, unlike everything the evaluative-word list forbids, a
+  // CONSTANT of the candidate rather than a function of their answer — which is the whole test
+  // for whether warmth is allowed here. It cannot vary with how well they are doing, because it
+  // does not depend on how well they are doing.
+  //
+  // Widened from four phrases to eight for the same reason. At four, a candidate hears each one
+  // twice in an eight-question interview, in the same order, which is the specific texture that
+  // reads as a machine playing a recording.
   acknowledge: [
     "Thank you.",
     "Got it — thank you.",
+    "Thank you, {name}.",
     "Thank you, I've noted that.",
+    "Understood — thank you.",
+    "Thanks, {name} — I've got that down.",
+    "Okay, thank you.",
     "Thanks. Let me move on to the next one.",
+  ],
+
+  // Spoken before a question that does NOT follow from the answer just given.
+  //
+  // The interview alternates: a recruiter-approved question, then an adaptive follow-up on what
+  // the candidate actually said, then the next approved question. The follow-ups feel like a
+  // conversation because they are one. The approved questions land cold — verbatim, by design,
+  // with no bridge from what was just discussed — and that abrupt gear-change every other turn is
+  // most of what makes the interview feel like a form being read out.
+  //
+  // A human interviewer says "let me move to a different area" and it costs nothing. So does
+  // this. Note what it does NOT do: it never characterises the previous answer ("that's helpful,
+  // let me move on"), because that is an assessment. It only signals a change of subject, which
+  // is a fact about the interview and identical for every candidate.
+  bridge: [
+    "Let me move us on to a different area.",
+    "Changing tack a little.",
+    "Let me ask you about something else now.",
+    "Moving on to a different part of the role.",
   ],
   // Spoken when the candidate has gone quiet and we believe the answer is finished, BEFORE
   // treating it as finished. Candidates consistently report being cut off mid-thought; this
@@ -165,25 +202,57 @@ for (const [kind, phrases] of Object.entries(BANK)) {
   }
 }
 
-function phrases(kind) {
-  return [...(BANK[kind] || [])];
+// ---------------------------------------------------------------------------
+// Rendering — the one variable the bank is allowed to carry
+// ---------------------------------------------------------------------------
+
+// `{name}` is the candidate's first name and it is the ONLY substitution this bank will ever
+// take. The rule it has to satisfy: a variable is permissible here if it cannot vary with how
+// the candidate is doing. A name is fixed for the whole interview before a word is spoken; a
+// score, a topic, or a characterisation of the last answer is not, and none of those may be
+// added to this mechanism however natural the resulting sentence sounds.
+//
+// No name (an application with no name on it, a single-token name we can't split) ⇒ the phrase is
+// DROPPED, not rendered with a gap. "Thank you, ." is worse than "Thank you."
+function firstNameOf(nameish) {
+  const first = String(nameish || "").trim().split(/\s+/)[0] || "";
+  // Guard against a "name" that is punctuation, an email fragment, or a single initial — all of
+  // which appear in real applications and none of which anyone wants said aloud to them.
+  return /^[\p{L}][\p{L}'-]{1,}$/u.test(first) ? first : "";
 }
 
-function allPhrases() {
-  return KINDS.flatMap((k) => BANK[k]);
+function render(phrase, firstName) {
+  const text = String(phrase || "");
+  if (!text.includes("{name}")) return text;
+  if (!firstName) return null;
+  return text.replace(/\{name\}/g, firstName);
+}
+
+function phrases(kind, { firstName = "" } = {}) {
+  return (BANK[kind] || []).map((p) => render(p, firstName)).filter(Boolean);
+}
+
+function allPhrases({ firstName = "" } = {}) {
+  return KINDS.flatMap((k) => phrases(k, { firstName }));
 }
 
 // Deterministic rotation rather than a random pick: varied enough not to sound robotic, and
 // reproducible from the index alone when reconstructing what a candidate heard.
-function phraseFor(kind, index) {
-  const list = BANK[kind];
-  if (!list || !list.length) return "";
+function phraseFor(kind, index, { firstName = "" } = {}) {
+  const list = phrases(kind, { firstName });
+  if (!list.length) return "";
   const i = Number.isFinite(index) ? Math.abs(Math.trunc(index)) : 0;
   return list[i % list.length];
 }
 
-function isBankPhrase(phrase) {
-  return allPhrases().includes(String(phrase || ""));
+// Is this exactly something the bank permits for THIS candidate?
+//
+// Note the "for this candidate": a session with no name on it cannot authorise "Thank you,
+// Priya." The check is per-session rather than global on purpose — a global one would let any
+// session speak any other session's rendered phrases, which is a small hole in a mechanism whose
+// entire value is that it has none.
+function isBankPhrase(phrase, { firstName = "" } = {}) {
+  return allPhrases({ firstName }).includes(String(phrase || ""));
 }
 
 // ---------------------------------------------------------------------------
@@ -212,11 +281,11 @@ function toWordRegex(phrase) {
   return new RegExp(`\\b${parts.join("[^a-z0-9]+")}\\b[.,;:!?…]*`, "gi");
 }
 
-function stripEcho(transcript, spoken) {
+function stripEcho(transcript, spoken, { firstName = "" } = {}) {
   const original = String(transcript == null ? "" : transcript);
   const claimed = (Array.isArray(spoken) ? spoken : [])
     .map((s) => (typeof s === "string" ? s : s?.phrase))
-    .filter(isBankPhrase);
+    .filter((p) => isBankPhrase(p, { firstName }));
   if (!claimed.length) return { text: original, removed: [] };
 
   let text = original;
@@ -242,20 +311,25 @@ function stripEcho(transcript, spoken) {
 // Timing policy handed to the browser with the streaming credential. The browser owns the
 // silence detection (it is the only place that knows in real time), but not the numbers or the
 // words — those stay server-side so a tenant's interview conditions are configured in one place.
-function clientPolicy() {
+function clientPolicy({ firstName = "" } = {}) {
   return {
-    reassurances: phrases("reassure"),
-    acknowledgements: phrases("acknowledge"),
-    repeatPreambles: phrases("repeat"),
-    confirmations: phrases("confirm"),
+    reassurances: phrases("reassure", { firstName }),
+    acknowledgements: phrases("acknowledge", { firstName }),
+    repeatPreambles: phrases("repeat", { firstName }),
+    confirmations: phrases("confirm", { firstName }),
+    // Spoken before a question that does not follow from the last answer. The browser is told
+    // WHICH questions those are by the server (publicState.currentQuestionBridges) — it has no
+    // way to know on its own that a question came from the approved set rather than the adaptive
+    // engine, and guessing would put a change-of-subject in front of a direct follow-up.
+    bridges: phrases("bridge", { firstName }),
     // Replies to the dialogue acts (utils/dialogueActs.js). Sent with the same guarantee as
     // everything else here: the browser decides WHEN one is due, never WHAT it says.
-    declineReplies: phrases("decline"),
-    withdrawConfirmations: phrases("withdraw_confirm"),
-    withdrawCancellations: phrases("withdraw_cancel"),
-    pauseReplies: phrases("pause"),
-    clarifyPreambles: phrases("clarify"),
-    technicalReplies: phrases("technical"),
+    declineReplies: phrases("decline", { firstName }),
+    withdrawConfirmations: phrases("withdraw_confirm", { firstName }),
+    withdrawCancellations: phrases("withdraw_cancel", { firstName }),
+    pauseReplies: phrases("pause", { firstName }),
+    clarifyPreambles: phrases("clarify", { firstName }),
+    technicalReplies: phrases("technical", { firstName }),
     // How long the candidate has to answer "anything you'd like to add?" before the turn really
     // ends. Long enough to draw breath and start a sentence — any new speech cancels the ending
     // outright and hands the floor straight back.
@@ -269,6 +343,39 @@ function clientPolicy() {
     // Silence after the question, before the candidate has said anything at all. This is the
     // moment the old pipeline handled worst: it waited forever in total silence.
     initialSilenceMs: Number(process.env.VOICE_INITIAL_SILENCE_MS || 6000),
+
+    // ---- When the interviewer is confident the answer is over --------------
+    //
+    // Every turn used to run the same sequence regardless of what the candidate had actually
+    // done: reassure, reassure, "anything you'd like to add?", five seconds, submit. After a
+    // clean, complete, substantial answer that is roughly EIGHT AND A HALF SECONDS of tail —
+    // on every single question — and the worst of it lands as the interviewer offering time to
+    // someone who finished talking half a minute ago. Nothing reads more like a machine.
+    //
+    // The patience was well built and aimed at the wrong thing: it treated "I am not certain
+    // you are finished" as "you need encouragement". So the ladder is now chosen by how much
+    // doubt there actually is (see useVoiceInterview.handleSilence):
+    //
+    //   holding / nothing said yet   → reassure. This is what reassurance is for.
+    //   ambiguous + a real answer    → no reassurance; offer the check-in once, then end.
+    //   complete  + a real answer    → end. No check-in, no countdown, just the acknowledgement.
+    //
+    // Cutting the check-in on the confident path is only safe because of something that did not
+    // exist when it was written: the candidate can now talk over the next question on any
+    // device (utils/echoAlignment.js). "Oh, one more thing" said a second too late used to be
+    // lost; today it interrupts. Barge-in is a strictly better safety net than a five-second
+    // silence, because the candidate can hear that it worked.
+
+    // How many words make an answer substantial enough to be taken at its word when it sounds
+    // finished. Below this, a "complete"-sounding utterance is far more likely to be an opening
+    // sentence than a whole answer, and the check-in is still offered.
+    settledMinWords: Number(process.env.VOICE_SETTLED_MIN_WORDS || 12),
+    // Grace on the confident path. Short on purpose: by the time this is armed the provider has
+    // already reported ~1s of silence and the endpointing classifier has waited its own
+    // completeWaitMs on top, so this only has to cover a trailing transcript still in flight.
+    settledGraceMs: Number(process.env.VOICE_SETTLED_GRACE_MS || 600),
+    // Grace on the doubtful path, after the check-in has been offered and answered with silence.
+    endingGraceMs: Number(process.env.VOICE_ENDING_GRACE_MS || 4000),
   };
 }
 
@@ -277,6 +384,8 @@ module.exports = {
   KINDS,
   EVALUATIVE_WORDS,
   findEvaluativeWord,
+  firstNameOf,
+  render,
   phrases,
   allPhrases,
   phraseFor,

@@ -32,15 +32,23 @@ import { classifyEcho } from "./echoAlignment.js";
 
 const FILLERS = ["um", "uh", "erm", "hmm", "like", "you know", "sort of", "kind of", "basically", "actually"];
 
-// Final visible window between "you've gone quiet and I've run out of reassurance to offer" and
-// actually ending the turn. Cancelled the instant new speech arrives.
-const ENDING_GRACE_MS = 4000;
+// The final window between "you've gone quiet and I've run out of patience to offer" and actually
+// ending the turn is `endingGraceMs`, and the much shorter one after a plainly-finished answer is
+// `settledGraceMs`. Both arrive from the server with the streaming credential, like every other
+// number here — a tenant's interview conditions are configured in one place, and a timing that
+// decides when a candidate gets cut off is not the browser's to invent.
 
 // How much transcribed speech during question playback counts as "the candidate is talking to me"
 // rather than a cough or a keyboard click. Scraps of echo are no longer what this defends against
 // — echoAlignment.js does that by comparing against what we are actually saying — so this is only
 // the noise floor: enough that the interviewer doesn't stop mid-word over a click.
 const BARGE_IN_MIN_CHARS = 4;
+
+// How long after the last between-turns word before the next question may be asked. Short — this
+// is not the endpointing decision (nothing is being submitted here), only "are they mid-sentence
+// right now". Long enough not to cut across "oh, and one more thing", short enough that a cough
+// does not stall the interview.
+const BETWEEN_TURNS_IDLE_MS = 1500;
 
 // Used only if the server sends no conversational policy (older backend). Reassurance is then
 // OFF rather than improvised locally: the approved phrase bank lives server-side and is the only
@@ -51,6 +59,10 @@ function normalizePolicy(c) {
   const repeatTriggers = Array.isArray(c?.repeatTriggers) ? c.repeatTriggers.filter(Boolean) : [];
   const repeatPreambles = Array.isArray(c?.repeatPreambles) ? c.repeatPreambles.filter(Boolean) : [];
   const confirmations = Array.isArray(c?.confirmations) ? c.confirmations.filter(Boolean) : [];
+  // Spoken before a question that changes the subject. Empty ⇒ off, same rule as everywhere else:
+  // an older backend that sends none simply gets the old abrupt behaviour rather than a phrase
+  // the client made up.
+  const bridges = Array.isArray(c?.bridges) ? c.bridges.filter(Boolean) : [];
   const finishTriggers = Array.isArray(c?.finishTriggers) ? c.finishTriggers.filter(Boolean) : [];
   // Replies to the dialogue acts. Empty ⇒ the act is off, same rule as everywhere else here: the
   // client owns the timing, never the words.
@@ -67,6 +79,7 @@ function normalizePolicy(c) {
     repeatTriggers,
     repeatPreambles,
     confirmations,
+    bridges,
     declineReplies,
     withdrawConfirmations,
     withdrawCancellations,
@@ -89,6 +102,7 @@ function normalizePolicy(c) {
       semanticEnabled: Boolean(c?.intent?.semanticEnabled),
       minWordsForLookup: Math.max(1, Number(c?.intent?.minWordsForLookup ?? 2)),
       maxMetaWords: Math.max(1, Number(c?.intent?.maxMetaWords ?? 25)),
+      maxUtteranceWords: Math.max(1, Number(c?.intent?.maxUtteranceWords ?? 45)),
       timeoutMs: num(c?.intent?.timeoutMs, 1200),
     },
     // What counts as declining / pausing / wanting to stop (portal/dialogueActs.js). Detection is
@@ -106,6 +120,14 @@ function normalizePolicy(c) {
     maxReassurancesPerTurn: reassurances.length ? Math.max(0, Number(c?.maxReassurancesPerTurn ?? 2)) : 0,
     postReassuranceGraceMs: num(c?.postReassuranceGraceMs, 9000),
     initialSilenceMs: num(c?.initialSilenceMs, 6000),
+    // How the end of a turn is handled once the interviewer is actually confident it IS the end.
+    // See the long note in backend/utils/backchannel.clientPolicy — the short version is that the
+    // old code ran the full reassure → check-in → countdown ladder after every answer, including
+    // the ones that had plainly finished, and that tail is the single most machine-like thing in
+    // the pipeline. The defaults below match the server's.
+    settledMinWords: Math.max(0, Number(c?.settledMinWords ?? 12)),
+    settledGraceMs: num(c?.settledGraceMs, 600),
+    endingGraceMs: num(c?.endingGraceMs, 4000),
     // No triggers from the server ⇒ repeat-on-request is off. What counts as "please repeat" is
     // server-owned, exactly like the phrase bank; the client never invents the rule.
     maxRepeatsPerQuestion: repeatTriggers.length ? Math.max(0, Number(c?.maxRepeatsPerQuestion ?? 3)) : 0,
@@ -192,6 +214,14 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   const [interim, setInterim] = useState("");
   const [error, setError] = useState("");
   const [endingSoon, setEndingSoon] = useState(false); // out of reassurance, about to auto-submit
+  // When the turn will actually end, as an epoch ms, or 0 when nothing is pending. Surfaced so the
+  // room can show a real countdown instead of the words "Wrapping up your answer…".
+  //
+  // A countdown the candidate cannot see is the specific complaint behind "it cut me off": the
+  // turn ended on a timer nobody mentioned, while they were drawing breath for the rest of it.
+  // Showing it costs nothing and turns an ambush into a deadline they can act on — and there is
+  // now something to act WITH (see `keepListening`).
+  const [endsAt, setEndsAt] = useState(0);
   // The non-evaluative phrase the interviewer is saying right now, for the UI to show. Never a
   // question and never part of the transcript — see backend/utils/backchannel.js.
   const [backchannel, setBackchannel] = useState("");
@@ -235,7 +265,13 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   const bcBusyRef = useRef(false); // one interviewer utterance at a time, never two overlapping
   const handleSilenceRef = useRef(null); // breaks the armSilence <-> handleSilence cycle
   const questionRef = useRef(""); // the question currently being answered, for verbatim repeats
-  const questionAudioRef = useRef(null); // its audio, kept so a repeat replays the SAME bytes
+  // Its recruiter-approved plain-language rewording, when the approved set carried one. Read by
+  // the clarify path only; empty means this question has none and clarify degrades to a repeat.
+  const restatementRef = useRef("");
+  const questionAudioRef = useRef(null); // its audio URL, kept so a repeat replays the SAME bytes
+  // How long the server expects the current utterance to take. Used only while the streamed audio
+  // element does not yet know its own duration — see spokenRatio.
+  const spokenEstimateRef = useRef(0);
   const repeatsRef = useRef(0); // repeats of the current question — recorded, never scored
   const repeatBusyRef = useRef(false);
   const repeatQuestionRef = useRef(null);
@@ -262,6 +298,42 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   // How completely the current question was actually spoken. An interrupted question was not
   // fully asked, and the server must not count it as having covered its claim-probe.
   const deliveryRef = useRef({ deliveredFully: true, interruptedAtChar: null });
+  // ---- Socket lifecycle ---------------------------------------------------
+  //
+  // A dropped transcription socket used to be completely invisible. There was no `onclose`
+  // handler at all: the recorder kept running, every audio chunk was silently dropped by the
+  // `readyState === OPEN` guard on send, and the pulsing "Listening" indicator kept running over
+  // a dead pipe. The candidate spoke for another ninety seconds, pressed Done, and the truncated
+  // transcript was submitted and SCORED AS THEIR COMPLETE ANSWER. Nobody found out — not the
+  // candidate, not the recruiter, not the report. That is a wrong score with no trace, which is
+  // the one failure this product's whole audit story exists to prevent.
+  //
+  // `deliberate` distinguishes our own close (finishing a turn, tearing down) from the pipe
+  // dying underneath us; without it every normal end-of-turn would look like a disconnection.
+  const deliberateCloseRef = useRef(false);
+  const reconnectingRef = useRef(false);
+  // Reported to the caller with the transcript. A recovered drop still means audio was lost, so
+  // it travels with the answer and is recorded on the turn — "we reconnected" is not the same
+  // claim as "we heard everything".
+  const [connection, setConnection] = useState("idle"); // idle | live | reconnecting | lost
+  // What the candidate said BETWEEN turns — after their answer was taken and before the next
+  // question was asked. This window used to be deaf: the microphone was torn down with the turn
+  // and rebuilt for the next one, so "oh — and one more thing", the most human moment in an
+  // interview, went into nothing at all.
+  //
+  // It is deliberately not appended to any answer. It belongs to the answer they just gave, not
+  // to the question they are about to be asked, and filing it under the wrong question would be a
+  // worse failure than losing it. It is used to HOLD the next question while they are still
+  // talking, and recorded with the following answer as a condition of the interview.
+  const betweenTurnsRef = useRef({ text: "", at: 0 });
+  const [speakingBetweenTurns, setSpeakingBetweenTurns] = useState(false);
+  const betweenTurnsIdleRef = useRef(null);
+  // Set up once the session exists; called at the start of every turn.
+  const startSamplerRef = useRef(null);
+  // Held in a ref so the unmount cleanup can call the CURRENT teardown without listing it as a
+  // dependency — an effect that re-ran on every teardown identity change would close the
+  // microphone mid-interview.
+  const teardownSessionRef = useRef(null);
 
   const supported =
     typeof navigator !== "undefined" &&
@@ -290,9 +362,14 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     setBackchannel("");
   }, []);
 
+  // End the TURN. The microphone, the socket and the recorder survive.
+  //
+  // This used to tear the whole pipeline down after every answer, which is why the candidate was
+  // deaf for the ten-odd seconds while the next question was prepared and spoken, and why every
+  // question paid for a token grant, a getUserMedia call and a WebSocket handshake it did not
+  // need. What genuinely belongs to one answer is the accumulator, its energy envelope, and the
+  // timers watching for the end of it — and that is all this clears now.
   const cleanupAnswer = useCallback(() => {
-    if (keepAliveRef.current) clearInterval(keepAliveRef.current);
-    keepAliveRef.current = null;
     if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
     graceTimerRef.current = null;
     // An unconfirmed withdrawal dies with the turn. It must never survive into the next question
@@ -301,6 +378,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     withdrawRef.current = null;
     pausedUntilRef.current = 0;
     setEndingSoon(false);
+    setEndsAt(0);
     // A reassurance may still be playing if the candidate tapped "Done" over it.
     stopSpeaking();
     if (samplerRef.current) clearInterval(samplerRef.current);
@@ -309,6 +387,23 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       if (audioCtxRef.current && audioCtxRef.current.state !== "closed") audioCtxRef.current.close();
     } catch { /* ignore */ }
     audioCtxRef.current = null;
+  }, [stopSpeaking]);
+
+  // End the SESSION. Everything goes: the socket, the recorder, the microphone itself.
+  //
+  // Called when the interview is over, when the candidate switches to typing, and on unmount —
+  // never between two questions. Note the order: `deliberateCloseRef` FIRST, or the onclose
+  // handler reads our own teardown as the connection dying and starts reconnecting a session
+  // that has deliberately ended.
+  const teardownSession = useCallback(() => {
+    deliberateCloseRef.current = true;
+    reconnectingRef.current = false;
+    cleanupAnswer();
+    sessionRef.current = null;
+    betweenTurnsRef.current = { text: "", at: 0 };
+    setSpeakingBetweenTurns(false);
+    if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+    keepAliveRef.current = null;
     try {
       if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
     } catch { /* ignore */ }
@@ -319,7 +414,9 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     wsRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-  }, [stopSpeaking]);
+    setConnection("idle");
+  }, [cleanupAnswer]);
+  useEffect(() => { teardownSessionRef.current = teardownSession; }, [teardownSession]);
 
   function browserSpeak(text) {
     return new Promise((resolve) => {
@@ -336,12 +433,28 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   // lets the server verify every utterance against the authored questions and the approved phrase
   // bank (backend/utils/speechAuthorization.js).
   const fetchAudioUrl = useCallback(async (text) => {
-    const res = await api.post(
-      "/interview-portal/voice/speak",
-      { text },
-      { headers: authHeader(), responseType: "blob" }
-    );
-    return URL.createObjectURL(res.data);
+    const once = async () => {
+      const res = await api.post(
+        "/interview-portal/voice/speak",
+        { text },
+        { headers: authHeader(), responseType: "blob" }
+      );
+      return URL.createObjectURL(res.data);
+    };
+    try {
+      return await once();
+    } catch (err) {
+      // One retry, and only for the failures a retry can fix. A refusal (422 — the text was not
+      // authored) or an auth failure will fail identically the second time, and retrying a
+      // deliberate refusal is the wrong instinct in a mechanism that exists to refuse.
+      //
+      // The retry matters more than it looks: without it, one dropped request mid-interview
+      // switches the interviewer's voice to the browser's robot for that sentence, and a voice
+      // that changes halfway through is more unsettling than a pause.
+      const status = err?.response?.status;
+      if (status && status !== 429 && status < 500) throw err;
+      return once();
+    }
   }, []);
 
   // The server refused to speak this text because it was not an authored turn or an approved
@@ -361,6 +474,35 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     }
     return false;
   }
+
+  // Ask the server to authorise a question and hand back a streaming URL.
+  //
+  // Questions go down this path instead of the buffered one because they are long and they are
+  // the only thing a candidate is ever waiting on. A buffered question is synthesised whole on
+  // the server, transferred whole, and only then played — a second or more of silence before
+  // every question, none of which buys anything, since the first clause is ready long before the
+  // last one is. Handing the <audio> element a streaming URL gets native progressive playback:
+  // the voice starts on the opening words.
+  //
+  // Short phrases — backchannels, preambles, meta answers — stay on the buffered endpoint. They
+  // are pre-synthesised once and cached for the whole session, so streaming them would add a
+  // round trip and save nothing.
+  const fetchQuestionStream = useCallback(async (text) => {
+    const { data } = await api.post(
+      "/interview-portal/voice/speak/stream",
+      { text },
+      { headers: authHeader() }
+    );
+    if (!data?.ticket) throw new Error("no ticket");
+    const base = (api.defaults.baseURL || "").replace(/\/$/, "");
+    return {
+      // The ticket is the whole credential — no session token goes into this URL, because a URL
+      // ends up in browser history and access logs. It names one sentence the server already
+      // approved and can be used to say nothing else.
+      url: `${base}/interview-portal/voice/speak/stream/${data.ticket}`,
+      estimatedMs: Number(data.estimatedMs) || 0,
+    };
+  }, []);
 
   const playUrl = useCallback(
     (url) =>
@@ -403,8 +545,21 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   // more and interrupts less.
   function spokenRatio() {
     const audio = speakingRef.current.audio;
-    if (!audio || !(audio.duration > 0)) return undefined;
-    return Math.min(1, Math.max(0, audio.currentTime / audio.duration));
+    if (!audio) return undefined;
+    // A STREAMED response has no Content-Length, so `duration` reads Infinity until enough has
+    // buffered. Falling straight through to undefined would leave the echo gate comparing every
+    // transcript against the whole question for the first seconds of every question — which
+    // explains away more and lets fewer real interruptions through, exactly when a candidate is
+    // most likely to cut in. The server's estimate covers that window; the real duration replaces
+    // it the moment the browser has one.
+    if (audio.duration > 0 && Number.isFinite(audio.duration)) {
+      return Math.min(1, Math.max(0, audio.currentTime / audio.duration));
+    }
+    const estimate = spokenEstimateRef.current;
+    if (estimate > 0 && audio.currentTime > 0) {
+      return Math.min(1, Math.max(0, (audio.currentTime * 1000) / estimate));
+    }
+    return undefined;
   }
 
   // Is that the candidate, or is it us? Consulted for every transcript that arrives while the
@@ -460,8 +615,13 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
             bcCacheRef.current.set(phrase, pending);
           }
           const url = await pending;
+          // No browser-TTS fallback here, deliberately. A backchannel is OPTIONAL speech — "take
+          // your time", "thank you" — and saying it in a different voice from the one that has
+          // been conducting the interview is worse than not saying it. The candidate briefly gets
+          // a quieter interviewer; they do not get a second stranger. A QUESTION is different and
+          // still falls back (see `speak`), because a question they never hear is a question they
+          // cannot answer, and it is on screen to read either way.
           if (url) await playUrl(url);
-          else await browserSpeak(phrase);
         });
       } finally {
         setBackchannel("");
@@ -503,18 +663,33 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     // call re-arms the timer itself when it finishes.
     if (bcBusyRef.current) return;
     const policy = policyRef.current;
-    const spokeSomething = Boolean((acc.finalText || "").trim());
+    const answerSoFar = (acc.finalText || "").trim();
+    const spokeSomething = Boolean(answerSoFar);
+    const answerWords = (answerSoFar.match(/[A-Za-z0-9']+/g) || []).length;
 
-    // The classifier says this answer FINISHED — a completed clause, the voice falling away.
-    // Offering "take your time" now would be answering a question they did not ask, and it is
-    // the single thing that makes an interviewer feel slow: the candidate is done, and the
-    // machine is still reassuring them. Skip straight to the confirmation.
-    const finished = endState === "complete" && spokeSomething;
+    // How much doubt is there, really?
+    //
+    // `substantial` means they have said enough for this to be a whole answer rather than an
+    // opening sentence; `settled` means the classifier heard a completed clause with the voice
+    // falling away AND there is a real answer behind it. Those two together are the case where
+    // every further second of patience is pure latency — the candidate finished, and the
+    // interviewer is still performing attentiveness at them.
+    const substantial = answerWords >= policy.settledMinWords;
+    const settled = endState === "complete" && substantial;
 
-    if (!finished && reassureRef.current < policy.maxReassurancesPerTurn) {
+    // Reassurance is for someone who is MID-THOUGHT or who has not started. It used to fire on
+    // anything that was not classified "complete", which meant a finished 60-word answer whose
+    // last transcript chunk happened to arrive without a full stop got "take your time — I'm
+    // here", then nine seconds, then it again, then nine more. Half a minute of being comforted
+    // for having already answered. Spontaneous speech loses its terminal punctuation constantly,
+    // so that was not an edge case; it was most turns.
+    const needsTime = endState === "holding" || !substantial;
+
+    if (needsTime && reassureRef.current < policy.maxReassurancesPerTurn) {
       const index = reassureRef.current;
       reassureRef.current += 1;
       setEndingSoon(false);
+    setEndsAt(0);
       const phrase = policy.reassurances[(turnCounterRef.current + index) % policy.reassurances.length];
       await playBackchannel(phrase);
       bcEventsRef.current.push({ kind: "reassure", phrase, at: Date.now() });
@@ -528,6 +703,32 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     // that was never started must NOT be auto-submitted as empty. That candidate keeps the mic
     // and the visible "Done" button for as long as they need, and is not nagged further.
     if (!spokeSomething) return;
+
+    // A complete, substantial answer. Take them at their word and hand the floor back.
+    //
+    // This is where ~6.5 seconds per turn used to go: the interviewer asked "anything you'd like
+    // to add?" after EVERY answer and then waited five more seconds for a reply it had no reason
+    // to expect. A person who has just finished explaining something does not get asked whether
+    // they have finished; they get an acknowledgement and the next question. The check-in below
+    // still exists, and still fires wherever there is real doubt — it just stopped being the
+    // toll every candidate pays on every turn.
+    //
+    // The candidate is not stranded if we are wrong: `acknowledge()` speaks over the submit and
+    // they can talk straight over it and over the next question (utils/echoAlignment.js), which
+    // is a better safety net than a silent countdown because they can hear that it worked.
+    if (settled) {
+      setEndingSoon(true);
+      setEndsAt(Date.now() + policy.settledGraceMs);
+      if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
+      graceTimerRef.current = setTimeout(() => {
+        graceTimerRef.current = null;
+        if (!endedRef.current) {
+          endedRef.current = true;
+          autoEndRef.current?.();
+        }
+      }, policy.settledGraceMs);
+      return;
+    }
 
     // Ask before ending rather than just ending. Candidates report the old behaviour as being
     // cut off — the turn stopped on a timer while they were still gathering the rest of their
@@ -543,6 +744,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       bcEventsRef.current.push({ kind: "confirm", phrase, at: Date.now() });
       if (endedRef.current || !sessionRef.current) return;
       setEndingSoon(true);
+      setEndsAt(Date.now() + policy.confirmGraceMs);
       if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
       graceTimerRef.current = setTimeout(() => {
         graceTimerRef.current = null;
@@ -555,6 +757,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     }
 
     setEndingSoon(true);
+    setEndsAt(Date.now() + policy.endingGraceMs);
     if (graceTimerRef.current) clearTimeout(graceTimerRef.current);
     graceTimerRef.current = setTimeout(() => {
       graceTimerRef.current = null;
@@ -562,7 +765,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
         endedRef.current = true;
         autoEndRef.current?.();
       }
-    }, ENDING_GRACE_MS);
+    }, policy.endingGraceMs);
   }, [armSilence, playBackchannel]);
 
   useEffect(() => { handleSilenceRef.current = handleSilence; }, [handleSilence]);
@@ -573,19 +776,23 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   // "sorry, could you repeat that?" hears the identical bytes rather than a fresh synthesis. That
   // is both free and the stronger guarantee: a repeat cannot drift from what was first asked.
   const speak = useCallback(
-    async (text) => {
+    async (text, { restatement = "" } = {}) => {
       if (!text) return;
       stopSpeaking(); // never let an acknowledgement still playing overlap the next question
       setPhase("speaking");
-      if (questionAudioRef.current) {
-        URL.revokeObjectURL(questionAudioRef.current);
-        questionAudioRef.current = null;
-      }
+      if (questionAudioRef.current?.startsWith("blob:")) URL.revokeObjectURL(questionAudioRef.current);
+      questionAudioRef.current = null;
       questionRef.current = text;
+      restatementRef.current = String(restatement || "");
       repeatsRef.current = 0;
       try {
-        const url = await fetchAudioUrl(text);
+        // Streamed, not buffered: the voice starts on the opening words rather than after the
+        // whole file has been synthesised and transferred. The URL is kept so a repeat replays
+        // the same ticket — and therefore the identical bytes, which the server caches for
+        // exactly that reason.
+        const { url, estimatedMs } = await fetchQuestionStream(text);
         questionAudioRef.current = url;
+        spokenEstimateRef.current = estimatedMs;
         await withSpokenText(text, () => playUrl(url));
         audioRef.current = null;
       } catch (err) {
@@ -598,17 +805,27 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
           await withSpokenText(text, () => browserSpeak(text));
         }
       } finally {
+        spokenEstimateRef.current = 0;
         setPhase((p) => (p === "speaking" ? "idle" : p));
       }
     },
-    [fetchAudioUrl, playUrl, stopSpeaking]
+    [fetchQuestionStream, playUrl, stopSpeaking]
   );
 
   // Re-ask the current question, verbatim. Nothing is re-generated: the same authored text and,
   // when it is still held, the same audio. Repeating a *different* question would quietly hand
   // this candidate a different test from everyone else's.
-  const repeatQuestion = useCallback(async ({ preambles: overridePreambles } = {}) => {
-    const text = questionRef.current;
+  const repeatQuestion = useCallback(async ({ preambles: overridePreambles, restate = false } = {}) => {
+    // `restate` is the clarify path: they heard it and did not understand it, so say the
+    // recruiter-approved rewording instead of the same sentence again.
+    //
+    // When no rewording was authored we do NOT improvise one — composing a question in the moment
+    // would mean this candidate was measurably asked something different from everyone else, and
+    // it would be the candidates who needed help most who got the non-standard test. We fall back
+    // to an honest repeat instead: the old behaviour announced "let me put that a different way"
+    // and then replayed the identical sentence, which is a promise broken in the same breath.
+    const text = (restate && restatementRef.current) || questionRef.current;
+    const isRestating = restate && Boolean(restatementRef.current);
     if (!text || repeatBusyRef.current) return;
     repeatBusyRef.current = true;
     const duplex = policyRef.current.echo.fullDuplex;
@@ -617,11 +834,12 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       if (!duplex && rec && rec.state === "recording") rec.pause();
     } catch { /* ignore */ }
     try {
-      // `overridePreambles` is how the clarify path borrows this: same authored question, same
-      // audio bytes, different framing ("let me put that a different way"). The QUESTION never
-      // changes on either path — re-generating it would quietly hand this candidate a different
-      // test from everyone else's.
-      const preambles = overridePreambles?.length ? overridePreambles : policyRef.current.repeatPreambles;
+      // The framing has to match what actually follows it. `overridePreambles` (clarify) is only
+      // honoured when there IS a rewording to deliver; otherwise we drop back to the repeat
+      // preamble, because announcing a different wording and then producing the same one is the
+      // exact behaviour this path was built to remove.
+      const preambles =
+        isRestating && overridePreambles?.length ? overridePreambles : policyRef.current.repeatPreambles;
       if (preambles.length) {
         const preamble = preambles[(repeatsRef.current - 1 + preambles.length) % preambles.length];
         setBackchannel(preamble);
@@ -634,6 +852,20 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       }
       setBackchannel(text);
       await withSpokenText(text, async () => {
+        // A plain repeat replays the SAME audio bytes, which is both free and the stronger
+        // guarantee — it cannot drift from what was first asked. A restatement is different text,
+        // so it is synthesised (once, then cached for the rest of this question's repeats).
+        if (isRestating) {
+          let pending = bcCacheRef.current.get(text);
+          if (!pending) {
+            pending = fetchAudioUrl(text).catch(() => null);
+            bcCacheRef.current.set(text, pending);
+          }
+          const url = await pending;
+          if (url) await playUrl(url);
+          else await browserSpeak(text);
+          return;
+        }
         if (questionAudioRef.current) await playUrl(questionAudioRef.current);
         else await browserSpeak(text);
       });
@@ -645,7 +877,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       } catch { /* ignore */ }
       repeatBusyRef.current = false;
     }
-  }, [playUrl, withSpokenText]);
+  }, [playUrl, withSpokenText, fetchAudioUrl]);
 
   // Called from the live socket handler, so it has to be a ref (the handler is installed once).
   useEffect(() => { repeatQuestionRef.current = repeatQuestion; }, [repeatQuestion]);
@@ -658,27 +890,55 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   //
   // The server owns the reading (backend/services/intentService.js) AND the closed set of things
   // it may resolve to. This function only decides WHEN to ask and carries out the result.
+  // In-flight and completed lookups for this turn, keyed by the exact utterance. This is what
+  // makes the tier feel instant rather than adding a beat of silence before the interviewer
+  // reacts: the lookup is STARTED on the interim transcript, while the candidate is still
+  // finishing the sentence, and by the time the final arrives the answer is usually already here.
+  //
+  // The policy comment has always described it working this way; the code only ever called it on
+  // finals, so every unusual phrasing cost a full round trip of dead air after the candidate
+  // stopped talking. Prefetching changes only WHEN the question is asked, never what is done with
+  // it — the result is still acted on solely against the final transcript, and a prefetch whose
+  // text the final does not match is simply dropped.
+  const intentCacheRef = useRef(new Map());
+
   const askSemanticIntent = useCallback(async (utterance, answerSoFar) => {
     const policy = policyRef.current.intent;
     if (!policy.semanticEnabled) return null;
     const words = (String(utterance || "").match(/[A-Za-z0-9']+/g) || []).length;
-    // Bounded on both sides before spending anything: too short to carry an intent, or long
-    // enough that it is an answer whatever else it contains.
-    if (words < policy.minWordsForLookup || words > policy.maxMetaWords) return null;
+    // Bounded on both sides before spending anything: too short to carry an intent, or long enough
+    // that it is an answer whatever else it contains.
+    //
+    // The upper bound is `maxUtteranceWords`, NOT `maxMetaWords`. The tighter number is applied
+    // server-side once the action is known, where "finished" can be exempted — a hand-back is long
+    // precisely because they were finishing an answer, so cutting the lookup off at 25 words made
+    // that reading unreachable for the way people actually end a sentence.
+    if (words < policy.minWordsForLookup || words > policy.maxUtteranceWords) return null;
 
-    try {
-      const { data } = await api.post(
-        "/interview-portal/voice/intent",
-        { utterance, answerSoFar },
-        { headers: authHeader(), timeout: policy.timeoutMs }
-      );
-      return data || null;
-    } catch {
-      // Timeout, offline, rate limit, provider outage — all the same answer. The interview never
-      // waits on this path and never fails because of it: not understanding an unusual phrasing
-      // leaves the interviewer exactly as perceptive as it was before this tier existed.
-      return null;
-    }
+    // Already asked this exact question during this turn — reuse it rather than paying twice. This
+    // is what turns the interim prefetch into a latency saving instead of a duplicate call.
+    const key = String(utterance || "").trim();
+    const cached = intentCacheRef.current.get(key);
+    if (cached) return cached;
+
+    const pending = (async () => {
+      try {
+        const { data } = await api.post(
+          "/interview-portal/voice/intent",
+          { utterance, answerSoFar },
+          { headers: authHeader(), timeout: policy.timeoutMs }
+        );
+        return data || null;
+      } catch {
+        // Timeout, offline, rate limit, provider outage — all the same answer. The interview never
+        // waits on this path and never fails because of it: not understanding an unusual phrasing
+        // leaves the interviewer exactly as perceptive as it was before this tier existed.
+        return null;
+      }
+    })();
+
+    intentCacheRef.current.set(key, pending);
+    return pending;
   }, []);
   const askSemanticIntentRef = useRef(askSemanticIntent);
   useEffect(() => { askSemanticIntentRef.current = askSemanticIntent; }, [askSemanticIntent]);
@@ -744,20 +1004,77 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   // `armTurnClock: false` opens everything WITHOUT starting the turn's silence handling — used by
   // barge-in, where the mic goes live before the question is spoken. Arming the clock then would
   // have the interviewer reassuring the candidate for not answering a question it is still asking.
+  // Start a new turn. The MICROPHONE AND THE SOCKET ARE NOT PART OF A TURN.
+  //
+  // They used to be: every question tore down the stream, the WebSocket, the recorder and the
+  // audio graph and rebuilt them from scratch, which cost a token grant, a getUserMedia call and a
+  // WebSocket handshake — roughly a second — on every single question, and left the candidate
+  // talking into nothing for the whole gap while the next question was prepared and spoken. That
+  // gap is where "oh, one more thing" lives, which is the most human moment in an interview and
+  // was the one moment nothing was listening.
+  //
+  // So this is now idempotent about the session and fresh about the turn: an already-live session
+  // is reused, and only the per-answer state is reset. `beginTurn` below is the part that always
+  // runs.
   const openMic = useCallback(async ({ armTurnClock = true } = {}) => {
     if (!supported) throw new Error("unsupported");
     setError("");
     setInterim("");
     setEndingSoon(false);
+    setEndsAt(0);
     endedRef.current = false;
     reassureRef.current = 0;
     confirmedRef.current = false;
     bcEventsRef.current = [];
+    // Per TURN, not per session: the same words mean different things after different questions
+    // ("sorry, what?" is a repeat after one and a clarify after another), and the classifier is
+    // given the question in flight as context. Carrying a reading across turns would apply an
+    // answer about the last question to this one.
+    intentCacheRef.current.clear();
     turnCounterRef.current += 1;
     // Clears any interviewer audio still playing before the mic opens. On the barge-in path the
     // mic deliberately opens BEFORE the question is spoken (see askAndListen), so this runs first
     // and there is nothing to cut off; on the turn-based path the question has already finished.
     stopSpeaking();
+
+    // Everything a TURN needs, and nothing a session does. Always runs, including on the fast
+    // path where the stream and socket are already live from the previous question.
+    const beginTurn = () => {
+      const acc = {
+        finalText: "",
+        lastInterim: "",
+        confidence: 0,
+        startedAt: Date.now(),
+        energy: [],
+        speakerWords: {},
+        // What the CONNECTION did during this answer. A transcript recorded across a dropped
+        // socket is missing words, and the report has to be able to say so.
+        drops: 0,
+        gapMs: 0,
+        lost: false,
+        // What they said in the gap before this question — kept with the answer it followed, as a
+        // condition of the interview, never appended to anything.
+        spokeBetweenTurns: betweenTurnsRef.current.text || "",
+      };
+      sessionRef.current = acc;
+      betweenTurnsRef.current = { text: "", at: 0 };
+      if (betweenTurnsIdleRef.current) clearTimeout(betweenTurnsIdleRef.current);
+      betweenTurnsIdleRef.current = null;
+      setSpeakingBetweenTurns(false);
+      startSamplerRef.current?.();
+      if (armTurnClock) {
+        setPhase("listening");
+        armSilence(policyRef.current.initialSilenceMs);
+      }
+      return acc;
+    };
+
+    // A live session is reused whole. This is the fast path and it is the common one — after the
+    // first question, opening the mic costs nothing at all.
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && streamRef.current?.active) {
+      beginTurn();
+      return;
+    }
 
     const { data: cred } = await api.get("/interview-portal/voice/token", { headers: authHeader() });
     policyRef.current = normalizePolicy(cred.conversation);
@@ -768,6 +1085,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       ...policyRef.current.acknowledgements,
       ...policyRef.current.repeatPreambles,
       ...policyRef.current.confirmations,
+      ...policyRef.current.bridges,
       // The dialogue-act replies matter most here: a decline or a request to stop needs an
       // answer in the moment, and waiting on a TTS round-trip lands it after the moment passed.
       ...policyRef.current.declineReplies,
@@ -811,40 +1129,80 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     // query param is NOT accepted and silently fails the handshake — verified against the live
     // API. The raw DEEPGRAM_API_KEY still never reaches the browser (only this ~60s token does).
     const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
-    const ws = new WebSocket(url, ["bearer", cred.accessToken]);
-    ws.binaryType = "arraybuffer";
-    wsRef.current = ws;
 
     // `speakerWords` tallies words per diarization label for THIS answer. Counts only — no
     // voiceprint, no identity, nothing that could follow a candidate anywhere. Whether these
     // numbers amount to "a second person answered" is decided server-side (utils/proctoring.js),
     // because that is a judgement and the browser is an untrusted reporter.
-    const acc = { finalText: "", lastInterim: "", confidence: 0, startedAt: Date.now(), energy: [], speakerWords: {} };
-    sessionRef.current = acc;
-
+    //
+    // `drops` / `gapMs` / `lost` record what the CONNECTION did during this answer. They travel
+    // with the transcript on submit, because a transcript recorded across a dropped socket is
+    // missing words and the report has to be able to say so.
     // Sample the RMS-energy envelope ~10x/sec for pause-ratio + energy-variance (prosody).
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (Ctx) {
+    // Per-TURN, unlike the stream and the socket: an energy envelope belongs to one answer.
+    const startSampler = () => {
+      try {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
         const audioCtx = new Ctx();
         audioCtxRef.current = audioCtx;
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 2048;
-        audioCtx.createMediaStreamSource(stream).connect(analyser);
+        audioCtx.createMediaStreamSource(streamRef.current).connect(analyser);
         const frame = new Float32Array(analyser.fftSize);
         samplerRef.current = setInterval(() => {
-          if (!analyser.getFloatTimeDomainData) return;
+          const live = sessionRef.current;
+          if (!live || !analyser.getFloatTimeDomainData) return;
           analyser.getFloatTimeDomainData(frame);
           let sum = 0;
           for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
-          acc.energy.push(Math.sqrt(sum / frame.length));
+          live.energy.push(Math.sqrt(sum / frame.length));
         }, 100);
-      }
-    } catch { /* prosody is best-effort — never block the interview */ }
+      } catch { /* prosody is best-effort — never block the interview */ }
+    };
+    startSamplerRef.current = startSampler;
 
-    ws.onmessage = (evt) => {
+    // Named rather than assigned straight onto the socket, because a reconnect has to re-attach
+    // the SAME handler to a new socket.
+    //
+    // It reads the CURRENT turn from `sessionRef` rather than closing over one, because the socket
+    // now outlives the turn (see openMic) — a captured accumulator would keep filling the answer
+    // the candidate finished two questions ago. Everything downstream still captures `acc` locally
+    // and re-checks `sessionRef.current !== acc`, which is what makes an async reaction arriving
+    // after the turn moved on get dropped rather than applied to the wrong answer.
+    const handleMessage = (evt) => {
       let msg;
       try { msg = JSON.parse(evt.data); } catch { return; }
+      const acc = sessionRef.current;
+
+      // Between turns. The socket stays open while the next question is prepared and spoken, so
+      // this is a candidate saying "oh — and one more thing" into what used to be a dead
+      // microphone. It is NOT appended to anything: it belongs to the answer they just gave, not
+      // to the question they are about to be asked, and quietly filing it under the wrong question
+      // would be worse than losing it. It is kept so the room can hold the next question until
+      // they have finished, and reported on submit as a condition of the interview.
+      if (!acc) {
+        if (msg.type !== "Results") return;
+        const heard = msg.channel?.alternatives?.[0]?.transcript || "";
+        if (!heard.trim()) return;
+        if (speakingRef.current.text && readEcho(heard).verdict === "echo") return;
+        betweenTurnsRef.current = {
+          text: `${betweenTurnsRef.current.text} ${heard}`.trim().slice(-500),
+          at: Date.now(),
+        };
+        setSpeakingBetweenTurns(true);
+        // Release the hold once they actually stop. Without this the next question would never be
+        // asked at all — the room waits on this flag, so a flag that only ever turns on is a
+        // deadlock, and the deadlock would look to the candidate exactly like the interview
+        // freezing after their answer.
+        if (betweenTurnsIdleRef.current) clearTimeout(betweenTurnsIdleRef.current);
+        betweenTurnsIdleRef.current = setTimeout(() => {
+          betweenTurnsIdleRef.current = null;
+          setSpeakingBetweenTurns(false);
+        }, BETWEEN_TURNS_IDLE_MS);
+        return;
+      }
+
       if (msg.type === "UtteranceEnd") {
         // The provider has seen a short burst of silence after speech. That is a PROMPT to
         // decide, not the decision: classify what was just said and pick the waiting window from
@@ -859,6 +1217,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
         // Recorded so "why did my turn end there?" is answerable from the session afterwards.
         acc.endOfTurn = { state: verdict.state, reason: verdict.reason };
         setEndingSoon(false);
+    setEndsAt(0);
         armSilence(verdict.waitMs, verdict.state);
         return;
       }
@@ -902,6 +1261,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
         graceTimerRef.current = null;
       }
       setEndingSoon(false);
+    setEndsAt(0);
       if (msg.is_final) {
         // What the answer was before this utterance landed. Kept so a dialogue act can be undone
         // cleanly: if the candidate asks to stop and then says "no, carry on", the words they had
@@ -945,6 +1305,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
           if (reply === "yes") {
             if (graceTimerRef.current) { clearTimeout(graceTimerRef.current); graceTimerRef.current = null; }
             setEndingSoon(false);
+    setEndsAt(0);
             endedRef.current = true;
             actRef.current?.({
               act: "withdraw",
@@ -977,6 +1338,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
         if (act.honour && act.act === "withdraw" && policy.withdrawConfirmations.length && !endedRef.current) {
           if (graceTimerRef.current) { clearTimeout(graceTimerRef.current); graceTimerRef.current = null; }
           setEndingSoon(false);
+    setEndsAt(0);
           withdrawRef.current = { requestText: acc.finalText, priorText: beforeThisFinal, timer: null };
           void (async () => {
             const phrase = policy.withdrawConfirmations[0];
@@ -1004,6 +1366,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
         if (act.honour && act.act === "decline" && policy.declineReplies.length && !endedRef.current) {
           if (graceTimerRef.current) { clearTimeout(graceTimerRef.current); graceTimerRef.current = null; }
           setEndingSoon(false);
+    setEndsAt(0);
           acc.endOfTurn = { state: "complete", reason: "candidate_declined", trigger: act.matchedTrigger };
           endedRef.current = true;
           actRef.current?.({ act: "decline", text: acc.finalText });
@@ -1016,6 +1379,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
         if (act.honour && act.act === "pause" && policy.pauseReplies.length && !endedRef.current) {
           if (graceTimerRef.current) { clearTimeout(graceTimerRef.current); graceTimerRef.current = null; }
           setEndingSoon(false);
+    setEndsAt(0);
           void (async () => {
             const phrase = policy.pauseReplies[turnCounterRef.current % policy.pauseReplies.length];
             await playBackchannel(phrase);
@@ -1071,6 +1435,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
               graceTimerRef.current = null;
             }
             setEndingSoon(false);
+    setEndsAt(0);
             void (async () => {
               await repeatQuestionRef.current?.();
               if (endedRef.current || !sessionRef.current) return;
@@ -1089,13 +1454,17 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
         // ordinary answer, so the gates below matter — they decide when it is worth asking.
         if (policy.intent.semanticEnabled && !endedRef.current && !bcBusyRef.current) {
           const utterance = t.trim();
-          const priorWords = (beforeThisFinal.match(/[A-Za-z0-9']+/g) || []).length;
-          // Two situations are worth a lookup. Early in a turn, before a substantive answer has
-          // accumulated, an utterance is much more likely to be about the interview than in it.
-          // And at any point, a transcribed question mark is a strong, free signal that they asked
-          // us something rather than told us something.
-          const worthAsking = priorWords <= policy.intent.maxMetaWords || /\?\s*$/.test(utterance);
-          if (worthAsking) {
+          // Worth a lookup whenever the UTTERANCE is short enough to carry a request. It used to
+          // also require that the candidate had said little so far this turn — which meant
+          // "actually, you know what, could we skip this one?" said forty words into an answer was
+          // never even looked up, and the interviewer transcribed the request as part of the
+          // answer and carried on. A short interjection mid-answer is MORE likely to be a request,
+          // not less: someone who has been talking for a while and then says six words has
+          // usually stopped answering and started asking.
+          //
+          // `askSemanticIntent` applies the length bounds itself, and the server re-checks every
+          // one of them before acting, so there is nothing left for this site to gate on.
+          {
             void (async () => {
               const result = await askSemanticIntentRef.current?.(utterance, beforeThisFinal);
               if (!result || result.action === "answer_continues") return;
@@ -1113,6 +1482,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
               }
               if (graceTimerRef.current) { clearTimeout(graceTimerRef.current); graceTimerRef.current = null; }
               setEndingSoon(false);
+    setEndsAt(0);
 
               switch (result.action) {
                 // They didn't hear it. Same audio, same words — see repeatQuestion.
@@ -1125,7 +1495,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
                 // it is the single most machine-like thing an interviewer can do.
                 case "clarify":
                   repeatsRef.current += 1;
-                  await repeatQuestionRef.current?.({ preambles: policy.clarifyPreambles });
+                  await repeatQuestionRef.current?.({ preambles: policy.clarifyPreambles, restate: true });
                   break;
                 // A question about the interview, answered from this session's real state. The
                 // sentence is the server's, already written into the transcript as a turn.
@@ -1153,6 +1523,14 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
                   endedRef.current = true;
                   acc.endOfTurn = { state: "complete", reason: "candidate_declined", trigger: null };
                   actRef.current?.({ act: "decline", text: acc.finalText });
+                  return;
+                // "That's my answer", in one of the hundred ways nobody put on a trigger list.
+                // Their words ARE the answer here (consumesTurn is false for this action), so
+                // nothing is stripped — the turn simply ends now instead of after a silence.
+                case "finished":
+                  acc.endOfTurn = { state: "complete", reason: "candidate_said_finished", trigger: null };
+                  endedRef.current = true;
+                  autoEndRef.current?.();
                   return;
                 // Understood perfectly and STILL confirmed before anything happens. The asymmetry
                 // is the reason: continuing someone who wanted to stop costs them one question
@@ -1188,34 +1566,124 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       } else {
         acc.lastInterim = t;
         setInterim(`${acc.finalText} ${t}`.trim());
+
+        // Start the semantic lookup NOW, while they are still finishing the sentence, so the
+        // answer is usually already here when the final arrives. Without this the tier added a
+        // visible beat of silence to exactly the moments it exists to handle: the candidate asks
+        // something unusual, stops, and the interviewer does nothing at all for a second.
+        //
+        // Nothing is ACTED on here — an interim can still be revised, and acting on one risks
+        // discarding an answer that was never a request. This only warms the cache; the final
+        // transcript is what decides, and a prefetch it does not match is simply never read.
+        if (policyRef.current.intent.semanticEnabled && !endedRef.current && !bcBusyRef.current) {
+          void askSemanticIntentRef.current?.(t.trim(), acc.finalText);
+        }
       }
     };
-    ws.onerror = () => setError("Voice connection dropped — you can type your answer instead.");
+    // Open a transcription socket and start feeding it. Called once when the turn begins, and
+    // again by the drop handler below — which is the whole reason it is a function.
+    const connect = async (accessToken) => {
+      const ws = new WebSocket(url, ["bearer", accessToken]);
+      ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
+      ws.onmessage = handleMessage;
+      // `onerror` always fires immediately before `onclose`, so recovery is handled in one place
+      // (below) rather than twice. This only records that something went wrong.
+      ws.onerror = () => {};
+      ws.onclose = () => {
+        // Ours, superseded by a newer socket, or the turn is already over — nothing to recover.
+        if (deliberateCloseRef.current) return;
+        if (wsRef.current !== ws) return;
+        // "The turn is over" is no longer a reason to ignore a drop. The socket belongs to the
+        // SESSION now, so a pipe that dies between questions still has to come back before the
+        // next one — otherwise the persistent session would quietly become a dead one.
+        void handleDrop();
+      };
 
-    await new Promise((resolve, reject) => {
-      const to = setTimeout(() => reject(new Error("Voice service did not connect")), 6000);
-      ws.onopen = () => { clearTimeout(to); resolve(); };
-      ws.addEventListener("error", () => { clearTimeout(to); reject(new Error("Voice service error")); }, { once: true });
-    });
+      await new Promise((resolve, reject) => {
+        const to = setTimeout(() => reject(new Error("Voice service did not connect")), 6000);
+        ws.onopen = () => { clearTimeout(to); resolve(); };
+        ws.addEventListener("error", () => { clearTimeout(to); reject(new Error("Voice service error")); }, { once: true });
+      });
 
-    const mimeType = pickMimeType();
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    recorderRef.current = recorder;
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+      const mimeType = pickMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recorderRef.current = recorder;
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) ws.send(e.data);
+      };
+      recorder.start(250);
+      if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+      keepAliveRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "KeepAlive" }));
+      }, 8000);
+      setConnection("live");
     };
-    recorder.start(250);
-    keepAliveRef.current = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "KeepAlive" }));
-    }, 8000);
 
-    if (armTurnClock) {
-      setPhase("listening");
-      // The question has been asked and the candidate hasn't started. UtteranceEnd only fires
-      // AFTER speech, so nothing used to happen here at all — the candidate sat in silence with an
-      // open mic. Arm the same conversational handler so the interviewer offers time out loud.
-      armSilence(policyRef.current.initialSilenceMs);
-    }
+    // The socket died underneath a live answer. Stop pretending to listen, try once to get it
+    // back, and if that fails say so out loud — the one thing that must never happen here is
+    // carrying on quietly and submitting whatever happened to arrive before the pipe went down.
+    const handleDrop = async () => {
+      if (reconnectingRef.current) return;
+      reconnectingRef.current = true;
+      const droppedAt = Date.now();
+      // Whichever turn is live right now — or none, between questions. A drop in the gap still
+      // has to be recovered, but there is no answer to charge it to and none to corrupt.
+      const acc = sessionRef.current;
+      if (acc) acc.drops += 1;
+      setConnection("reconnecting");
+
+      // Nothing may end this turn while we are deaf. An auto-submit here would ship the
+      // truncated transcript, which is precisely the failure being fixed.
+      if (graceTimerRef.current) { clearTimeout(graceTimerRef.current); graceTimerRef.current = null; }
+      setEndingSoon(false);
+    setEndsAt(0);
+      // Stop feeding a dead pipe. The MICROPHONE STREAM stays open — only the socket died, and
+      // re-prompting for permission mid-answer would be its own failure.
+      try {
+        if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
+      } catch { /* ignore */ }
+      recorderRef.current = null;
+      if (keepAliveRef.current) clearInterval(keepAliveRef.current);
+      keepAliveRef.current = null;
+
+      try {
+        // A fresh credential, not the old one: the original grant is short-lived and is very
+        // likely to be the reason the socket closed in the first place.
+        const { data: fresh } = await api.get("/interview-portal/voice/token", { headers: authHeader() });
+        await connect(fresh.accessToken);
+        if (!acc || endedRef.current || sessionRef.current !== acc) return;
+        acc.gapMs += Date.now() - droppedAt;
+        setError("");
+        // Hand the floor back with a fresh window. The candidate kept talking through the gap
+        // and does not know it happened yet; ending their turn on a stale timer now would be
+        // indistinguishable from cutting them off.
+        armSilence(policyRef.current.initialSilenceMs);
+      } catch {
+        if (acc) {
+          acc.gapMs += Date.now() - droppedAt;
+          acc.lost = true;
+        }
+        setConnection("lost");
+        setPhase("disconnected");
+        setError(
+          "The connection to the voice service dropped and couldn't be restored. Anything you said " +
+            "in the last few seconds wasn't recorded — you can answer this question again, or switch to typing."
+        );
+      } finally {
+        reconnectingRef.current = false;
+      }
+    };
+
+    deliberateCloseRef.current = false;
+    await connect(cred.accessToken);
+    // The session is up. `beginTurn` starts the answer and arms the clock — the same call the
+    // fast path above makes, so the first question and every one after it behave identically.
+    //
+    // (The clock exists because UtteranceEnd only fires AFTER speech: a candidate who has not
+    // started saying anything would otherwise sit in silence with an open mic and no
+    // acknowledgement they exist.)
+    beginTurn();
   }, [supported, stopSpeaking, primeBackchannels, armSilence]);
 
   // Ask the question and then listen — the single entry point the interview room uses.
@@ -1234,9 +1702,21 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   // early either way (so nothing said at the very start of a turn is lost), but capture is paused
   // for the duration of the question, which is the pre-echo-gate protection.
   const askAndListen = useCallback(
-    async (text, { bargeIn = false } = {}) => {
+    async (text, { bargeIn = false, bridges = false, restatement = "" } = {}) => {
       deliveryRef.current = { deliveredFully: true, interruptedAtChar: null };
       await openMic({ armTurnClock: false });
+
+      // A recruiter-approved question owes nothing to the answer just given, so without this it
+      // arrives as an abrupt gear-change — and because the interview alternates approved question
+      // / adaptive follow-up, that happens every other turn. One approved sentence signalling a
+      // change of subject is what a human would say, costs a second, and characterises nothing
+      // about the previous answer. The server decides WHICH questions bridge; this only plays it.
+      const bridgeBank = policyRef.current.bridges;
+      if (bridges && bridgeBank.length) {
+        const phrase = bridgeBank[turnCounterRef.current % bridgeBank.length];
+        await playBackchannel(phrase);
+        bcEventsRef.current.push({ kind: "bridge", phrase, at: Date.now() });
+      }
 
       // `bargeIn` is the caller's measured-isolation signal. It is now an OR rather than the sole
       // gate: a device that measured clean is interruptible even if the echo gate were disabled.
@@ -1248,7 +1728,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
           if (rec && rec.state === "recording") rec.pause();
         } catch { /* ignore */ }
         try {
-          await speak(text);
+          await speak(text, { restatement });
         } finally {
           try {
             if (recorderRef.current && recorderRef.current.state === "paused") recorderRef.current.resume();
@@ -1277,7 +1757,7 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       };
       bargeInArmedRef.current = true;
       try {
-        await speak(text);
+        await speak(text, { restatement });
       } finally {
         bargeInArmedRef.current = false;
         onBargeInRef.current = null;
@@ -1285,8 +1765,30 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       setPhase("listening");
       armSilence(policyRef.current.initialSilenceMs);
     },
-    [speak, openMic, armSilence, stopSpeaking]
+    [speak, openMic, armSilence, stopSpeaking, playBackchannel]
   );
+
+  // "I'm still thinking." — cancel the pending end of turn and hand the floor straight back.
+  //
+  // Speaking again already does this (the socket handler clears the timer on the next transcript),
+  // but that is only useful to a candidate who has words ready. The one who needs it most is the
+  // one who has NOT: they can see the countdown, they know they are not finished, and they have
+  // nothing to say yet. Without a control their only options are to make a noise or lose the turn.
+  //
+  // It grants the same window the interviewer grants when it says "take your time", and it is
+  // recorded like every other condition of the interview — never as a signal about the candidate.
+  const keepListening = useCallback(() => {
+    if (endedRef.current || !sessionRef.current) return;
+    if (graceTimerRef.current) {
+      clearTimeout(graceTimerRef.current);
+      graceTimerRef.current = null;
+    }
+    setEndingSoon(false);
+    setEndsAt(0);
+    const policy = policyRef.current;
+    sessionRef.current.keepListeningCount = (sessionRef.current.keepListeningCount || 0) + 1;
+    armSilence(policy.postReassuranceGraceMs, "holding");
+  }, [armSilence]);
 
   // Kept for callers that manage speaking themselves (and for re-opening the mic after a failed
   // transcription without re-asking the question).
@@ -1298,18 +1800,18 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     const backchannels = bcEventsRef.current;
     bcEventsRef.current = [];
     setPhase("processing");
-    if (keepAliveRef.current) clearInterval(keepAliveRef.current);
-    keepAliveRef.current = null;
-    try {
-      if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
-    } catch { /* ignore */ }
+    // `Finalize`, not `CloseStream`. Both flush whatever audio the provider is still holding, but
+    // CloseStream ends the socket — which is what used to make the microphone dead for the whole
+    // gap between questions, and what made every question pay for a fresh handshake. Finalize
+    // gets the trailing words and leaves the pipe up.
     try {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "CloseStream" }));
+        wsRef.current.send(JSON.stringify({ type: "Finalize" }));
       }
     } catch { /* ignore */ }
-    // Give Deepgram a beat to emit any trailing final result before we close.
-    await new Promise((r) => setTimeout(r, 450));
+    // A beat for the flushed final to arrive. Shorter than the old 450ms because nothing is being
+    // torn down behind it — this is waiting for one message, not for a socket to drain and close.
+    await new Promise((r) => setTimeout(r, 250));
     cleanupAnswer();
 
     const transcript = (acc?.finalText || acc?.lastInterim || "").trim();
@@ -1337,33 +1839,47 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
       // Whether the question was actually finished before the candidate started answering. The
       // server uses this to decide whether the question really covered its claim-probe.
       questionDelivery: { ...deliveryRef.current },
+      // What the connection did while this answer was being recorded. `lost` means the caller
+      // must NOT submit this as a complete answer — words are missing and we know it. Even a
+      // recovered drop travels with the transcript, because "we reconnected" is not "we heard
+      // everything", and the report has to be able to tell a reviewer which one happened.
+      connection: {
+        drops: acc?.drops || 0,
+        gapMs: acc?.gapMs || 0,
+        lost: Boolean(acc?.lost),
+      },
+      // What they said in the gap before this question was asked — captured because the
+      // microphone no longer closes between turns. Recorded as a condition of the interview, and
+      // deliberately not spliced into any answer: it followed the PREVIOUS one.
+      spokeBetweenTurns: acc?.spokeBetweenTurns || "",
     };
   }, [cleanupAnswer]);
 
   const cancelListening = useCallback(() => {
-    cleanupAnswer();
-    sessionRef.current = null;
+    // A full teardown, not just the turn: this is the candidate leaving voice mode, and leaving
+    // the microphone live after they switched to typing would be indefensible.
+    teardownSession();
     bcEventsRef.current = [];
     setInterim("");
     setPhase("idle");
-  }, [cleanupAnswer]);
+  }, [teardownSession]);
 
   // Tear everything down on unmount.
   useEffect(() => {
     const cache = bcCacheRef.current;
     return () => {
       stopSpeaking();
-      cleanupAnswer();
+      teardownSessionRef.current?.();
       // Release the pre-synthesized backchannel audio held for the whole session, and the current
       // question's audio (held so a repeat can replay the same bytes).
       for (const pending of cache.values()) {
         Promise.resolve(pending).then((url) => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
       }
       cache.clear();
-      if (questionAudioRef.current) {
-        URL.revokeObjectURL(questionAudioRef.current);
-        questionAudioRef.current = null;
-      }
+      // The question's URL is a server stream now, not a blob — there is nothing local to release
+      // unless an older code path put one there.
+      if (questionAudioRef.current?.startsWith("blob:")) URL.revokeObjectURL(questionAudioRef.current);
+      questionAudioRef.current = null;
     };
   }, [stopSpeaking, cleanupAnswer]);
 
@@ -1376,6 +1892,17 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     backchannel,
     personaName,
     canInterrupt,
+    // "idle" | "live" | "reconnecting" | "lost". The room shows this, because a candidate who
+    // is talking into a socket that just died has a right to know before they finish the answer.
+    connection,
+    // Epoch ms at which the turn will end, or 0. Drives the visible countdown.
+    endsAt,
+    // The candidate is talking in the gap between questions. The room holds the next question
+    // until they stop, which is the entire reason the microphone now stays open through that gap:
+    // asking the next question over someone who is still adding to their last answer is exactly
+    // the thing that made this feel like a form.
+    speakingBetweenTurns,
+    keepListening,
     speak,
     askAndListen,
     acknowledge,

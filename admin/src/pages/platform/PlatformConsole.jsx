@@ -19,6 +19,7 @@ import {
 import api, { setViewAsCompany } from "../../api/client.js";
 import { clearAdminAuth } from "../../auth/adminAuth.js";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
+import { RecordCard, RecordGrid } from "../../components/ui/Panels.jsx";
 import Button from "../../components/ui/Button.jsx";
 import { Input, Label, FormGroup } from "../../components/ui/Field.jsx";
 import Modal from "../../components/ui/Modal.jsx";
@@ -115,64 +116,41 @@ function TenantsTab() {
         <EmptyState icon={Building2} title="No tenants" description="Tenant workspaces appear here once companies register." />
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs font-semibold text-slate-600">
-                  <th className="py-2 pr-4 font-semibold">Tenant</th>
-                  <th className="py-2 pr-4 font-semibold">Status</th>
-                  <th className="py-2 pr-4 font-semibold">Plan</th>
-                  <th className="py-2 pr-4 font-semibold">Jobs</th>
-                  <th className="py-2 pr-4 font-semibold">Candidates</th>
-                  <th className="py-2 font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.items.map((t) => (
-                  <tr key={t.id} className="border-b border-slate-50">
-                    <td className="py-2.5 pr-4">
-                      <p className="font-medium text-slate-800">{t.name}</p>
-                      <p className="text-xs text-slate-500">{t.companyCode} · {t.city || "—"}, {t.country || "—"}</p>
-                    </td>
-                    <td className="py-2.5 pr-4">
-                      <Badge tone={STATUS_TONE[t.status] || "slate"}>{t.status}</Badge>
-                    </td>
-                    <td className="py-2.5 pr-4 text-slate-600">
-                      {t.subscription ? `${t.subscription.plan || "—"} (${t.subscription.status})` : "none"}
-                    </td>
-                    <td className="py-2.5 pr-4 text-slate-600">{t.counts.jobs}</td>
-                    <td className="py-2.5 pr-4 text-slate-600">{t.counts.candidates}</td>
-                    <td className="py-2.5">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => viewAsTenant(t)}
-                          className="flex items-center gap-1 text-xs font-medium text-brand-700 hover:underline"
-                          title="Read-only view of this tenant's dashboard"
-                        >
-                          <Eye className="h-3.5 w-3.5" /> View as
-                        </button>
-                        {t.status === "active" ? (
-                          <button
-                            onClick={() => setReasonFor({ tenant: t, action: "suspend" })}
-                            className="text-xs font-medium text-red-600 hover:underline"
-                          >
-                            Suspend
-                          </button>
-                        ) : t.status === "suspended" ? (
-                          <button
-                            onClick={() => setReasonFor({ tenant: t, action: "reactivate" })}
-                            className="text-xs font-medium text-emerald-600 hover:underline"
-                          >
-                            Reactivate
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <RecordGrid columns={2}>
+            {data.items.map((t) => (
+              <RecordCard
+                key={t.id}
+                icon={Building2}
+                title={t.name}
+                subtitle={`${t.companyCode} · ${t.city || "—"}, ${t.country || "—"}`}
+                trailing={<Badge tone={STATUS_TONE[t.status] || "slate"}>{t.status}</Badge>}
+                meta={[
+                  {
+                    label: "Plan",
+                    value: t.subscription ? `${t.subscription.plan || "—"} (${t.subscription.status})` : "none",
+                  },
+                  { label: "Jobs", value: t.counts.jobs },
+                  { label: "Candidates", value: t.counts.candidates },
+                ]}
+                actions={
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => viewAsTenant(t)} title="Read-only view of this tenant's dashboard">
+                      <Eye className="h-3.5 w-3.5" /> View as
+                    </Button>
+                    {t.status === "active" ? (
+                      <Button variant="ghost" size="sm" onClick={() => setReasonFor({ tenant: t, action: "suspend" })}>
+                        Suspend
+                      </Button>
+                    ) : t.status === "suspended" ? (
+                      <Button variant="ghost" size="sm" onClick={() => setReasonFor({ tenant: t, action: "reactivate" })}>
+                        Reactivate
+                      </Button>
+                    ) : null}
+                  </>
+                }
+              />
+            ))}
+          </RecordGrid>
           <Pager page={data.page} total={data.total} limit={data.limit} onPage={setPage} />
         </>
       )}
@@ -270,28 +248,21 @@ function TrustTab() {
 
       <Card>
         <h3 className="mb-3 text-base font-semibold text-slate-900">LLM spend by kind (30d)</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-xs font-semibold text-slate-600">
-                <th className="py-2 pr-4 font-semibold">Kind</th>
-                <th className="py-2 pr-4 font-semibold">Calls</th>
-                <th className="py-2 pr-4 font-semibold">Cost</th>
-                <th className="py-2 font-semibold">Fallback calls</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.spendByKind.map((r) => (
-                <tr key={r.kind} className="border-b border-slate-50">
-                  <td className="py-2 pr-4 font-mono text-xs text-slate-700">{r.kind}</td>
-                  <td className="py-2 pr-4 text-slate-600">{r.calls}</td>
-                  <td className="py-2 pr-4 text-slate-600">₹{(r.costCents / 100).toFixed(2)}</td>
-                  <td className="py-2 text-slate-600">{r.fallback}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <RecordGrid>
+          {data.spendByKind.map((r) => (
+            <RecordCard
+              key={r.kind}
+              title={r.kind}
+              trailing={<Badge tone="slate">₹{(r.costCents / 100).toFixed(2)}</Badge>}
+              meta={[
+                { label: "Calls", value: r.calls },
+                { label: "Fallback calls", value: r.fallback },
+              ]}
+              metaColumns={2}
+            />
+          ))}
+          {data.spendByKind.length === 0 && <p className="text-sm text-slate-500">No LLM spend in range.</p>}
+        </RecordGrid>
       </Card>
 
       <Card>
@@ -312,11 +283,29 @@ function TrustTab() {
   );
 }
 
+/**
+ * A paged log viewer rendered as record cards.
+ *
+ * `columns` keeps the `{ label, render }` shape it always had; two optional
+ * flags decide where each field lands on the card. `primary` is the card's
+ * title, `trailing` is the badge in the top-right, everything else falls into
+ * the meta grid in declared order. Without either flag the first column becomes
+ * the title, so a tab that doesn't care still renders sensibly.
+ *
+ * A log is the one genuinely columnar thing in this console, and cards trade
+ * some cross-row comparability for room to breathe. That trade is worth it here
+ * because these rows are read one at a time — you come to the audit log to
+ * answer "what happened to tenant X", not to scan a column of timestamps.
+ */
 function LogTab({ endpoint, columns, filters }) {
   const toast = useToast();
   const [data, setData] = useState(null);
   const [page, setPage] = useState(1);
   const [filterValues, setFilterValues] = useState({});
+
+  const primaryCol = columns.find((c) => c.primary) || columns[0];
+  const trailingCol = columns.find((c) => c.trailing);
+  const metaCols = columns.filter((c) => c !== primaryCol && c !== trailingCol);
 
   const load = useCallback(async () => {
     try {
@@ -357,26 +346,18 @@ function LogTab({ endpoint, columns, filters }) {
         <p className="py-8 text-center text-sm text-slate-500">No rows in range.</p>
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs font-semibold text-slate-600">
-                  {columns.map((c) => (
-                    <th key={c.label} className="py-2 pr-4 font-semibold">{c.label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(data.items || data.rows).map((row, i) => (
-                  <tr key={row._id || i} className="border-b border-slate-50 align-top">
-                    {columns.map((c) => (
-                      <td key={c.label} className="py-2 pr-4 text-slate-600">{c.render(row)}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <RecordGrid columns={2}>
+            {(data.items || data.rows).map((row, i) => (
+              <RecordCard
+                key={row._id || i}
+                title={primaryCol.render(row)}
+                subtitle={primaryCol.label}
+                trailing={trailingCol ? trailingCol.render(row) : null}
+                meta={metaCols.map((c) => ({ label: c.label, value: c.render(row) }))}
+                metaColumns={metaCols.length > 3 ? 4 : 3}
+              />
+            ))}
+          </RecordGrid>
           {data.total != null && <Pager page={data.page} total={data.total} limit={data.limit} onPage={setPage} />}
         </>
       )}
@@ -431,11 +412,11 @@ export default function PlatformConsole() {
               { key: "actorEmail", label: "Actor email" },
             ]}
             columns={[
+              { label: "Action", primary: true, render: (r) => r.action },
+              { label: "Status", trailing: true, render: (r) => <Badge tone="slate">{r.statusCode || "—"}</Badge> },
               { label: "When", render: (r) => new Date(r.createdAt).toLocaleString() },
               { label: "Actor", render: (r) => r.actorEmail || "system" },
-              { label: "Action", render: (r) => <span className="font-mono text-xs">{r.action}</span> },
               { label: "Target", render: (r) => (r.resourceType ? `${r.resourceType} ${r.resourceId || ""}` : "—") },
-              { label: "Status", render: (r) => r.statusCode || "—" },
             ]}
           />
         )}
@@ -448,11 +429,11 @@ export default function PlatformConsole() {
               { key: "category", label: "Category" },
             ]}
             columns={[
-              { label: "When", render: (r) => new Date(r.createdAt).toLocaleString() },
+              { label: "Subject", primary: true, render: (r) => r.subject },
+              { label: "Status", trailing: true, render: (r) => <Badge tone={STATUS_TONE[r.status] || "slate"}>{r.status}</Badge> },
               { label: "To", render: (r) => r.to },
-              { label: "Subject", render: (r) => r.subject },
+              { label: "When", render: (r) => new Date(r.createdAt).toLocaleString() },
               { label: "Category", render: (r) => r.category || "—" },
-              { label: "Status", render: (r) => <Badge tone={STATUS_TONE[r.status] || "slate"}>{r.status}</Badge> },
               { label: "Error", render: (r) => r.error || "—" },
             ]}
           />
@@ -462,11 +443,11 @@ export default function PlatformConsole() {
             endpoint="/platform/usage"
             filters={[]}
             columns={[
-              { label: "Tenant", render: (r) => r.companyName },
-              { label: "Kind", render: (r) => <span className="font-mono text-xs">{r.kind}</span> },
+              { label: "Tenant", primary: true, render: (r) => r.companyName },
+              { label: "Cost", trailing: true, render: (r) => <Badge tone="slate">₹{(r.costCents / 100).toFixed(2)}</Badge> },
+              { label: "Kind", render: (r) => r.kind },
               { label: "Calls", render: (r) => r.calls },
               { label: "Tokens", render: (r) => r.totalTokens },
-              { label: "Cost", render: (r) => `₹${(r.costCents / 100).toFixed(2)}` },
               { label: "Cached", render: (r) => r.cached },
               { label: "Fallback", render: (r) => r.fallback },
             ]}
@@ -477,12 +458,12 @@ export default function PlatformConsole() {
             endpoint="/platform/demo-requests"
             filters={[]}
             columns={[
-              { label: "When", render: (r) => new Date(r.createdAt).toLocaleString() },
-              { label: "Company", render: (r) => r.companyName },
+              { label: "Company", primary: true, render: (r) => r.companyName },
+              { label: "Size", trailing: true, render: (r) => <Badge tone="slate">{r.companySize || "size unknown"}</Badge> },
               { label: "Email", render: (r) => r.email },
               { label: "Phone", render: (r) => r.phone || "—" },
-              { label: "Size", render: (r) => r.companySize || "—" },
-              { label: "Message", render: (r) => <span className="line-clamp-2 max-w-xs text-xs">{r.message || "—"}</span> },
+              { label: "When", render: (r) => new Date(r.createdAt).toLocaleString() },
+              { label: "Message", render: (r) => <span className="line-clamp-3">{r.message || "—"}</span> },
             ]}
           />
         )}

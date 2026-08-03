@@ -22,6 +22,11 @@ const deviceCheckSchema = new mongoose.Schema(
     // problem dressed up as a quality bar.
     echoPath: { type: String, enum: ["isolated", "bleeding", "inconclusive"], default: "inconclusive" },
     echoRatio: { type: Number }, // measured tone-to-baseline mic level, for diagnosing complaints
+    // Loudest level the microphone actually captured during the pre-check. The check used to
+    // verify PERMISSION only — it took the stream, saw the browser say yes, and stopped the
+    // tracks — so a muted headset or a wrong default device passed every tick and produced total
+    // silence at question one. This is the evidence that they were audible before they started.
+    micPeak: { type: Number },
     audioOutputConfirmed: { type: Boolean, default: false }, // the candidate said they heard the tone
     bargeInEligible: { type: Boolean, default: false },
 
@@ -108,16 +113,27 @@ const proctoringSchema = new mongoose.Schema(
   { _id: false }
 );
 
-// Raw prosody measurements for a spoken answer, computed in-browser during recording. These
-// are inputs; the derived delivery/confidence score is computed server-side (not client-trusted).
+// Raw prosody measurements for a spoken answer, computed in-browser during recording.
+//
+// These are measurements of the RECORDING, not of the candidate, and exactly one thing is
+// derived from them: `audioQuality`, which asks "could we hear this answer at all". Nothing here
+// may reach a score, a recommendation, or a recruiter-facing number about the person — pace,
+// hesitation and filler rate are accent, nervousness and disability proxies, and none of them
+// appear in any RoleRubric. See utils/prosody.js for the full argument and for what was removed.
 const acousticSchema = new mongoose.Schema(
   {
     wordsPerMinute: { type: Number },
     pauseRatio: { type: Number }, // fraction of the answer that was silence
-    fillerRate: { type: Number }, // filler words ("um", "uh") per 100 words
+    fillerRate: { type: Number }, // filler words ("um", "uh") per 100 words — recorded, never scored
     pitchVariance: { type: Number },
     energyVariance: { type: Number },
-    deliveryScore: { type: Number }, // 0-100, derived server-side (V3)
+    // 0-100 usability of the AUDIO. Low = we could not hear them (dead mic, mostly silence), and
+    // the turn is flagged degraded so it is not read as a weak answer. Never a merit signal.
+    audioQuality: { type: Number },
+    // Historical only: the pre-2026-08 name for a number that ALSO scored pace and filler rate
+    // and was shown to recruiters as "Delivery: 64/100". Kept readable so old sessions still
+    // flag bad audio; never written by current code, never displayed anywhere.
+    deliveryScore: { type: Number },
   },
   { _id: false }
 );
@@ -175,6 +191,11 @@ const interviewTurnSchema = new mongoose.Schema(
     // question produced this answer" is a lookup rather than a string comparison against text
     // that may since have been superseded by a newer version of the set.
     mustAskId: { type: String },
+    // On a QUESTION turn: the approved plain-language rewording of this question, if the set
+    // carried one. Stored on the turn so it is both speakable (utils/speechAuthorization allows
+    // only bank phrases and text present as an interviewer turn) and part of the permanent
+    // record of what this candidate was read.
+    restatement: { type: String, trim: true, default: "" },
     // On a candidate ANSWER: why the turn ended (utils/endpointing.js). "complete" means the
     // answer was classified as finished, "holding"/"ambiguous" that the interviewer waited and
     // eventually moved on, "manual" that the candidate ended it themselves. A condition of the
@@ -182,6 +203,46 @@ const interviewTurnSchema = new mongoose.Schema(
     endOfTurn: {
       state: { type: String, enum: ["complete", "ambiguous", "holding", "manual"] },
       reason: { type: String, trim: true },
+    },
+    // On a candidate ANSWER: how clearly it was communicated, when the role declares that it
+    // assesses spoken communication (RoleRubric.spokenCommunication).
+    //
+    // Derived from the TRANSCRIPT ONLY — see utils/communication.js. Nothing about how the
+    // candidate sounded reaches it, which is what makes it accent-neutral by construction rather
+    // than by good intentions. `features` keeps the verbatim quote behind every observation, so a
+    // score is answerable with the candidate's own words rather than with an assertion.
+    communication: {
+      delivery: { type: Number }, // clarity: answered the question, concrete, followable
+      confidence: { type: Number }, // calibration: knew what they knew, did not overclaim
+      // Yes/no observations with the quote that evidences each. Uncited ones were dropped before
+      // scoring, so what is stored is what was actually verifiable.
+      features: { type: mongoose.Schema.Types.Mixed },
+      // What the two numbers are over. A 72 from three verified features and a 72 from seven are
+      // different findings and the number alone cannot tell them apart.
+      evidence: { type: mongoose.Schema.Types.Mixed },
+    },
+    // On a candidate ANSWER: what they said in the GAP before this question was asked.
+    //
+    // The microphone no longer closes between turns, so this is the "oh — and one more thing"
+    // that used to go into a torn-down stream and vanish. It is recorded on the turn that FOLLOWS
+    // it and is deliberately not spliced into any answer: it belongs to the previous question, and
+    // quietly filing it under the next one would be a worse failure than losing it.
+    //
+    // Read by no scorer. It exists so a reviewer can see that the candidate said something the
+    // instrument did not capture as evidence, and decide for themselves what to do about it.
+    spokeBetweenTurns: { type: String, trim: true },
+    // On a candidate ANSWER: what the transcription connection did while it was being recorded.
+    //
+    // A dropped socket means words are MISSING from this transcript. The pipeline reconnects and
+    // the answer survives, but the recording has a hole in it, and a hole nobody records is a
+    // hole that gets scored as if the candidate simply said less. So it is stored on the turn and
+    // read by the report (utils/interviewReportEngine) to mark the turn degraded.
+    //
+    // Never an input to a score, and never a signal about the candidate: whose connection drops
+    // is a fact about their broadband, not about their competence.
+    connection: {
+      drops: { type: Number }, // how many times the socket died and was re-established
+      gapMs: { type: Number }, // roughly how much audio was lost across those gaps
     },
     // How many times the candidate asked to hear THIS question again (set on the question turn).
     //
@@ -232,6 +293,12 @@ const interviewMustAskSchema = new mongoose.Schema(
   {
     questionId: { type: String, required: true }, // id within the approved set version
     text: { type: String, required: true },
+    // The recruiter-approved plain-language rewording, spoken to a candidate who heard the
+    // question and said they did not understand it. Copied here with the question so this session
+    // can state what it actually read out even after the set version is superseded. Empty means
+    // this question has no approved rewording, and the interviewer repeats it instead of
+    // promising a rephrasing it cannot give. See models/QuestionSet.js.
+    restatement: { type: String, default: "" },
     topic: { type: String, default: "" },
     status: { type: String, enum: ["pending", "asked"], default: "pending" },
     turnIndex: { type: Number },
@@ -276,9 +343,30 @@ const interviewEvaluationSchema = new mongoose.Schema(
     communication: { type: Number },
     technicalKnowledge: { type: Number },
     problemSolving: { type: Number },
-    // Voice-only: derived from answer prosody (0-100), present when the interview was spoken.
+    // Spoken communication, present ONLY when the role's approved rubric declares that it is
+    // assessed and a human wrote down why (RoleRubric.spokenCommunication).
+    //
+    // These field names existed before and meant something indefensible: they were computed from
+    // pace, filler rate and hesitation — accent, nervousness and speech-difference proxies —
+    // against a criterion no rubric declared and no candidate was told about. The names survived;
+    // the inputs did not. Both are now derived from the TRANSCRIPT only (utils/communication.js),
+    // which is accent-neutral by construction because text carries no accent.
+    //
+    //   delivery   — clarity: did they answer what was asked, concretely, followably
+    //   confidence — CALIBRATION, not self-assurance: did they mark the boundary of what they
+    //                knew. Hedging now counts FOR a candidate; unhedged overclaiming counts
+    //                against. The old scorer did the exact reverse.
+    //
+    // Reported beside the competency scores; never part of overallScore; can route to a human and
+    // can never, on its own, reject anyone.
     delivery: { type: Number },
     confidence: { type: Number },
+    spokenCommunication: {
+      answersScored: { type: Number },
+      // The recorded job-relatedness reason, carried here so it appears on the same screen as the
+      // number rather than a rubric page away.
+      justification: { type: String, trim: true },
+    },
     strengths: { type: [String], default: [] },
     weaknesses: { type: [String], default: [] },
     missingSkills: { type: [String], default: [] },
@@ -321,7 +409,7 @@ const backchannelSchema = new mongoose.Schema(
   {
     kind: {
       type: String,
-      enum: ["reassure", "repeat", "acknowledge", "confirm", "decline", "withdraw_confirm", "withdraw_cancel", "pause", "clarify", "technical"],
+      enum: ["reassure", "repeat", "acknowledge", "confirm", "bridge", "decline", "withdraw_confirm", "withdraw_cancel", "pause", "clarify", "technical"],
       required: true,
     },
     phrase: { type: String, required: true },
@@ -372,6 +460,25 @@ const aiInterviewSchema = new mongoose.Schema(
     engine: { type: String, enum: ["ai", "fallback"], default: "ai" },
     // How the candidate answered — set to "voice" once any spoken answer is received.
     modality: { type: String, enum: ["text", "voice"], default: "text" },
+    // The candidate's first name, resolved once when the interview starts.
+    //
+    // Stored rather than looked up because it is part of the closed set of things this session is
+    // allowed to SAY: the approved phrase bank contains name-bearing phrases ("Thank you,
+    // Priya."), and utils/speechAuthorization has to be able to decide whether a given sentence
+    // is one of them without loading the candidate. Empty when the application carries no usable
+    // first name, in which case those phrases simply do not exist for this session.
+    // No new personal data — the same name is already in the stored intro turn.
+    candidateFirstName: { type: String, trim: true, default: "" },
+    // Whether this interview assessed how clearly the candidate communicated, and if not, why not.
+    //
+    // Recorded rather than left as an absence, because "this role does not assess it" and "this
+    // candidate asked to be excluded" are different facts — and the second is one a candidate may
+    // later ask us to confirm we honoured. An absent field would answer neither.
+    spokenCommunication: {
+      assessed: { type: Boolean },
+      reason: { type: String, trim: true }, // when not assessed
+      justification: { type: String, trim: true }, // when assessed: the role's stated reason
+    },
     plan: { type: interviewPlanSchema, default: () => ({}) },
     currentDifficulty: { type: String, enum: ["easy", "medium", "hard"], default: "medium" },
     turns: { type: [interviewTurnSchema], default: () => [] },

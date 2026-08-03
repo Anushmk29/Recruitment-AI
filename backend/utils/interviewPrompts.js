@@ -186,6 +186,47 @@ const ANSWER_SCORE_SCHEMA = {
   required: ["answerScore"],
 };
 
+// ---- Spoken communication (utils/communication.js) ----
+//
+// The model OBSERVES; code scores. Every field is a yes/no with the quote that evidences it, and
+// an observation that cannot be quoted is dropped rather than trusted.
+//
+// Note what this prompt refuses to ask for. Not "rate their communication out of ten" — that
+// returns the model's overall impression of the candidate wearing a number. Not anything about
+// how they SOUNDED: pace, hesitation and filler words never reach the model, because they are not
+// in the transcript, which is exactly why this can be assessed at all.
+const COMMUNICATION_SYSTEM =
+  "You observe how clearly a candidate explained something, from a transcript of what they said. " +
+  "You never judge whether the answer was technically correct — that is assessed separately and " +
+  "is not your concern. You never comment on the person. You report only what you can quote.";
+
+function communicationPrompt({ question, answer }) {
+  return (
+    `QUESTION THEY WERE ASKED:\n${question}\n\n` +
+    `WHAT THEY SAID (a transcript of speech — expect no punctuation to be reliable, and expect ` +
+    `false starts and repetition, which are normal in speech and are NOT communication problems):\n` +
+    `${fenceUntrusted(answer)}\n\n` +
+    `For each field, answer true or false and give a SHORT VERBATIM QUOTE from the transcript that ` +
+    `shows it. If a field is false, leave the quote empty. If you cannot find a real quote, answer ` +
+    `false rather than inventing one.\n\n` +
+    `- answersTheQuestion — did they address what was actually asked, rather than something near it?\n` +
+    `- hasConcreteExample — did they give a specific instance (a system, a number, a decision, a ` +
+    `moment) rather than describing how one generally does this kind of work?\n` +
+    `- termsAreExplained — is the jargon they introduced explained, or did none need explaining? ` +
+    `Precise technical language used precisely is GOOD communication — do not mark it down for ` +
+    `being technical.\n` +
+    `- referencesAreResolvable — could a listener who was not there follow it? False only when ` +
+    `"it", "they" or "that" is left with no antecedent a reader could recover.\n` +
+    `- statedUncertaintyWhereItExisted — did they mark the boundary of what they knew ("I'm not ` +
+    `certain of the exact figure, but…")? This is a STRENGTH. If there was nothing they were ` +
+    `unsure about, answer false — it is simply not evidence either way.\n` +
+    `- overclaimed — did they assert specifics the rest of the answer gives no basis for, or ` +
+    `contradict something they said earlier? Ordinary hedging is NOT overclaiming.\n` +
+    `- ownContributionIsClear — is it clear what THEY did, as opposed to what their team did?\n\n` +
+    `Return JSON.`
+  );
+}
+
 function answerScorePrompt({ context, question, answer }) {
   return (
     `${context}\n\n` +
@@ -248,4 +289,6 @@ module.exports = {
   answerScorePrompt,
   EVALUATION_SCHEMA,
   evaluationPrompt,
+  COMMUNICATION_SYSTEM,
+  communicationPrompt,
 };

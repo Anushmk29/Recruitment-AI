@@ -16,6 +16,8 @@ const {
   voiceConsent,
   voiceToken,
   voiceSpeak,
+  voiceSpeakPrepare,
+  voiceSpeakStream,
   voiceIntent,
   uploadEvidenceClip,
   phoneEvidenceClip,
@@ -77,6 +79,15 @@ router.post("/phone/evidence", requirePhoneAuth, evidenceLimiter, evidenceClipUp
 router.post("/voice/consent", requireCandidateAuth, voiceTokenLimiter, asyncHandler(voiceConsent));
 router.get("/voice/token", requireCandidateAuth, voiceTokenLimiter, asyncHandler(voiceToken));
 router.post("/voice/speak", requireCandidateAuth, voiceSpeakLimiter, asyncHandler(voiceSpeak));
+// Progressive playback for QUESTIONS: step 1 authorises the sentence, step 2 streams it so the
+// voice starts on the opening words instead of after the whole file. See the controller for why
+// this is two steps and not one.
+router.post("/voice/speak/stream", requireCandidateAuth, voiceSpeakLimiter, asyncHandler(voiceSpeakPrepare));
+// No requireCandidateAuth: the ticket IS the credential. An <audio> element cannot send an
+// Authorization header, and putting the portal JWT in the URL would write a live session token
+// into browser history and every access log. The ticket is 24 random bytes, expires in fifteen
+// minutes, and grants exactly one sentence of speech this server already approved.
+router.get("/voice/speak/stream/:ticket", asyncHandler(voiceSpeakStream));
 // The semantic intent tier. Its own, much higher limit: this fires on utterances rather than on
 // turns, so a talkative candidate legitimately hits it far more often than they hit /speak — but
 // it is a metered model call, so it is still bounded rather than open.

@@ -343,20 +343,22 @@ export default function ApplyForm() {
 
   if (status === "submitted") {
     return (
-      <Card className="text-center">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-          <CheckCircle2 className="h-7 w-7" />
+      <Card className="py-10 text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-verdict-positive-tint text-verdict-positive">
+          <CheckCircle2 className="h-7 w-7" aria-hidden="true" />
         </div>
-        <h1 className="text-lg font-semibold text-slate-900">Application Submitted!</h1>
-        <p className="mt-2 text-sm text-slate-500">
+        <h1 className="font-display text-xl font-bold tracking-tight text-slate-900">Application submitted</h1>
+        <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
           Your application for <span className="font-medium text-slate-700">{job.title}</span> was received.
         </p>
         {receipt?._id && (
-          <p className="mt-1 text-xs text-slate-400">
-            Reference ID: <span className="font-mono">{receipt._id}</span>
+          // Was `slate-400` at 12px. This is the one string a candidate might
+          // have to quote back to a recruiter — it has to be readable.
+          <p className="mt-2 text-xs text-slate-500">
+            Reference ID: <span className="font-mono text-slate-700">{receipt._id}</span>
           </p>
         )}
-        <div className="mx-auto mt-4 max-w-md rounded-xl bg-slate-50 p-4 text-left text-sm text-slate-600">
+        <div className="mx-auto mt-6 max-w-md rounded-2xl border border-slate-200 bg-canvas p-5 text-left text-sm text-slate-600">
           <p className="font-semibold text-slate-800">What happens next</p>
           <ol className="mt-2 list-decimal space-y-1 pl-5">
             <li>Your resume is being screened now — this runs in the background.</li>
@@ -364,13 +366,13 @@ export default function ApplyForm() {
             <li>If you're shortlisted, the email includes your interview link. A laptop or desktop is recommended for the interview.</li>
           </ol>
         </div>
-        <div className="mt-5 flex items-center justify-center gap-4">
-          <Link to="/dashboard" className="text-sm font-semibold text-brand-700 hover:underline">
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <Button as={Link} to="/dashboard" size="sm">
             Track it on your dashboard
-          </Link>
-          <Link to="/" className="text-sm font-semibold text-slate-500 hover:underline">
+          </Button>
+          <Button as={Link} to="/" size="sm" variant="outline">
             Back to listings
-          </Link>
+          </Button>
         </div>
       </Card>
     );
@@ -381,11 +383,23 @@ export default function ApplyForm() {
       <Link to={`/jobs/${job.slug || id}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-brand-700">
         <ArrowLeft className="h-4 w-4" /> Back to job
       </Link>
-      <h1 className="text-2xl font-bold text-slate-900">Apply — {job.title}</h1>
+      <div>
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-slate-900">Apply — {job.title}</h1>
+        <p className="mt-1.5 text-sm text-slate-500">
+          {job.company?.name ? `${job.company.name} · ` : ""}Screening starts as soon as you submit.
+        </p>
+      </div>
 
       <Card>
         <form onSubmit={handleSubmit}>
-          {error && <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{error}</p>}
+          {error && (
+            <p
+              role="alert"
+              className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm font-medium text-verdict-negative"
+            >
+              {error}
+            </p>
+          )}
 
           <p className="mb-3 text-sm font-semibold text-brand-700">Basic Details</p>
           <div className="grid gap-4 sm:grid-cols-2">

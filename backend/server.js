@@ -36,6 +36,7 @@ const dataRightsRoutes = require("./routes/dataRightsRoutes");
 const companySettingsRoutes = require("./routes/companySettingsRoutes");
 const rubricRoutes = require("./routes/rubricRoutes");
 const personaRoutes = require("./routes/personaRoutes");
+const intentPhraseRoutes = require("./routes/intentPhraseRoutes");
 const questionSetRoutes = require("./routes/questionSetRoutes");
 const reviewQueueRoutes = require("./routes/reviewQueueRoutes");
 const analyticsRoutes = require("./routes/analyticsRoutes");
@@ -174,6 +175,7 @@ app.use("/api/data-rights", dataRightsRoutes);
 app.use("/api/company-settings", companySettingsRoutes);
 app.use("/api/rubrics", rubricRoutes);
 app.use("/api/personas", personaRoutes);
+app.use("/api/intent-phrases", intentPhraseRoutes);
 // Nested under the job because a question set belongs to one job profile — the set IS the
 // per-profile instrument, which is the whole reason it isn't a tenant-wide setting.
 app.use("/api/jobs/:jobId/question-set", questionSetRoutes);

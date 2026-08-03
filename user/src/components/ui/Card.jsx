@@ -23,12 +23,49 @@ const cardTones = {
   default: "border-slate-200 bg-white",
   brand: "border-brand-100 surface-brand",
   ember: "border-accent-100 surface-ember",
-  // Filled tones invert to white text. Both gradients are pinned so their
-  // lightest stop already clears 4.5:1 against white (see index.css), which is
-  // what lets 12px metadata sit anywhere on these surfaces — including the top
-  // corner, where a brighter stop would have failed.
+  // The two filled tones invert in OPPOSITE directions, which is the one
+  // asymmetry in the system. Violet is dark enough to carry white; coral is
+  // not, at any brightness that still reads as coral, so ember takes near-black
+  // ink instead. index.css shows the arithmetic. Never assume "filled ⇒ white".
   "filled-brand": "border-transparent fill-brand text-white",
-  "filled-ember": "border-transparent fill-ember text-white",
+  "filled-ember": "border-transparent fill-ember text-accent-950",
+};
+
+/**
+ * Text and icon-tile classes for a given card tone.
+ *
+ * This exists so no call site has to remember that ember inverts. Every place
+ * that writes on a card asks here instead, which is what stops one screen from
+ * shipping white-on-coral at 3:1 because it copied the violet card next to it.
+ *
+ * `soft` on the ember fill is the same ink as `strong`, not a faded one:
+ * accent-900 over accent-500 is 3.16:1, so the usual trick of dropping opacity
+ * for secondary text fails here. Hierarchy comes from weight and size instead.
+ */
+export function toneText(tone) {
+  if (tone === "filled-ember") return { strong: "text-accent-950", soft: "text-accent-950", tile: "on-fill-ink" };
+  if (tone === "filled-brand") return { strong: "text-white", soft: "text-white/90", tile: "on-fill" };
+  return { strong: "text-slate-900", soft: "text-slate-500", tile: tone === "ember" ? "ember" : "brand" };
+}
+
+/**
+ * Padding steps, as a prop rather than a `className` override.
+ *
+ * This is a prop and not `className="p-4"` because Tailwind decides which of two
+ * competing `p-*` utilities wins by its own stylesheet order, not by the order
+ * they appear in a JSX string — so an override is a coin flip that happens to
+ * be landing right today. Selecting the class here means exactly one padding
+ * utility is ever emitted.
+ *
+ * `compact` (16px) exists for <RecordCard>: a record card is a *row*, not a
+ * panel, and 24px of padding on a list of forty candidates costs most of a
+ * screenful of queue. `none` is for cards that host their own edge-to-edge
+ * content.
+ */
+const cardPadding = {
+  default: "p-6",
+  compact: "p-4",
+  none: "p-0",
 };
 
 export function Card({
@@ -37,13 +74,16 @@ export function Card({
   as: Component = "div",
   interactive = false,
   tone = "default",
+  padding = "default",
   ...props
 }) {
   // `interactive` is opt-in: a card that lifts on hover but does nothing when
   // clicked is a false affordance. Only pass it when the whole card is a target.
   return (
     <Component
-      className={`rounded-2xl border p-6 shadow-card ${cardTones[tone] ?? cardTones.default} ${
+      className={`rounded-2xl border shadow-card ${cardPadding[padding] ?? cardPadding.default} ${
+        cardTones[tone] ?? cardTones.default
+      } ${
         interactive
           ? "transition-[box-shadow,transform] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-lift motion-reduce:hover:translate-y-0"
           : ""
@@ -64,6 +104,16 @@ const tileTones = {
   ember: "bg-accent-100 text-accent-700",
   slate: "bg-slate-100 text-slate-600",
   "on-fill": "bg-white/15 text-white",
+  // The ember counterpart: a coral fill takes a darkened chip with ink glyph,
+  // because a white/15 chip on coral gives the icon nothing to sit against.
+  "on-fill-ink": "bg-accent-950/12 text-accent-950",
+  // The verdict tones are here so a semantic icon chip is a system fact rather
+  // than something each page re-mixes out of raw `amber-50`/`red-50`. They read
+  // from the same tokens <Badge> does, which is what keeps "amber means a human
+  // is owed something" true across every surface that says it.
+  pending: "bg-verdict-pending-tint text-verdict-pending",
+  negative: "bg-verdict-negative-tint text-verdict-negative",
+  positive: "bg-verdict-positive-tint text-verdict-positive",
 };
 
 const tileSizes = {
@@ -82,6 +132,40 @@ export function IconTile({ icon: Icon, tone = "brand", size = "md", className = 
       } ${className}`}
     >
       <Icon />
+    </span>
+  );
+}
+
+/**
+ * Initials avatar — the person marker on record cards and headers.
+ *
+ * Deliberately monochrome brand tint rather than a hash-to-hue: colour derived
+ * from a name is colour derived from an ethnicity-correlated string, and this
+ * product does not get to put that on screen next to a score. Everyone gets the
+ * same violet.
+ *
+ * `aria-hidden` because the name it abbreviates is always rendered next to it —
+ * announcing "A" before "Alex Morgan" is noise.
+ */
+export function Avatar({ name, size = "md", className = "" }) {
+  const initials =
+    String(name || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase() || "?";
+  const sizes = { sm: "h-8 w-8 text-[11px]", md: "h-10 w-10 text-sm" };
+  return (
+    <span
+      aria-hidden="true"
+      className={`inline-flex shrink-0 items-center justify-center rounded-full bg-brand-100 font-semibold text-brand-700 ${
+        sizes[size] ?? sizes.md
+      } ${className}`}
+    >
+      {initials}
     </span>
   );
 }
@@ -135,26 +219,23 @@ export function StatCard({
   className = "",
   ...props
 }) {
-  const filled = tone.startsWith("filled-");
+  const t = toneText(tone);
   return (
     <Card tone={tone} className={`flex items-start gap-4 ${className}`} {...props}>
-      {Icon && <IconTile icon={Icon} tone={filled ? "on-fill" : tone === "ember" ? "ember" : "brand"} />}
+      {Icon && <IconTile icon={Icon} tone={t.tile} />}
       <div className="min-w-0 flex-1">
-        {/* white/90, not the /70–/75 that reads as "secondary" on a mock: over
-            brand-600 those land at 3.8:1 and 4.4:1. On a filled card the
-            hierarchy has to come from weight and size, because opacity is
-            spending contrast the small text does not have to give. */}
-        <p className={`text-xs font-semibold ${filled ? "text-white/90" : "text-slate-500"}`}>{label}</p>
+        {/* On a violet fill this is white/90, not the /70–/75 that reads as
+            "secondary" in a mock — those land at 3.8:1 and 4.4:1. On a coral
+            fill it is solid ink for the same reason. Either way the hierarchy
+            comes from weight and size, because opacity is spending contrast the
+            small text does not have to give. */}
+        <p className={`text-xs font-semibold ${t.soft}`}>{label}</p>
         {/* Lexend via font-display: this is display text, not a heading, so it
             does not inherit the base-layer treatment on its own. */}
-        <p
-          className={`font-display mt-1 text-2xl font-bold tracking-tight [overflow-wrap:anywhere] ${
-            filled ? "text-white" : "text-slate-900"
-          }`}
-        >
+        <p className={`font-display mt-1 text-2xl font-bold tracking-tight [overflow-wrap:anywhere] ${t.strong}`}>
           {value}
         </p>
-        {note && <p className={`mt-1 text-xs ${filled ? "text-white/90" : "text-slate-500"}`}>{note}</p>}
+        {note && <p className={`mt-1 text-xs ${t.soft}`}>{note}</p>}
         {action && <div className="mt-3">{action}</div>}
       </div>
     </Card>

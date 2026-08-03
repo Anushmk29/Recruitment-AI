@@ -265,44 +265,43 @@ export default function ScorecardPanel({ candidateId, enabled = true }) {
           {ledger?.available && ledger.rounds.length > 0 && (
             <div className="mt-4">
               <h4 className="mb-2 text-sm font-semibold text-slate-800">Evidence ledger</h4>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[520px] border-collapse text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-left text-xs text-slate-600">
-                      <th className="py-2 pr-3 font-semibold">Criterion</th>
-                      {ledger.rounds.map((r) => (
-                        <th key={r.id} className="px-2 py-2 font-semibold">
-                          {stageLabel(r.stage)}
-                          <span className="block font-normal normal-case text-slate-500">{r.interviewer}</span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ledger.criteria.map((c) => (
-                      <tr key={c.criterionId} className="border-b border-slate-100 align-top">
-                        <td className="py-2 pr-3">
-                          <span className="font-medium text-slate-800">{c.label}</span>
-                          <span className="ml-1.5 text-xs text-slate-500">{Math.round(c.weight * 100)}%</span>
-                        </td>
-                        {c.cells.map((cell) => (
-                          <td key={cell.roundId} className="px-2 py-2">
+              {/* One card per criterion, each holding a cell per round.
+                  The cross-tab it replaced compared rounds along a row, which is
+                  the comparison that matters — so the cells stay side by side
+                  inside the card and only stack once the viewport can't hold
+                  them. What the card adds is room for the interviewer's note at
+                  a readable width instead of the 220px a table column allowed. */}
+              <div className="space-y-2.5">
+                {ledger.criteria.map((c) => (
+                  <div key={c.criterionId} className="rounded-xl border border-slate-200 p-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                      <span className="text-sm font-semibold text-slate-800">{c.label}</span>
+                      <span className="text-xs text-slate-500">{Math.round(c.weight * 100)}% of the rubric</span>
+                    </div>
+
+                    <div className="mt-2.5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {c.cells.map((cell, i) => {
+                        const round = ledger.rounds[i];
+                        return (
+                          <div key={cell.roundId} className="rounded-lg bg-slate-50 px-3 py-2">
+                            <p className="text-[11px] font-semibold text-slate-500">
+                              {round ? stageLabel(round.stage) : "Round"}
+                              {round?.interviewer && (
+                                <span className="font-normal"> · {round.interviewer}</span>
+                              )}
+                            </p>
                             {!cell.assessed ? (
                               // Rule 5: an unassessed criterion is labelled, never
                               // left blank in a way that reads as a zero.
-                              <span className="text-xs italic text-slate-500">not assessed</span>
+                              <p className="mt-1 text-xs italic text-slate-500">not assessed</p>
                             ) : (
                               <>
-                                <span className="font-semibold text-slate-900">{cell.rating}/5</span>
-                                {cell.note && (
-                                  <span className="mt-0.5 block max-w-[220px] text-xs text-slate-500">
-                                    {cell.note}
-                                  </span>
-                                )}
+                                <p className="mt-1 text-sm font-semibold text-slate-900">{cell.rating}/5</p>
+                                {cell.note && <p className="mt-0.5 text-xs text-slate-500">{cell.note}</p>}
                                 {cell.claimVerdicts?.map((v) => (
                                   <span
                                     key={v.claimId}
-                                    className={`mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                                    className={`mt-1 mr-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
                                       v.verdict === "verified"
                                         ? "bg-emerald-50 text-emerald-700"
                                         : v.verdict === "contradicted"
@@ -316,12 +315,12 @@ export default function ScorecardPanel({ candidateId, enabled = true }) {
                                 ))}
                               </>
                             )}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
               <p className="mt-2 text-xs text-slate-500">
                 Every cell names the person who observed it and what they saw. Ratings are per-criterion; the

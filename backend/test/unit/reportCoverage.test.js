@@ -177,7 +177,7 @@ const clean = [
     text: "I built a dashboard in React using hooks and context for state, and memoised the expensive list rendering.",
     audioDurationMs: 22000,
     answerScore: 80,
-    acoustic: { pauseRatio: 0.4, deliveryScore: 74 },
+    acoustic: { pauseRatio: 0.4, audioQuality:74 },
   },
 ];
 
@@ -195,13 +195,13 @@ test("the two genuinely attempted answers are NOT flagged", () => {
       role: "candidate",
       text: "For handling asynchronous actions in a Redux based AI chatbot, I would use Redux Toolkit createAsyncThunk as it simplifies async logic and automatically manages loading success and error states.",
       audioDurationMs: 55756,
-      acoustic: { wordsPerMinute: 111, pauseRatio: 0.57, deliveryScore: 74 },
+      acoustic: { wordsPerMinute: 111, pauseRatio: 0.57, audioQuality:74 },
     },
     {
       role: "candidate",
       text: "For prompt engineering I add a persona, then assign it a task, then tell it what the output should look like.",
       audioDurationMs: 40841,
-      acoustic: { wordsPerMinute: 125, pauseRatio: 0.56, deliveryScore: 71 },
+      acoustic: { wordsPerMinute: 125, pauseRatio: 0.56, audioQuality:71 },
     },
   ]);
   assert.deepEqual(real.map((t) => t.degraded), [false, false]);
@@ -209,9 +209,89 @@ test("the two genuinely attempted answers are NOT flagged", () => {
 
 test("long audio that transcribes to nothing is the stalled signature", () => {
   const [t] = analyseTurnQuality([
+    { role: "candidate", text: "Hello?", audioDurationMs: 19045, acoustic: { wordsPerMinute: 3, pauseRatio: 0.83, audioQuality: 0 } },
+  ]);
+  assert.deepEqual(t.flags.sort(), ["mostly_silence", "stalled", "unusable_audio"]);
+  assert.equal(t.degraded, true);
+});
+
+// Every flag on a turn describes the RECORDING. `unusable_audio` replaced a flag literally called
+// `low_delivery`, rendered to recruiters as "very low delivery" — which reads as a verdict on the
+// person when what it meant was that the microphone captured almost nothing. The distinction is
+// the whole reason this measurement is still allowed to exist (see utils/prosody.js), so it is
+// held here rather than left to whoever next edits the label.
+test("turn flags describe the recording, never the candidate", () => {
+  const [t] = analyseTurnQuality([
+    { role: "candidate", text: "Hello?", audioDurationMs: 19045, acoustic: { wordsPerMinute: 3, pauseRatio: 0.9, audioQuality: 0 } },
+  ]);
+  assert.ok(!t.flags.includes("low_delivery"), "the old person-shaped flag name is gone");
+  assert.equal(t.deliveryScore, undefined, "no per-turn delivery score is reported anywhere");
+  // A fluent, fast, filler-free answer and a slow, hesitant one are both perfectly audible, and
+  // must be indistinguishable to this code.
+  const [fluent, hesitant] = analyseTurnQuality([
+    { role: "candidate", text: "I led the Kafka migration across four services over about six months.", audioDurationMs: 12000, acoustic: { wordsPerMinute: 165, fillerRate: 0, pauseRatio: 0.2 } },
+    { role: "candidate", text: "I led the Kafka migration across four services over about six months.", audioDurationMs: 30000, acoustic: { wordsPerMinute: 82, fillerRate: 22, pauseRatio: 0.5 } },
+  ]);
+  assert.deepEqual(fluent.flags, hesitant.flags, "pace and hesitation must not change a turn's flags");
+  assert.equal(hesitant.degraded, false);
+});
+
+// A transcript recorded across a dropped socket is missing words, and the whole failure this
+// guards against is that a hole looks exactly like a short answer. The candidate whose broadband
+// dropped and the candidate who had nothing to say produce the same short paragraph; only this
+// flag can tell a reviewer which one they are reading.
+test("an answer recorded across a dropped connection is never a clean read", () => {
+  const [t] = analyseTurnQuality([
+    {
+      role: "candidate",
+      text: "We moved the ingestion pipeline onto Kafka over about four months.",
+      audioDurationMs: 41000,
+      acoustic: { wordsPerMinute: 120, pauseRatio: 0.35, audioQuality: 88 },
+      connection: { drops: 1, gapMs: 5200 },
+    },
+  ]);
+  // Everything else about this turn is healthy — good pace, clean audio, a real answer. The drop
+  // is the ONLY thing wrong with it, so it is the only thing that can flag it.
+  assert.deepEqual(t.flags, ["connection_dropped"]);
+  assert.equal(t.degraded, true);
+});
+
+test("one dropped connection is enough to withhold the recommendation", () => {
+  const q = computeSessionQuality([
+    { role: "candidate", text: "A perfectly good answer about Kafka consumer groups and rebalancing.", audioDurationMs: 30000, acoustic: { wordsPerMinute: 130, pauseRatio: 0.3, audioQuality: 90 } },
+    {
+      role: "candidate",
+      text: "The second answer, cut in half by the network.",
+      audioDurationMs: 28000,
+      acoustic: { wordsPerMinute: 118, pauseRatio: 0.32, audioQuality: 86 },
+      connection: { drops: 1, gapMs: 7400 },
+    },
+  ]);
+  // Not a ratio and not a threshold: a single known hole in the evidence is enough. Every other
+  // degradation signature here is inferred from ambiguous audio, but this one is a recorded fact,
+  // and there is no honest way to recommend against someone on a transcript we know is incomplete.
+  assert.equal(q.droppedTurns, 1);
+  assert.equal(q.degraded, true);
+  assert.equal(q.suppressRecommendation, true);
+  assert.ok(q.reasons.some((r) => /never recorded/i.test(r)));
+});
+
+test("a clean session records no connection trouble at all", () => {
+  const q = computeSessionQuality([
+    { role: "candidate", text: "A perfectly good answer about Kafka consumer groups and rebalancing.", audioDurationMs: 30000, acoustic: { wordsPerMinute: 130, pauseRatio: 0.3, audioQuality: 90 } },
+  ]);
+  assert.equal(q.droppedTurns, 0);
+  assert.equal(q.suppressRecommendation, false);
+});
+
+// Sessions recorded before the rename stored the same measurement under `deliveryScore`. Their
+// bad audio must still be flagged — the point of the change was to stop DISPLAYING the number as
+// a judgement, not to lose the ability to say "we could not hear this answer".
+test("a pre-rename session still flags its unusable audio", () => {
+  const [t] = analyseTurnQuality([
     { role: "candidate", text: "Hello?", audioDurationMs: 19045, acoustic: { wordsPerMinute: 3, pauseRatio: 0.83, deliveryScore: 0 } },
   ]);
-  assert.deepEqual(t.flags.sort(), ["low_delivery", "mostly_silence", "stalled"]);
+  assert.ok(t.flags.includes("unusable_audio"));
   assert.equal(t.degraded, true);
 });
 
@@ -222,7 +302,7 @@ test("a rambling non-answer is stalled too — rate, not raw word count", () => 
       role: "candidate",
       text: "I would for an AI chatbot, I would structure the Redux Store Could you please con could you please repeat the question, please? Could you please repeat? Could you repeat that?",
       audioDurationMs: 38506,
-      acoustic: { wordsPerMinute: 48, pauseRatio: 0.84, deliveryScore: 16 },
+      acoustic: { wordsPerMinute: 48, pauseRatio: 0.84, audioQuality:16 },
     },
   ]);
   assert.equal(t.degraded, true);
@@ -233,20 +313,20 @@ test("a rambling non-answer is stalled too — rate, not raw word count", () => 
 test("a broken audio path suppresses the recommendation rather than reporting a no-hire", () => {
   // The real shape of the 31 Jul session: long recordings, no words, repeat requests.
   const turns = [
-    { role: "candidate", text: "Hello?", audioDurationMs: 19045, acoustic: { wordsPerMinute: 3, pauseRatio: 0.83, deliveryScore: 0 } },
+    { role: "candidate", text: "Hello?", audioDurationMs: 19045, acoustic: { wordsPerMinute: 3, pauseRatio: 0.83, audioQuality:0 } },
     {
       role: "candidate",
       text: "Could you please repeat that?",
       audioDurationMs: 38506,
-      acoustic: { wordsPerMinute: 8, pauseRatio: 0.84, deliveryScore: 16 },
+      acoustic: { wordsPerMinute: 8, pauseRatio: 0.84, audioQuality:16 },
     },
     {
       role: "candidate",
       text: "Sorry. Can you repeat that again?",
       audioDurationMs: 25026,
-      acoustic: { wordsPerMinute: 34, pauseRatio: 0.88, deliveryScore: 3 },
+      acoustic: { wordsPerMinute: 34, pauseRatio: 0.88, audioQuality:3 },
     },
-    { role: "candidate", text: "Nope", audioDurationMs: 3240, acoustic: { wordsPerMinute: 19, pauseRatio: 0.97, deliveryScore: 0 } },
+    { role: "candidate", text: "Nope", audioDurationMs: 3240, acoustic: { wordsPerMinute: 19, pauseRatio: 0.97, audioQuality:0 } },
   ];
   const q = computeSessionQuality(turns);
   assert.equal(q.degraded, true);
@@ -326,9 +406,9 @@ test("the PDF states a withheld recommendation instead of printing a decision", 
         transcript: [],
         evaluation: null,
         sessionQuality: computeSessionQuality([
-          { role: "candidate", text: "Hello?", audioDurationMs: 19045, acoustic: { pauseRatio: 0.9, deliveryScore: 0 } },
-          { role: "candidate", text: "Sorry, can you repeat that?", audioDurationMs: 25026, acoustic: { pauseRatio: 0.88, deliveryScore: 3 } },
-          { role: "candidate", text: "Could you repeat the question please?", audioDurationMs: 30000, acoustic: { pauseRatio: 0.9, deliveryScore: 2 } },
+          { role: "candidate", text: "Hello?", audioDurationMs: 19045, acoustic: { pauseRatio: 0.9, audioQuality:0 } },
+          { role: "candidate", text: "Sorry, can you repeat that?", audioDurationMs: 25026, acoustic: { pauseRatio: 0.88, audioQuality:3 } },
+          { role: "candidate", text: "Could you repeat the question please?", audioDurationMs: 30000, acoustic: { pauseRatio: 0.9, audioQuality:2 } },
         ]),
         recommendedAction: { action: "Re-interview", justification: "withheld", suppressed: true },
       },

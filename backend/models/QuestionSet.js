@@ -31,6 +31,18 @@ const questionSchema = new mongoose.Schema(
     // not a string comparison against text that may since have been superseded.
     id: { type: String, required: true, trim: true },
     text: { type: String, required: true, trim: true },
+    // The same question in plainer words, for a candidate who heard it and did not understand it.
+    //
+    // Frozen HERE, alongside the question, and approved by the same human in the same act — which
+    // is the only way a rephrasing can exist in this product. Composing one in the moment would
+    // mean the candidate who asked was measurably asked a different question from everyone else,
+    // and "we asked everyone the same thing" would stop being true for exactly the candidates who
+    // needed the most help. Vetted to the same standard as the question itself
+    // (utils/questionVetting), because it is spoken to the candidate in place of one.
+    //
+    // Optional. Empty means this question cannot be rephrased, and the interviewer says so by
+    // repeating it rather than announcing a rewording it cannot deliver.
+    restatement: { type: String, trim: true, default: "" },
     // Free-text grouping for the recruiter's own benefit ("system design", "ways of working").
     // Never used for scoring — the rubric owns what counts.
     topic: { type: String, trim: true, default: "" },

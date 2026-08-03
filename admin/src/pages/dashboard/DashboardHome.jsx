@@ -10,9 +10,25 @@
 
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { Briefcase, Users, Bot, Scale, ArrowUpRight, AlertTriangle, Clock, TrendingUp, Layers, UserCheck, Inbox } from "lucide-react";
+import {
+  Briefcase,
+  Users,
+  Bot,
+  Scale,
+  ArrowUpRight,
+  AlertTriangle,
+  Clock,
+  TrendingUp,
+  Layers,
+  UserCheck,
+  Inbox,
+  BarChart3,
+  FilePlus2,
+} from "lucide-react";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { Card, Badge, Skeleton, EmptyState, IconTile, SectionHeader } from "../../components/ui/Card.jsx";
+import { Chip, ChipRow, HeroStat, ActionCard, ListRow } from "../../components/ui/Panels.jsx";
+import Button from "../../components/ui/Button.jsx";
 import { stageLabel, stageTone } from "../../lib/pipeline.js";
 import TrendChart from "../../components/dashboard/TrendChart.jsx";
 
@@ -109,6 +125,8 @@ export default function DashboardHome() {
     const unapprovedRubrics = jobs.filter((j) => j.rubricStatus !== "approved");
 
     return {
+      last30,
+      prior30,
       applicantDelta,
       buckets,
       avgScore,
@@ -154,6 +172,48 @@ export default function DashboardHome() {
         </p>
       </header>
 
+      {/* Destination chips. These are links to real screens with real counts —
+          not filters. A row of pills that looks like a segmented control but
+          navigates instead would teach the wrong gesture on the first click. */}
+      <ChipRow label="Jump to">
+        <Chip as={Link} to="/jobs" icon={Briefcase}>
+          Jobs <span className="tabular-nums opacity-70">{jobs.length}</span>
+        </Chip>
+        <Chip as={Link} to="/candidates" icon={Users}>
+          Candidates <span className="tabular-nums opacity-70">{allCandidates.length}</span>
+        </Chip>
+        <Chip as={Link} to="/review-queue" icon={Scale}>
+          Review queue <span className="tabular-nums opacity-70">{queue.length}</span>
+        </Chip>
+        <Chip as={Link} to="/ai-interviews" icon={Bot}>
+          AI interviews
+        </Chip>
+        <Chip as={Link} to="/reports" icon={BarChart3}>
+          Reports
+        </Chip>
+      </ChipRow>
+
+      {/* Hero figure. Ember is allowed on this one panel because the number is
+          pure intake volume — how many people applied — and nothing on it
+          evaluates anybody. The instant this surface shows a score or a stage,
+          it goes back to brand. */}
+      <HeroStat
+        tone="ember"
+        label="Applications received"
+        value={loading ? "—" : model.last30.toLocaleString()}
+        basis={
+          model.prior30 === 0
+            ? "Last 30 days, counted by application date. No prior 30-day window to compare against yet."
+            : `Last 30 days, counted by application date — against ${model.prior30.toLocaleString()} in the 30 days before that.`
+        }
+        badge={<Delta value={model.applicantDelta} />}
+        action={
+          <Button as={Link} to="/candidates" size="sm">
+            View all applicants <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        }
+      />
+
       {/* KPI strip — one surface divided by hairlines, rather than four separate
           floating cards. The figures belong to one reading, and four detached
           tiles would invite four separate conclusions.
@@ -176,6 +236,80 @@ export default function DashboardHome() {
           ))}
         </div>
       </Card>
+
+      {/* Quick actions — the reference's violet / ember / white / white strip.
+          Every card is a real destination with a real count; none of them is a
+          decorative tile with a number invented to fill the shape. The two
+          filled cards go to the two things that block a pipeline, so the loudest
+          surfaces on the screen are also the most urgent. */}
+      <section aria-labelledby="quick-actions">
+        <h2 id="quick-actions" className="sr-only">
+          Quick actions
+        </h2>
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <ActionCard
+            tone="filled-brand"
+            icon={Scale}
+            title="Review queue"
+            description={
+              queue.length === 0
+                ? "Nothing is waiting on a human right now."
+                : `${queue.length} score${queue.length === 1 ? "" : "s"} the engine was not confident enough to call.`
+            }
+            action={
+              <Button as={Link} to="/review-queue" variant="secondary" size="sm" className="w-full">
+                Open queue
+              </Button>
+            }
+          />
+          {/* Ember goes on "Post a job", not on the rubric warning next to it.
+              The rubric card reports a state — some jobs are still on the legacy
+              engine — and the Ember Containment Rule keeps decorative orange off
+              anything that reports state, because it sits one hue away from the
+              reserved pending amber. "Post a job" is a pure action with no state
+              attached, so it can carry the fill. The rubric card gets its urgency
+              from a verdict-toned icon chip instead, which is the honest channel
+              for it. */}
+          <ActionCard
+            tone="filled-ember"
+            icon={FilePlus2}
+            title="Post a job"
+            description="Compile a job description into a versioned, approvable rubric."
+            action={
+              <Button as={Link} to="/jobs/new" variant="secondary" size="sm" className="w-full">
+                New job
+              </Button>
+            }
+          />
+          <ActionCard
+            icon={AlertTriangle}
+            iconTone={model.unapprovedRubrics.length > 0 ? "negative" : "positive"}
+            title="Rubrics to approve"
+            description={
+              model.unapprovedRubrics.length === 0
+                ? "Every open job is scored by the evidence engine."
+                : `${model.unapprovedRubrics.length} job${
+                    model.unapprovedRubrics.length === 1 ? " is" : "s are"
+                  } still on the legacy keyword engine.`
+            }
+            action={
+              <Button as={Link} to="/jobs" variant="secondary" size="sm" className="w-full">
+                Review rubrics
+              </Button>
+            }
+          />
+          <ActionCard
+            icon={Bot}
+            title="AI interviews"
+            description="Sessions minted for candidates who cleared screening."
+            action={
+              <Button as={Link} to="/ai-interviews" variant="secondary" size="sm" className="w-full">
+                View interviews
+              </Button>
+            }
+          />
+        </div>
+      </section>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
@@ -275,40 +409,31 @@ export default function DashboardHome() {
         <Card>
           <SectionHeader icon={Inbox} title="Needs a person" description="Nothing here resolves itself" />
 
-          <div className="mt-5 space-y-4">
-            <Link
+          {/* The icon chips keep their verdict tones through IconTile rather
+              than hand-mixed `amber-50`/`red-50`. These two rows are the only
+              place on the dashboard where the reserved channel is spent, and
+              they are spent correctly: both mean a person is owed something. */}
+          <div className="mt-5 space-y-3">
+            <ListRow
+              as={Link}
               to="/review-queue"
-              className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 transition-colors duration-150 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
-            >
-              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
-                <Scale className="h-4 w-4" aria-hidden="true" />
-              </span>
-              <span className="min-w-0">
-                <span className="block text-sm font-semibold text-slate-800">
-                  <span className="tabular-nums">{queue.length}</span> in the review queue
-                </span>
-                <span className="block text-xs text-slate-500">Scores the engine was not confident about</span>
-              </span>
-            </Link>
+              icon={Scale}
+              iconTone="pending"
+              title={`${queue.length} in the review queue`}
+              meta="Scores the engine was not confident about"
+            />
 
             {model.unapprovedRubrics.length > 0 && (
-              <Link
+              <ListRow
+                as={Link}
                 to="/jobs"
-                className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 transition-colors duration-150 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
-              >
-                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
-                  <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-slate-800">
-                    <span className="tabular-nums">{model.unapprovedRubrics.length}</span> job
-                    {model.unapprovedRubrics.length === 1 ? "" : "s"} without an approved rubric
-                  </span>
-                  <span className="block text-xs text-slate-500">
-                    Those candidates are scored by the legacy keyword engine, not the evidence engine
-                  </span>
-                </span>
-              </Link>
+                icon={AlertTriangle}
+                iconTone="negative"
+                title={`${model.unapprovedRubrics.length} job${
+                  model.unapprovedRubrics.length === 1 ? "" : "s"
+                } without an approved rubric`}
+                meta="Scored by the legacy keyword engine, not the evidence engine"
+              />
             )}
 
             {!loading && queue.length === 0 && model.unapprovedRubrics.length === 0 && (
