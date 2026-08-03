@@ -236,9 +236,23 @@ export default function InterviewRoom() {
     if (active) startProctor();
   }, [state?.status, state?.completed, startProctor]);
 
+  // The interview is over — stop monitoring, and CLOSE THE MICROPHONE.
+  //
+  // The mic close is not optional housekeeping. The session now persists across turns (it used to
+  // be torn down after every answer), so when the last answer went in there was nothing left to
+  // close it: the candidate's microphone would have stayed live, streaming to a transcription
+  // service, after the interview had visibly ended. That is the single worst thing this refactor
+  // could have left behind, and it is exactly the kind of thing nobody notices because everything
+  // on screen looks finished.
   useEffect(() => {
-    if (state?.completed) stopProctor();
-  }, [state?.completed, stopProctor]);
+    if (!state?.completed) return;
+    stopProctor();
+    try {
+      cancelListening();
+    } catch {
+      /* the session may already be down — ending must never depend on it */
+    }
+  }, [state?.completed, stopProctor, cancelListening]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

@@ -1660,11 +1660,21 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
         // indistinguishable from cutting them off.
         armSilence(policyRef.current.initialSilenceMs);
       } catch {
-        if (acc) {
-          acc.gapMs += Date.now() - droppedAt;
-          acc.lost = true;
-        }
         setConnection("lost");
+        // A failed reconnect BETWEEN questions is not the same event as one mid-answer, and
+        // treating it as one was a bug this refactor introduced: before the session persisted,
+        // the socket was closed deliberately between turns and this path could not run there at
+        // all. Setting `phase` to "disconnected" in the gap froze the interview outright — the
+        // room only asks the next question from "idle", and the watchdog only fires from "idle"
+        // either, so there was no way back. And the wording was wrong too: there is no answer to
+        // give again, because they already gave it.
+        //
+        // Nothing is lost here, so nothing needs saying. `openMic` rebuilds the whole session
+        // from scratch when the next question arrives, because its fast path requires an OPEN
+        // socket and this one is not.
+        if (!acc) return;
+        acc.gapMs += Date.now() - droppedAt;
+        acc.lost = true;
         setPhase("disconnected");
         setError(
           "The connection to the voice service dropped and couldn't be restored. Anything you said " +
