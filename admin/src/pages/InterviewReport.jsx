@@ -894,6 +894,52 @@ export default function InterviewReport() {
                     Recommendation withheld — {ev.reviewReason}. This interview needs human review before any decision.
                   </p>
                 )}
+
+                {/* The interviewer went off-script and we stopped the interview. Shown above
+                    everything else and in the strongest available tone, because the single most
+                    likely misreading of a short transcript is "this candidate gave up" — and the
+                    truth is the opposite. The offending sentence is quoted verbatim: a reviewer
+                    deciding what to do about this needs to see what was actually said, not a
+                    rule name. */}
+                {interview.haltedBy && (
+                  <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                    <p className="text-xs font-bold text-red-800">
+                      Interview stopped automatically — our fault, not the candidate&apos;s
+                    </p>
+                    <p className="mt-1 text-xs text-red-700">
+                      The AI interviewer {interview.haltedBy.label || "went outside its approved script"}, so this
+                      interview was ended after {interview.haltedBy.questionsAsked ?? 0} question
+                      {interview.haltedBy.questionsAsked === 1 ? "" : "s"}. Nothing here is a measurement of this
+                      candidate, and this must not count against them. Please contact them directly about next steps.
+                    </p>
+                    {interview.haltedBy.utterance && (
+                      <p className="mt-1.5 rounded bg-white/60 px-2 py-1 text-xs italic text-red-900">
+                        “{interview.haltedBy.utterance}”
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Off-script speech that did not warrant stopping the interview — an invented
+                    question, or feedback given to the candidate's face. Not a halt, but a real
+                    finding: an unapproved question means this candidate did not sit quite the same
+                    instrument as everyone else. */}
+                {interview.guardrailHits?.length > 0 && !interview.haltedBy && (
+                  <details className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <summary className="cursor-pointer text-xs font-semibold text-amber-800">
+                      {interview.guardrailHits.length} interviewer utterance
+                      {interview.guardrailHits.length === 1 ? "" : "s"} flagged as off-script
+                    </summary>
+                    <ul className="mt-2 space-y-1.5">
+                      {interview.guardrailHits.map((h, i) => (
+                        <li key={i} className="text-xs text-amber-900">
+                          <span className="font-semibold">{h.label || h.ruleId}</span>
+                          {h.utterance && <span className="italic"> — “{h.utterance}”</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
                 {typeof ev.questionsDeclined === "number" && ev.questionsDeclined > 0 && (
                   <p className="mt-2 text-sm font-medium text-slate-500">
                     Declined: {ev.questionsDeclined} of {ev.questionsAsked} question

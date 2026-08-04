@@ -113,7 +113,21 @@ function buildCompetencyTable(turns) {
 
 // §1 + §7: the single source of truth for the headline call. Every branch below is
 // stated directly in the report spec — simple and explainable, no black box.
-function computeVerdict({ responsiveCount, totalAnswers, engineRan, overallScore, endedEarly, declinedCount = 0 }) {
+function computeVerdict({ responsiveCount, totalAnswers, engineRan, overallScore, endedEarly, halted, declinedCount = 0 }) {
+  // WE stopped this interview because the AI interviewer went off-script (utils/agentGuardrail.js).
+  // The transcript was not produced under the conditions the instrument specifies, so no automated
+  // conclusion may be drawn from it in either direction — and critically, the defect is ours. A
+  // candidate must never carry the cost of our agent misbehaving.
+  if (halted) {
+    return {
+      verdict: "REVIEW",
+      reason:
+        "The interview was stopped automatically because the AI interviewer went outside its approved script. " +
+        "This transcript was not produced under valid conditions and is not a measurement of the candidate. " +
+        "The fault is on our side — a human must review, and this must not count against them.",
+      confidence: "Low",
+    };
+  }
   // RULE 6, AT THE POINT IT ACTUALLY BITES. An interview the candidate ended themselves can never
   // produce an automated adverse verdict here — not CLEAR_REJECT, and not an ADVANCE either.
   // Every branch below reasons from a transcript, and this transcript is short because the

@@ -539,6 +539,26 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
     }
   }, []);
 
+  // Does the interviewer already have a voice in the air?
+  //
+  // THE BUG THIS EXISTS TO KILL: a candidate asked "could you repeat that?", and heard the
+  // question repeated AND "take your time — I'm here" on top of it, simultaneously. Two voices,
+  // both ours, talking over each other.
+  //
+  // The cause was three independent locks for one piece of shared state. `bcBusyRef` guarded
+  // backchannels, `repeatBusyRef` guarded repeats, `speakingRef` fed the echo gate — and each
+  // code path happened to check a different one. A repeat is in flight (repeatBusyRef), the
+  // provider emits UtteranceEnd, that arms a silence timer, the timer fires, handleSilence checks
+  // only bcBusyRef, sees `false`, and starts a reassurance underneath the repeat.
+  //
+  // There is exactly one question worth asking — "am I talking right now?" — so there is now
+  // exactly one place that answers it, and every path consults it. `speakingRef.current.text` is
+  // the load-bearing part: withSpokenText sets it around EVERY route by which the interviewer
+  // makes a sound, so it cannot miss one the way a per-feature flag can.
+  function interviewerSpeaking() {
+    return Boolean(speakingRef.current.text) || bcBusyRef.current || repeatBusyRef.current;
+  }
+
   // How far through the current utterance playback is, as 0-1, or undefined when it cannot be
   // known (browser speech-synthesis fallback, or audio that has not started). Undefined is the
   // conservative reading: the gate then compares against the whole utterance, which explains away
@@ -599,7 +619,10 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   // lost. `fullDuplex: false` restores the old pausing behaviour exactly.
   const playBackchannel = useCallback(
     async (phrase) => {
-      if (!phrase || bcBusyRef.current) return;
+      // Second line of defence for the overlapping-voices bug: even if a stray timer gets this
+      // far, an optional utterance never starts while the interviewer is mid-sentence. A dropped
+      // "take your time" costs nothing; two voices at once costs the candidate the question.
+      if (!phrase || interviewerSpeaking()) return;
       bcBusyRef.current = true;
       const duplex = policyRef.current.echo.fullDuplex;
       const rec = recorderRef.current;
@@ -659,9 +682,13 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
   const handleSilence = useCallback(async (endState = "ambiguous") => {
     const acc = sessionRef.current;
     if (!acc || endedRef.current) return;
-    // A reassurance is already mid-playback. Don't stack another on top of it — the in-flight
-    // call re-arms the timer itself when it finishes.
-    if (bcBusyRef.current) return;
+    // The interviewer is ALREADY speaking — a reassurance, a repeat, a restatement, a question.
+    // Never start a second utterance underneath it. Every path that plays something re-arms the
+    // clock when it finishes, so returning here defers the decision rather than dropping it.
+    //
+    // This used to check `bcBusyRef` alone, which is why a repeat and "take your time" came out
+    // of the speaker at the same time: a repeat sets `repeatBusyRef`, not `bcBusyRef`.
+    if (interviewerSpeaking()) return;
     const policy = policyRef.current;
     const answerSoFar = (acc.finalText || "").trim();
     const spokeSomething = Boolean(answerSoFar);
@@ -1210,6 +1237,11 @@ export function useVoiceInterview({ onAutoEndOfTurn, onDialogueAct } = {}) {
         // the voice falling away responds in under a second. Replaces the flat timer that was
         // cutting candidates off mid-thought (and, on finished answers, leaving them in silence).
         if (endedRef.current) return;
+        // Silence WHILE WE ARE TALKING is not the candidate pausing — it is them listening. Arming
+        // a turn clock here is what put a reassurance on top of a repeat: the request had already
+        // been handled and the repeat was playing, then this fired and started a second voice.
+        // The path that is speaking re-arms the clock the moment it stops.
+        if (interviewerSpeaking()) return;
         const verdict = classify(acc.finalText || acc.lastInterim, {
           energy: acc.energy,
           policy: policyRef.current.endpointing,

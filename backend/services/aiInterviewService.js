@@ -185,6 +185,17 @@ const MAX_DECLINE_SHARE = 0.5;
 // way to know that the transcript is short because the candidate withdrew rather than because
 // they failed. That distinction is not the model's to make, so it is not asked to.
 function reviewRequiredReason(ai) {
+  // The interviewer broke its own rules and we stopped it. Whatever is in this transcript, it was
+  // not produced under the conditions the instrument specifies, so no automated conclusion may be
+  // drawn from it — in either direction. This is checked FIRST because it is the one case where
+  // the defect is ours rather than anything about the candidate.
+  if (ai.status === "halted") {
+    return (
+      "the interview was stopped automatically because the AI interviewer went outside its approved " +
+      "script, so this transcript was not produced under the conditions the assessment requires. " +
+      "This is a fault on our side and must not count against the candidate"
+    );
+  }
   if (ai.status === "ended_early") {
     return "the candidate chose to end the interview before it finished, so most of the instrument was never run";
   }
@@ -656,11 +667,13 @@ function publicState(session) {
     awaitingAnswer: ai.status === "in_progress",
     // "Over" for the UI's purposes covers both endings — the room must show the end screen either
     // way, and must never leave a candidate who withdrew staring at an open microphone.
-    completed: ai.status === "completed" || ai.status === "ended_early",
-    // ...but the two are surfaced distinctly, because what the candidate is told differs. Someone
-    // who finished hears that their answers are with the team; someone who stopped should not be
-    // shown a screen implying they completed something they deliberately did not.
+    completed: ai.status === "completed" || ai.status === "ended_early" || ai.status === "halted",
+    // ...but the endings are surfaced distinctly, because what the candidate is told differs.
+    // Someone who finished hears that their answers are with the team; someone who stopped should
+    // not be shown a screen implying they completed something they deliberately did not; and
+    // someone whose interview WE stopped must be told plainly that it was not their fault.
     endedEarly: ai.status === "ended_early",
+    halted: ai.status === "halted",
   };
 }
 
@@ -811,6 +824,10 @@ async function submitAnswer(session, answerText, opts = {}) {
     // Why the turn ended. Recorded next to the answer it belongs to so a disputed "it cut me
     // off" is checkable; read by no scorer.
     if (opts.endOfTurn) answerTurn.endOfTurn = opts.endOfTurn;
+    // Realtime only: the agent's own account of this answer, when it materially disagreed with the
+    // verbatim transcript above. `text` is always the raw speech-to-text; this is kept so a
+    // reviewer can see the interviewer was summarising rather than reporting. Never scored.
+    if (opts.agentRendering) answerTurn.agentRendering = opts.agentRendering;
     // Said in the gap before this question. Recorded on this turn because that is where it can be
     // found; attributed to nothing, because it followed the PREVIOUS answer.
     if (opts.spokeBetweenTurns) answerTurn.spokeBetweenTurns = opts.spokeBetweenTurns;
@@ -1090,6 +1107,49 @@ async function handleDecline(session, opts) {
 // automated adverse action. The partial transcript is preserved, evaluated only for what it
 // actually contains, and the recommendation is forced to "review" by code
 // (see reviewRequiredReason) so no candidate is ever auto-rejected for exercising an exit.
+// Stop a realtime interview because the INTERVIEWER went off-script (utils/agentGuardrail.js).
+//
+// Note carefully whose fault this is, because everything about the handling follows from it: the
+// candidate did nothing wrong. They prepared, they turned up, and our agent asked something it was
+// not allowed to ask. So this is `halted`, not `ended_early` — a candidate who chose to leave and
+// a candidate whose interview was taken away from them are different facts, and a report that
+// cannot tell them apart will eventually be read as if the candidate quit.
+//
+// Consequences, all deliberate: the transcript is kept (it is the evidence), the recommendation is
+// withheld and routed to a human (reviewRequiredReason), and no adverse action follows. The
+// candidate is told it will not count against them, and that has to be true.
+async function haltForGuardrail(session, finding) {
+  const ai = session.aiInterview;
+  if (ai.status !== "in_progress") return publicState(session);
+
+  const { candidate } = await loadRefs(session);
+  const stats = coverageStats(ai);
+
+  ai.haltedBy = {
+    reason: "guardrail",
+    ruleId: finding?.ruleId || "",
+    severity: finding?.severity || "critical",
+    label: finding?.label || "",
+    utterance: String(finding?.utterance || "").slice(0, 2000),
+    questionsAsked: stats.asked,
+    questionsAnswered: stats.answered,
+    at: new Date(),
+  };
+  ai.status = "halted";
+  ai.completedAt = new Date();
+  session.status = "completed"; // operationally over; what happened is on aiInterview.status
+  session.completedAt = new Date();
+  await session.save();
+
+  console.error(
+    `[aiInterview] session ${session._id} HALTED by guardrail (${finding?.ruleId}) after ${stats.asked} question(s) — ` +
+      `the interviewer went off-script; this must never be adverse to the candidate`
+  );
+
+  scheduleFinalization(session._id);
+  return publicState(session);
+}
+
 async function handleWithdraw(session, opts) {
   const ai = session.aiInterview;
   const confirmedBy = opts.confirmedBy === "explicit" ? "explicit" : "spoken";
@@ -1217,6 +1277,41 @@ async function runFinalization(sessionId) {
       String(evaluation.summary || "");
   }
 
+  // Realtime interviews only: were the questions we handed the agent actually asked, in the words
+  // we gave it?
+  //
+  // The live guardrail catches the agent INVENTING a question. This catches the opposite and
+  // quieter failure — the agent receiving an approved question and then skipping it, glossing it,
+  // or folding it into a conversational aside. Nothing notices that in the moment, because nothing
+  // wrong is said; the interview simply stops being the instrument the recruiter approved.
+  //
+  // Recorded, never thrown. The interview already happened, and refusing to produce a report would
+  // punish the candidate for the agent's behaviour.
+  if ((ai.agentUtterances || []).length) {
+    try {
+      const voiceAgentService = require("./voiceAgentService");
+      const fidelity = voiceAgentService.verifyQuestionsAsked(
+        ai.askedQuestions || [],
+        ai.agentUtterances.map((u) => u.text)
+      );
+      const missed = fidelity.filter((f) => !f.matched);
+      evaluation.questionsNotAskedVerbatim = missed.length;
+      if (missed.length) {
+        console.error(
+          `[aiInterview] session ${session._id}: ${missed.length} approved question(s) were not asked verbatim by the realtime agent`
+        );
+        // A candidate who was never asked part of the approved set did not sit the same interview
+        // as everyone else, so the comparison a recommendation rests on is not available.
+        evaluation.reviewReason =
+          evaluation.reviewReason ||
+          `${missed.length} of the approved question(s) were not asked in the approved wording, so this candidate was not assessed on the same instrument as others for this role`;
+        evaluation.recommendation = "review";
+      }
+    } catch (err) {
+      console.error("[aiInterview] question-fidelity check failed:", err.message);
+    }
+  }
+
   ai.evaluation = { ...evaluation, generatedAt: new Date() };
   await session.save();
 
@@ -1253,6 +1348,10 @@ module.exports = {
   beginInterview,
   submitAnswer,
   submitDialogueAct,
+  haltForGuardrail,
+  // Exported for the realtime path, which has no deterministic fallback to degrade to and must
+  // therefore refuse the session outright rather than proceed without consent.
+  consentOk,
   publicState,
   runFinalization,
   closingAllowed,

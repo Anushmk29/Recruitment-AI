@@ -166,6 +166,11 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/admin-notifications", adminNotificationRoutes);
 app.use("/api/notification-preferences", notificationPreferenceRoutes);
 app.use("/api/interview-portal", interviewPortalRoutes);
+// Realtime (speech-to-speech) interview — services/voiceAgentService.js. Mounted under the portal
+// path because it runs on the same candidate session auth, but kept as its own router: it is
+// behind VOICE_MODE=realtime / CompanySettings.ai.voiceMode and defaults OFF, so it must be
+// reviewable and removable as one unit without touching the live turn-based pipeline.
+app.use("/api/interview-portal/realtime", require("./routes/voiceAgentRoutes"));
 app.use("/api/auth", authRoutes);
 app.use("/api/companies", companyAuthRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);

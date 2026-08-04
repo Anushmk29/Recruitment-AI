@@ -588,6 +588,9 @@ async function buildInterviewReport(candidateId, companyId) {
     // An interview the candidate ended themselves never produces an automated adverse verdict —
     // the transcript is short by their choice, not by their performance (rule 6).
     endedEarly: ai.status === "ended_early",
+    // Same guard, different fault: a halted interview is one WE stopped, so it can never produce
+    // an automated verdict about the candidate either.
+    halted: ai.status === "halted",
     engineRan,
     overallScore: ai.evaluation?.overallScore,
   });
@@ -621,6 +624,20 @@ async function buildInterviewReport(candidateId, companyId) {
       // Surfaced so the report can say the interview was ended by the candidate rather than
       // leaving a reviewer to infer it from a short transcript.
       endedEarly: ai.status === "ended_early" ? ai.endedEarly || { by: "candidate" } : null,
+      // WE stopped it, because the AI interviewer went outside its approved script. A reviewer must
+      // see this above the transcript rather than deduce it: the candidate did nothing wrong, and a
+      // short transcript with no explanation reads exactly like someone who gave up.
+      haltedBy: ai.status === "halted" ? ai.haltedBy || { reason: "guardrail" } : null,
+      // Every off-script utterance, verbatim, with the rule it broke. Normally empty. This is what
+      // answers "what did the AI actually say to me?" — the question an unconstrained
+      // speech-to-speech competitor has no way to answer at all.
+      guardrailHits: (ai.guardrailHits || []).map((h) => ({
+        ruleId: h.ruleId,
+        severity: h.severity,
+        label: h.label,
+        utterance: h.utterance,
+        at: h.at,
+      })),
       durationFlag,
       sessionQuality,
       verdict,

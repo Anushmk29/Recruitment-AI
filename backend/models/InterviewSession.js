@@ -181,6 +181,16 @@ const interviewTurnSchema = new mongoose.Schema(
     // Which act produced it, for the audit trail: "decline" here, always — recorded rather than
     // assumed so a later act that also ends a turn can be told apart from this one.
     declineAct: { type: String, trim: true },
+    // Realtime only: the agent's own rendering of this answer, kept ONLY when it diverged
+    // materially from the verbatim transcript stored in `text`.
+    //
+    // The evidence is always the raw speech-to-text. A model paraphrasing an answer would quietly
+    // turn "verbatim, code-verified" span citation into "what a model remembered", and everything
+    // downstream — the answer score, the claim-probe answerQuote a recruiter reads beside a résumé
+    // quote — treats `text` as the candidate's own words. This field exists so a reviewer can see
+    // the interviewer was summarising rather than reporting: a defect in the agent, never a
+    // finding about the candidate. Nothing scores it.
+    agentRendering: { type: String, trim: true },
     text: { type: String, required: true },
     topic: { type: String, trim: true },
     difficulty: { type: String, enum: ["easy", "medium", "hard"] },
@@ -273,7 +283,14 @@ const interviewTurnSchema = new mongoose.Schema(
     // is worth knowing BEFORE it shows up as a strange-looking answer.
     backchannelEchoRemoved: { type: Number },
     // Per-turn provenance so a mixed AI/fallback interview is auditable turn-by-turn.
-    engine: { type: String, enum: ["ai", "fallback"] },
+    //
+    // "approved_set" is a THIRD provenance, not a flavour of the other two: the turn is a
+    // recruiter-approved must-ask delivered verbatim by code with no model call at all
+    // (aiInterviewService.advance). Recording it as "fallback" would attribute the recruiter's
+    // own wording to the deterministic generator and lose the one claim this turn can make —
+    // that no model touched it. Unlike the session-level `engine` below, which describes the
+    // interview as a whole and stays ai|fallback, this is per-turn and must name all three.
+    engine: { type: String, enum: ["ai", "fallback", "approved_set"] },
     model: { type: String, trim: true },
     latencyMs: { type: Number },
     at: { type: Date, default: Date.now },
@@ -386,6 +403,10 @@ const interviewEvaluationSchema = new mongoose.Schema(
     questionsDeclined: { type: Number },
     // Why the automated recommendation was withheld, when it was. Null on an ordinary interview.
     reviewReason: { type: String, trim: true },
+    // Realtime interviews: how many approved questions the agent did NOT ask in the approved
+    // wording (services/voiceAgentService.verifyQuestionsAsked). 0 on a clean run, and absent
+    // entirely on turn-based interviews, where questions are delivered by code and cannot drift.
+    questionsNotAskedVerbatim: { type: Number },
     generatedBy: { type: String, enum: ["ai", "fallback"], default: "ai" },
     generatedAt: { type: Date },
     // Provenance for reproducibility / legal defensibility of an automated decision (W4).
@@ -456,7 +477,16 @@ const aiInterviewSchema = new mongoose.Schema(
     // a DISTINCT state rather than a flag on "completed" because everything downstream has to be
     // able to tell them apart — a partial transcript must never be evaluated as if the candidate
     // had simply performed badly on the questions they never heard.
-    status: { type: String, enum: ["not_started", "in_progress", "completed", "ended_early"], default: "not_started" },
+    // "halted" is distinct from "ended_early" and the distinction is the whole point: ended_early
+    // is the CANDIDATE choosing to stop, halted is US stopping because the AI interviewer went
+    // outside its approved script (utils/agentGuardrail.js). A report that cannot tell those apart
+    // will eventually be read as if the candidate quit, which would turn our defect into their
+    // adverse outcome.
+    status: {
+      type: String,
+      enum: ["not_started", "in_progress", "completed", "ended_early", "halted"],
+      default: "not_started",
+    },
     engine: { type: String, enum: ["ai", "fallback"], default: "ai" },
     // How the candidate answered — set to "voice" once any spoken answer is received.
     modality: { type: String, enum: ["text", "voice"], default: "text" },
@@ -523,6 +553,73 @@ const aiInterviewSchema = new mongoose.Schema(
         ),
       ],
       default: () => [],
+    },
+    // Everything the REALTIME agent said, when the interview ran in speech-to-speech mode
+    // (services/voiceAgentService.js). Empty on every turn-based interview.
+    //
+    // This is the audit record that replaces exact-match speech authorization. Once the
+    // interviewer is allowed to improvise the connective tissue between questions,
+    // utils/speechAuthorization.js can no longer prove every word was authored — so what it
+    // proved is replaced by two weaker-but-real guarantees: the QUESTIONS are verified verbatim
+    // against this log (voiceAgentService.verifyQuestionsAsked), and everything else the
+    // interviewer said is here, verbatim, to be read.
+    //
+    // That is still strictly more than any unconstrained speech-to-speech competitor can produce:
+    // when a candidate says "the AI asked me about my kids", this is the record that answers it.
+    agentUtterances: {
+      type: [
+        new mongoose.Schema(
+          {
+            text: { type: String, required: true },
+            at: { type: Date, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: () => [],
+    },
+    // Every time the realtime interviewer said something it was not allowed to say
+    // (utils/agentGuardrail.js). Normally empty — a hit means the prompt did not hold, which is
+    // exactly the thing you cannot find out by asking the model whether it behaved.
+    //
+    // The offending UTTERANCE is stored verbatim alongside the rule it broke, not just a rule name
+    // and a count. "The AI asked me about my kids" is answered by producing the sentence; it is
+    // not answered by "1 × protected_characteristic".
+    guardrailHits: {
+      type: [
+        new mongoose.Schema(
+          {
+            ruleId: { type: String, required: true },
+            severity: { type: String, enum: ["critical", "high"], default: "high" },
+            label: { type: String, trim: true },
+            matched: { type: String, trim: true }, // the pattern that fired
+            utterance: { type: String, trim: true }, // what was actually said
+            at: { type: Date, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: () => [],
+    },
+    // Realtime session billing window. Voice Agent charges per session-MINUTE and its model calls
+    // never pass through llmService, so without closing this out the tenant's budget cap is
+    // bypassed by construction. `realtimeMeteredAt` makes the close-out idempotent — a candidate
+    // closing the tab twice must not be billed twice.
+    realtimeStartedAt: { type: Date },
+    realtimeMeteredAt: { type: Date },
+    realtimeDurationMs: { type: Number },
+    // Set when status is "halted". Why the interview was stopped, and how much of it had run.
+    // Read by reviewRequiredReason, which withholds the automated recommendation entirely — a
+    // transcript produced outside the approved script cannot support a conclusion either way.
+    haltedBy: {
+      reason: { type: String, enum: ["guardrail"] },
+      ruleId: { type: String, trim: true },
+      severity: { type: String, trim: true },
+      label: { type: String, trim: true },
+      utterance: { type: String, trim: true },
+      questionsAsked: { type: Number },
+      questionsAnswered: { type: Number },
+      at: { type: Date },
     },
     // Which interviewer persona this session ran under (models/PersonaProfile.js). Interviewer
     // warmth, voice and patience change how candidly candidates answer, so they are part of the

@@ -28,7 +28,11 @@ const usageEventSchema = new mongoose.Schema(
     // economics unreadable.
     kind: {
       type: String,
-      enum: ["plan", "question", "evaluation", "rubric_compile", "question_set_compile", "claim_extract", "match", "probe_gen", "verdict", "report", "stt", "tts", "autofill", "intent", "other"],
+      // "realtime" is a whole speech-to-speech session billed per MINUTE, bundling STT + LLM + TTS
+      // in one figure. It is deliberately not folded into "stt"/"tts"/"question": its cost curve
+      // scales with how long the candidate talks rather than with how many questions were asked,
+      // and averaging the two together would make the unit economics of an interview unreadable.
+      enum: ["plan", "question", "evaluation", "rubric_compile", "question_set_compile", "claim_extract", "match", "probe_gen", "verdict", "report", "stt", "tts", "autofill", "intent", "realtime", "other"],
       default: "other",
     },
     provider: { type: String, trim: true },

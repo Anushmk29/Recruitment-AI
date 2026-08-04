@@ -1,7 +1,7 @@
 # Project Status Board
 
 Single source of truth for **what's done vs not**. Tick items as they land.
-Companion docs: [UPDATES.md](UPDATES.md) (history of every change) · [MULTI-TENANT-PLAN.md](MULTI-TENANT-PLAN.md) (rationale + roadmap) · [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) (product roadmap) · [HIRING-AGENT-COMPARISON.md](HIRING-AGENT-COMPARISON.md) (competitive read on HackerRank's open-sourced screening demo — what it validates about the product thesis and what a future agentic-evidence-gathering phase should/shouldn't do).
+Companion docs: [UPDATES.md](UPDATES.md) (history of every change) · [AI-INTERVIEW-PIPELINE.md](AI-INTERVIEW-PIPELINE.md) (how the live interview works end to end — architecture, invariants, and what is/isn't verified) · [MULTI-TENANT-PLAN.md](MULTI-TENANT-PLAN.md) (rationale + roadmap) · [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) (product roadmap) · [HIRING-AGENT-COMPARISON.md](HIRING-AGENT-COMPARISON.md) (competitive read on HackerRank's open-sourced screening demo — what it validates about the product thesis and what a future agentic-evidence-gathering phase should/shouldn't do).
 
 Legend: `[x]` done · `[ ]` not started · `[~]` partial (note explains what's left). "Verified" = code checked (node --check + load/schema + builds); live infra runs (Mongo/Redis/MinIO/OpenRouter) are called out where not yet exercised.
 
