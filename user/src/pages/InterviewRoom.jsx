@@ -462,6 +462,14 @@ export default function InterviewRoom() {
     void realtime.checkAvailable();
   }, [supported, realtime]);
 
+  // WHICH PIPELINE IS LIVE. Declared BEFORE the effects that read them, and it has to stay that
+  // way: a dependency array is evaluated during render, so an effect listing `realtimeMode` above
+  // this line throws "Cannot access 'realtimeMode' before initialization" and takes the whole room
+  // down on first paint — the interview never renders at all. `const` gives no hoisting grace here,
+  // and neither does the bundler.
+  const realtimeMode = mode === "voice" && supported && realtime.available === true;
+  const voiceMode = mode === "voice" && supported && !realtimeMode;
+
   // EXACTLY ONE PIPELINE HOLDS THE MICROPHONE. Enforced here rather than left to the render tree.
   //
   // Two orchestrators both driving a live interview is the worst failure this room can produce —
@@ -489,9 +497,6 @@ export default function InterviewRoom() {
     // microphone and close the billing window rather than leaving a socket open behind the UI.
     if (rt.phase !== "idle" && rt.phase !== "ended" && rt.phase !== "halted") void rt.disconnect();
   }, [realtimeMode, started, realtime.phase]);
-
-  const realtimeMode = mode === "voice" && supported && realtime.available === true;
-  const voiceMode = mode === "voice" && supported && !realtimeMode;
 
   // Voice orchestration: for each new AI question, ask it and listen. On devices where the
   // pre-check measured an isolated mic the two overlap, so the candidate can cut in mid-question;

@@ -53,24 +53,31 @@ api.interceptors.response.use(
       account?.token && authHeaderOf(original) === `Bearer ${account.token}`;
     const isRefreshCall = original?.url?.includes("/auth/refresh");
 
-    if (
-      status === 401 &&
-      original &&
-      !original._retry &&
-      !isRefreshCall &&
-      carriedAccountToken &&
-      getAccountRefreshToken()
-    ) {
-      original._retry = true;
-      try {
-        const newToken = await refreshTokens();
-        original.headers = original.headers || {};
-        original.headers.Authorization = `Bearer ${newToken}`;
-        return api(original);
-      } catch {
-        clearAccountAuth();
-        return Promise.reject(error);
+    // Scoped to account calls by `carriedAccountToken`: an anonymous call (public jobs, apply) and
+    // an interview-portal call (different token, different secret) both come through this instance
+    // and neither may touch the account session.
+    if (status === 401 && original && !original._retry && !isRefreshCall && carriedAccountToken) {
+      if (getAccountRefreshToken()) {
+        original._retry = true;
+        try {
+          const newToken = await refreshTokens();
+          original.headers = original.headers || {};
+          original.headers.Authorization = `Bearer ${newToken}`;
+          return api(original);
+        } catch {
+          clearAccountAuth();
+          return Promise.reject(error);
+        }
       }
+      // No refresh token, so the stored session cannot be recovered — and the server has just told
+      // us the access token is dead. Clear it.
+      //
+      // This used to fall through to a bare reject, and the omission stranded people: RequireAccount
+      // authorises on the PRESENCE of a token, not its validity, so the dashboard kept rendering and
+      // kept firing calls that all 401'd, with no redirect to login and no way out but a manual
+      // reload. clearAccountAuth() dispatches "account-auth-changed", which is what lets the guard
+      // re-evaluate and send them to /login.
+      clearAccountAuth();
     }
     return Promise.reject(error);
   }
