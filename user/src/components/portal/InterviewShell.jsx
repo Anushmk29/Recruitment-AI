@@ -5,10 +5,10 @@ import Button from "../ui/Button.jsx";
 import { getAuth } from "../../portal/portalAuth.js";
 
 // The full-viewport chrome for the two live portal routes (pre-check, interview). Deliberately
-// NOT the marketing AppShell/AppNavbar: those carry Careers/How it Works/My Resumes links that
-// are in-app SPA navigations, invisible to beforeunload, and were a real accidental-exit path out
-// of a monitored, unrepeatable interview session. This shell replaces that chrome instead of
-// patching around it — see the "interview portal shell" surface brief.
+// NOT AppShell: its left rail carries Careers/Dashboard/My Resumes links that are in-app SPA
+// navigations, invisible to beforeunload, and were a real accidental-exit path out of a monitored,
+// unrepeatable interview session. This shell replaces that chrome instead of patching around it —
+// see the "interview portal shell" surface brief.
 
 function ExitConfirmDialog({ onStay, onLeave }) {
   const dialogRef = useRef(null);

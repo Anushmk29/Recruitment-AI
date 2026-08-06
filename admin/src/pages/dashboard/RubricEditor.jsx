@@ -529,8 +529,13 @@ export default function RubricEditor() {
     const needsReason = !String(c.rationale || "").trim() || reasonIsPlaceholder(c.rationale);
     return (
       <div key={c._key} className="rounded-xl border border-slate-200">
-        <div className="flex items-center gap-2 px-3 py-2.5 sm:px-4">
-          <button type="button" onClick={() => toggleRow(c._key)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left" aria-expanded={isOpen}>
+        {/* The name is the row. The importance control and the share it produces
+            are a fixed-width group pinned to the right, and the name takes
+            whatever is left — never the other way round. `min-w-0` on both
+            halves is what lets the name truncate instead of forcing the row
+            wider than the card. */}
+        <div className="flex items-center gap-2 px-3 py-2 sm:gap-3 sm:px-4">
+          <button type="button" onClick={() => toggleRow(c._key)} className="flex min-w-0 flex-1 items-center gap-2.5 py-1 text-left" aria-expanded={isOpen}>
             {isOpen ? <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" /> : <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />}
             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
               {c.label || <span className="italic text-slate-500">Untitled criterion</span>}
@@ -542,32 +547,38 @@ export default function RubricEditor() {
             )}
           </button>
 
-          {isDraft ? (
-            <Select
-              value={c.importance || ""}
-              onChange={(e) => setCriterion(c._key, { importance: e.target.value })}
-              aria-label={`How much does "${c.label || "this criterion"}" matter?`}
-              className="w-36 shrink-0"
+          <div className="flex shrink-0 items-center gap-2">
+            {isDraft ? (
+              <Select
+                compact
+                value={c.importance || ""}
+                onChange={(e) => setCriterion(c._key, { importance: e.target.value })}
+                aria-label={`How much does "${c.label || "this criterion"}" matter?`}
+                className="w-28 sm:w-36"
+              >
+                {tiers.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${style.chip}`}>{tier?.label || "—"}</span>
+            )}
+
+            <span
+              className="w-10 text-right text-xs font-semibold tabular-nums text-slate-500"
+              title="Share of the total score — computed from the importance you picked"
             >
-              {tiers.map((t) => (
-                <option key={t.key} value={t.key}>
-                  {t.label}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${style.chip}`}>{tier?.label || "—"}</span>
-          )}
+              {shareOf(c)}%
+            </span>
 
-          <span className="w-12 shrink-0 text-right text-xs font-medium text-slate-500" title="Share of the total score — computed from the importance you picked">
-            {shareOf(c)}%
-          </span>
-
-          {isDraft && (
-            <Button variant="ghost" size="sm" onClick={() => removeCriterion(c._key)} aria-label="Remove criterion" className="shrink-0">
-              <Trash2 className="h-4 w-4 text-red-500" />
-            </Button>
-          )}
+            {isDraft && (
+              <Button variant="ghost" size="sm" onClick={() => removeCriterion(c._key)} aria-label="Remove criterion">
+                <Trash2 className="h-4 w-4 text-red-500" />
+              </Button>
+            )}
+          </div>
         </div>
 
         {isOpen && (

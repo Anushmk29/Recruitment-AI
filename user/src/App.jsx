@@ -24,17 +24,9 @@ import CandidateDashboard from "./pages/CandidateDashboard.jsx";
 import NotificationCenter from "./pages/NotificationCenter.jsx";
 import NotFound from "./pages/NotFound.jsx";
 import RequireAccount from "./auth/RequireAccount.jsx";
-import AppNavbar from "./components/app/AppNavbar.jsx";
-import { NotificationProvider } from "./context/NotificationContext.jsx";
-
-function AppShell({ children }) {
-  return (
-    <NotificationProvider>
-      <AppNavbar />
-      <div className="mx-auto max-w-5xl px-5 py-8 sm:px-8">{children}</div>
-    </NotificationProvider>
-  );
-}
+// The shell owns the collapsible left rail, the header, the content column, and
+// the notification provider — see components/app/AppShell.jsx.
+import AppShell from "./components/app/AppShell.jsx";
 
 export default function App() {
   return (
@@ -46,7 +38,7 @@ export default function App() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password/:token" element={<ResetPassword />} />
 
-      {/* Live portal routes sit outside AppShell/AppNavbar — see InterviewShell.jsx for why the
+      {/* Live portal routes sit outside AppShell — see InterviewShell.jsx for why the
           marketing navbar is an accidental-exit risk here, not just visual noise. Each page wraps
           itself in InterviewShell directly, since only the page knows its true live/setup stage
           (InterviewRoom's stage changes across a single mount as the interview progresses). */}

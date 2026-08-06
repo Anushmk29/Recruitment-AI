@@ -499,12 +499,21 @@ hairline. Main content is padded 16px → 24px (`sm`) → 32px (`lg`) horizontal
 otherwise unconstrained — it fills the viewport. The sidebar collapses below `lg` (1024px) into an overlay
 drawer behind a scrim of ink at 50%.
 
-The candidate app has no sidebar: a top navbar over a centered 64rem (`max-w-5xl`) column padded 20px →
-32px (`sm`) horizontally, 32px vertically. This is a deliberate difference, not an unfinished one. The
-recruiter lives in the admin app all day and needs persistent wayfinding across a dozen destinations; a
-candidate visits four screens over several weeks, and a 256px rail of mostly-irrelevant links would spend
-a quarter of a phone-sized viewport saying so. Candidate screens open with a `PageHero` instead, which
-does the orienting a sidebar would otherwise do.
+The candidate app uses the same two-part model — rail plus header — but its rail is **collapsible**, and
+the content column stays centered at 64rem (`max-w-5xl`) padded 20px → 32px (`sm`) horizontally, 32px
+vertically. Until 2026-08-06 this app had no rail at all, on the grounds that a candidate visits four
+screens over several weeks and a fixed 256px of mostly-irrelevant links would spend a quarter of a
+phone-sized viewport saying so. That reasoning is answered by collapsibility rather than abandoned: the
+rail is off-canvas below `lg`, and above it a reader can drop it to a 72px (`w-[4.5rem]`) icon-only strip
+whose state persists in `localStorage` under `candidateNavCollapsed`. Candidate screens still open with a
+`PageHero`; the rail orients *between* screens, the hero orients *within* one.
+
+The two apps also differ in **what the rail contains**. The admin rail is a fixed list — a recruiter's
+destinations do not change. The candidate rail is a function of session state: signed out it is Careers +
+How it Works, signed in it is Careers + Dashboard + My Resumes. "How it Works" is the explainer for
+someone deciding whether to trust an AI screen, and it lives on the marketing landing page; once the
+candidate is inside a process with state, sending them back out to the pitch costs a row and tells them
+nothing about their own application.
 
 **Marketing (Persuade).** A centered 80rem (`max-w-7xl`) container padded 20px → 32px (`sm`), with
 sections on a 96px (`py-24`) vertical rhythm and alternating canvas/white bands to separate them. The hero
@@ -796,8 +805,15 @@ with the eye than one that holds still, which is the same call `<TR>` already ma
   sits in a 64px header above.
 - **App header:** 64px, sticky, white at 90% with a backdrop blur and a hairline underbar. Company name
   and code on the left, notification bell and an avatar-plus-chevron profile menu on the right.
+- **Candidate rail:** same rows and states as the app sidebar, but collapsible — 256px expanded, 72px
+  icon-only collapsed, toggled from a `PanelLeftClose`/`PanelLeftOpen` control at the header's left edge.
+  Collapsed rows keep their label as `sr-only` text plus a `title`, so an icon-only rail is still a list
+  of *named* links rather than a column of glyphs.
 - **Marketing navbar:** Anchor links in slate, ending in a primary CTA button.
 - **Mobile:** Below `lg` the sidebar becomes an overlay drawer over an `rgba(15,23,42,0.5)` scrim.
+- **The One-Home Rule.** A destination appears in the rail or in the header, never both. The rail holds
+  *where you can go*; the header holds *who you are* — notifications, account, sign in/out. Both apps
+  follow this, which is why the candidate account link is not also a rail row.
 
 ### Badges
 

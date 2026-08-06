@@ -49,8 +49,40 @@ function useFieldA11y(explicitId, error) {
 // it is a large contrast change around the whole perimeter — where the previous
 // violet border did the work and the ring merely decorated it. The ring stepped
 // 100 → 200 so it is still perceptible on white now that it is a warm grey.
-const fieldClass =
-  "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 shadow-sm transition-colors duration-150 focus:border-brand-600 focus:outline-none focus:ring-4 focus:ring-brand-200 disabled:bg-slate-100 disabled:text-slate-500";
+// Padding is kept out of the shared chrome so the compact variant can swap it
+// instead of layering a second, competing padding class on top of it.
+const fieldChrome =
+  "rounded-xl border border-slate-300 bg-white text-sm text-slate-900 placeholder:text-slate-500 shadow-sm transition-colors duration-150 focus:border-brand-600 focus:outline-none focus:ring-4 focus:ring-brand-200 disabled:bg-slate-100 disabled:text-slate-500";
+const fieldClass = `${fieldChrome} px-3.5 py-2.5`;
+// For a control that sits inline in a list row rather than stacked in a form.
+const fieldCompactClass = `${fieldChrome} px-2.5 py-1.5`;
+
+/**
+ * `w-full` is the right default for a field stacked in a form and the wrong one
+ * for a field sitting inline in a row. Tailwind cannot express "unless the
+ * caller says otherwise": both `w-full` and the caller's `w-36` end up in the
+ * same class attribute, and which one applies is decided by the order the rules
+ * happen to sit in the compiled stylesheet — not by the call site's intent.
+ *
+ * This bit us for real. RubricEditor's importance dropdown asked for `w-36`,
+ * `w-full` won, and because the control is also `shrink-0` it took the entire
+ * row: the criterion name was crushed to zero width and the computed share and
+ * delete button were pushed outside the card. The screen still "worked" while
+ * showing a list of criteria with no names.
+ *
+ * So the default width is only emitted when the caller has not supplied one.
+ * `max-w-*` / `min-w-*` are constraints, not widths, and deliberately do not
+ * count — they compose with `w-full` correctly today (see JobForm's threshold
+ * input) and must keep doing so.
+ */
+// Variant prefixes count, so `sm:w-36` suppresses the default too — otherwise a
+// responsive width would lose to `w-full` at exactly the breakpoints it exists
+// for. `max-w-` / `min-w-` never match: the `w-` in them is not at a token or
+// variant boundary.
+const HAS_WIDTH = /(?:^|\s)(?:[\w.[\]/-]+:)*(?:w-|size-)\S/;
+function withWidth(className) {
+  return HAS_WIDTH.test(className) ? "" : "w-full";
+}
 
 export const Input = forwardRef(function Input({ className = "", error, id, ...props }, ref) {
   const a11y = useFieldA11y(id, error);
@@ -58,7 +90,7 @@ export const Input = forwardRef(function Input({ className = "", error, id, ...p
     <input
       ref={ref}
       {...a11y}
-      className={`${fieldClass} ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
+      className={`${withWidth(className)} ${fieldClass} ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
       {...props}
     />
   );
@@ -73,19 +105,24 @@ export const Textarea = forwardRef(function Textarea({ className = "", error, id
       // `resize-y`, not the browser default `resize: both` — a textarea the user
       // can drag wider than its column silently breaks the form grid, and the
       // horizontal handle has no legitimate use inside a fixed-width field.
-      className={`${fieldClass} resize-y ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
+      className={`${withWidth(className)} ${fieldClass} resize-y ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
       {...props}
     />
   );
 });
 
-export const Select = forwardRef(function Select({ className = "", error, id, children, ...props }, ref) {
+// `compact` is a prop rather than a class the caller passes because padding has
+// the same order-dependent collision that width does — a caller's `py-1.5` and
+// the base `py-2.5` would both apply and the winner would be arbitrary. It is
+// also swallowed here so it never reaches the DOM: `size` on a real <select> is
+// the number of visible rows, so this variant must not be spelled that way.
+export const Select = forwardRef(function Select({ className = "", error, id, compact = false, children, ...props }, ref) {
   const a11y = useFieldA11y(id, error);
   return (
     <select
       ref={ref}
       {...a11y}
-      className={`${fieldClass} ${error ? "border-red-400" : ""} ${className}`}
+      className={`${withWidth(className)} ${compact ? fieldCompactClass : fieldClass} ${error ? "border-red-400" : ""} ${className}`}
       {...props}
     >
       {children}

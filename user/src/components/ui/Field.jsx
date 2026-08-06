@@ -52,7 +52,27 @@ function useFieldA11y(explicitId, error) {
 // violet border did the work and the ring merely decorated it. The ring stepped
 // 100 → 200 so it is still perceptible on white now that it is a warm grey.
 const fieldClass =
-  "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 shadow-sm transition-colors duration-150 focus:border-brand-600 focus:outline-none focus:ring-4 focus:ring-brand-200 disabled:bg-slate-100 disabled:text-slate-500";
+  "rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 shadow-sm transition-colors duration-150 focus:border-brand-600 focus:outline-none focus:ring-4 focus:ring-brand-200 disabled:bg-slate-100 disabled:text-slate-500";
+
+/**
+ * `w-full` is the right default for a field stacked in a form and the wrong one
+ * for a field sitting inline in a row. Tailwind cannot express "unless the
+ * caller says otherwise": both `w-full` and a caller's `w-36` end up in the same
+ * class attribute, and which one applies is decided by the order the rules
+ * happen to sit in the compiled stylesheet — not by the call site's intent. In
+ * the admin app that silently made a list row's dropdown consume the entire row
+ * and pushed the rest of the row outside its card. So the default width is only
+ * emitted when the caller has not supplied one. `max-w-*` / `min-w-*` are
+ * constraints rather than widths and deliberately do not count.
+ */
+// Variant prefixes count, so `sm:w-36` suppresses the default too — otherwise a
+// responsive width would lose to `w-full` at exactly the breakpoints it exists
+// for. `max-w-` / `min-w-` never match: the `w-` in them is not at a token or
+// variant boundary.
+const HAS_WIDTH = /(?:^|\s)(?:[\w.[\]/-]+:)*(?:w-|size-)\S/;
+function withWidth(className) {
+  return HAS_WIDTH.test(className) ? "" : "w-full";
+}
 
 export const Input = forwardRef(function Input({ className = "", error, id, ...props }, ref) {
   const a11y = useFieldA11y(id, error);
@@ -60,7 +80,7 @@ export const Input = forwardRef(function Input({ className = "", error, id, ...p
     <input
       ref={ref}
       {...a11y}
-      className={`${fieldClass} ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
+      className={`${withWidth(className)} ${fieldClass} ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
       {...props}
     />
   );
@@ -75,7 +95,7 @@ export const Textarea = forwardRef(function Textarea({ className = "", error, id
       // `resize-y`, not the browser default `resize: both` — a textarea the user
       // can drag wider than its column silently breaks the form grid, and the
       // horizontal handle has no legitimate use inside a fixed-width field.
-      className={`${fieldClass} resize-y ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
+      className={`${withWidth(className)} ${fieldClass} resize-y ${error ? "border-red-400 focus:border-red-500 focus:ring-red-100" : ""} ${className}`}
       {...props}
     />
   );
@@ -87,7 +107,7 @@ export const Select = forwardRef(function Select({ className = "", error, id, ch
     <select
       ref={ref}
       {...a11y}
-      className={`${fieldClass} ${error ? "border-red-400" : ""} ${className}`}
+      className={`${withWidth(className)} ${fieldClass} ${error ? "border-red-400" : ""} ${className}`}
       {...props}
     >
       {children}
