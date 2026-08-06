@@ -172,7 +172,7 @@ async function getCareersInfo(req, res) {
   const company = await Company.findById(req.user.company);
   if (!company) return res.status(404).json({ error: "Company not found" });
   const slug = await careersService.ensureCompanySlug(company);
-  const base = (process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 9000}`).replace(/\/$/, "");
+  const base = require("../utils/corsOrigins").publicBaseUrl();
   res.json({
     slug,
     careersUrl: `${base}/careers/${slug}`,

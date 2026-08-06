@@ -5,10 +5,7 @@
 
 const careersService = require("../careersService");
 const Company = require("../../models/Company");
-
-function publicBaseUrl() {
-  return (process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 9000}`).replace(/\/$/, "");
-}
+const { publicBaseUrl } = require("../../utils/corsOrigins");
 
 module.exports = {
   key: "careers",

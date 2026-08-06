@@ -83,4 +83,25 @@ function candidateLinkBase(fallback = "http://localhost:5174") {
   return normalizeBase(firstOrigin(process.env.PUBLIC_CANDIDATE_URL || process.env.CLIENT_ORIGIN_USER, fallback));
 }
 
-module.exports = { parseOrigins, firstOrigin, candidateLinkBase, isDisposableHost, isLocalHost, normalizeBase };
+// The base for links that point back at THIS backend: careers pages, aggregator
+// feeds, sitemaps, JSON-LD canonicals, and the backendUrl handed to the LiveKit
+// worker in dispatch metadata. Same bare-host paste hazard as candidateLinkBase
+// (Railway/Render/Vercel all display a hostname with no scheme), but it fails
+// later and further away: a schemeless canonical is read by crawlers as a
+// RELATIVE path, and httpx in the Python worker refuses the request outright
+// ("Request URL is missing an 'http://' or 'https://' protocol") — which surfaces
+// as an interview that dies in a different service, in a different language,
+// with no mention of the variable that caused it.
+function publicBaseUrl(fallback = `http://localhost:${process.env.PORT || 9000}`) {
+  return normalizeBase(process.env.PUBLIC_BASE_URL || fallback);
+}
+
+module.exports = {
+  parseOrigins,
+  firstOrigin,
+  candidateLinkBase,
+  publicBaseUrl,
+  isDisposableHost,
+  isLocalHost,
+  normalizeBase,
+};

@@ -17,6 +17,7 @@ const usageService = require("./usageService");
 const speech = require("./speechService");
 const llm = require("./llmService");
 const tenantContext = require("../utils/tenantContext");
+const { publicBaseUrl } = require("../utils/corsOrigins");
 
 const ROOM_PREFIX = "itv-";
 
@@ -128,7 +129,9 @@ async function dispatchAgent(session, portalToken) {
   const metadata = JSON.stringify({
     sessionId: String(session._id),
     portalToken,
-    backendUrl: process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 9000}`,
+    // normalizeBase, not the raw env: a schemeless host reaches the worker as an
+    // httpx URL error, and the interview dies before the first question.
+    backendUrl: publicBaseUrl(),
   });
   await client.createDispatch(room, agentName(), { metadata });
   return { dispatched: true };

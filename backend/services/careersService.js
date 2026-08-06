@@ -13,7 +13,7 @@ const Company = require("../models/Company");
 const CompanySettings = require("../models/CompanySettings");
 const Job = require("../models/Job");
 const { slugify } = require("../utils/slug");
-const { firstOrigin } = require("../utils/corsOrigins");
+const { firstOrigin, publicBaseUrl } = require("../utils/corsOrigins");
 
 // validThrough is MANDATORY for Google's JobPosting — a missing field silently
 // drops the listing from the index. Postings default to 60 days from last touch.
@@ -79,9 +79,6 @@ async function resolveCompanyBySlug(slug) {
   return null;
 }
 
-function publicBaseUrl() {
-  return (process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 9000}`).replace(/\/$/, "");
-}
 function applyBaseUrl() {
   return firstOrigin(process.env.CLIENT_ORIGIN_USER, "http://localhost:5174").replace(/\/$/, "");
 }
