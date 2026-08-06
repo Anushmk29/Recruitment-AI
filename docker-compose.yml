@@ -109,6 +109,24 @@ services:
       minio:
         condition: service_healthy
 
+  # LiveKit agent worker (Phase LK-0+) — opt in with:  docker compose --profile agent up -d
+  # Dials OUT to LiveKit Cloud (no ports). Reads agent-worker/.env for keys; BACKEND_URL
+  # defaults to the host-run backend (the default dev workflow). If you run the backend
+  # containerised (--profile app), export AGENT_BACKEND_URL=http://api:9000 first.
+  # Default dev loop is still host-side (`python agent.py dev` hot-reloads); this service
+  # exists to prove the production image locally.
+  agent-worker:
+    profiles: ["agent"]
+    build: ./agent-worker
+    container_name: recruitai-agent-worker
+    restart: unless-stopped
+    env_file:
+      - agent-worker/.env
+    environment:
+      BACKEND_URL: ${AGENT_BACKEND_URL:-http://host.docker.internal:9000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # no-op on Docker Desktop, needed on Linux
+
 volumes:
   mongo-data:
   redis-data:

@@ -44,8 +44,13 @@ function useFieldA11y(explicitId, error) {
   };
 }
 
+// Focus moves the BORDER from slate-300 to near-black ink and adds a greige
+// ring. With an achromatic primary the border swing is what carries the state —
+// it is a large contrast change around the whole perimeter — where the previous
+// violet border did the work and the ring merely decorated it. The ring stepped
+// 100 → 200 so it is still perceptible on white now that it is a warm grey.
 const fieldClass =
-  "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 shadow-sm transition-colors duration-150 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-500";
+  "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 shadow-sm transition-colors duration-150 focus:border-brand-600 focus:outline-none focus:ring-4 focus:ring-brand-200 disabled:bg-slate-100 disabled:text-slate-500";
 
 export const Input = forwardRef(function Input({ className = "", error, id, ...props }, ref) {
   const a11y = useFieldA11y(id, error);

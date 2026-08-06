@@ -638,6 +638,21 @@ async function buildInterviewReport(candidateId, companyId) {
         utterance: h.utterance,
         at: h.at,
       })),
+      // The unedited conversation, both sides, in the order it happened — the audit record, NOT
+      // the assessment. `transcript` above is the scored evidence: answers, matched to questions,
+      // as the engine segmented them. This is everything else, and it exists so that an interview
+      // that went wrong looks different from a candidate who did badly. A reviewer reading nine
+      // words of answer needs to be able to see whether the other two minutes were the candidate
+      // asking if their microphone was working.
+      //
+      // Nothing derived from it enters a score. It is rendered separately and labelled as such.
+      conversationLog: [
+        ...(ai.agentUtterances || []).map((u) => ({ role: "interviewer", text: u.text, at: u.at })),
+        ...(ai.candidateUtterances || []).map((u) => ({ role: "candidate", text: u.text, at: u.at })),
+      ].sort((a, b) => new Date(a.at) - new Date(b.at)),
+      // Which interviewer instructions this session ran under. Two candidates compared across a
+      // prompt change were not given the same interview, and this is how a reviewer can tell.
+      agentPromptVersion: ai.agentPromptVersion || null,
       durationFlag,
       sessionQuality,
       verdict,

@@ -109,6 +109,19 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
 
+      # --- LiveKit realtime pipeline (unset => pipeline dead code; see LK-series) ---
+      # Session mint + webhook verification. Same production project as the worker below.
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      # Replace with the measured all-in number from the LK-5 cost gate before enabling
+      # any PAYING tenant (LIVEKIT-REALTIME-PLAN.md LK-5 step 5).
+      - key: LIVEKIT_CENTS_PER_MIN
+        value: "4"
+
       # --- payments (unset => checkout 503s, UI shows "Payments Coming Soon") ---
       - key: RAZORPAY_KEY_ID
         sync: false
@@ -162,6 +175,49 @@ services:
   #   S3_ENDPOINT=http://recruitment-minio:9000
   #   S3_FORCE_PATH_STYLE=true
   #   S3_REGION=us-east-1
+
+  # ---------------------------------------------------------------- LiveKit agent worker
+  # The realtime-interview worker (LIVEKIT-REALTIME-PLAN.md LK-5). Dials OUT to LiveKit
+  # Cloud; no inbound traffic, no public hostname — `worker`, not `web`. `starter`, not
+  # free, for the same reason as the API: a spun-down worker means a candidate sits in a
+  # room until the 10s watchdog falls back — survivable, but not a pilot experience.
+  # One async instance handles multiple concurrent interviews; scale instances with load.
+  #
+  # INERT until a tenant's CompanySettings.ai.voiceMode = "livekit" (or VOICE_MODE=livekit
+  # on the API). Deploy order and the cost-validation gate: LIVEKIT-REALTIME-PLAN.md LK-5.
+  # After the first deploy, also configure the LiveKit Cloud webhook:
+  #   dashboard → Webhooks → https://recruitment-api.onrender.com/api/webhooks/livekit
+  # — it is the authoritative metering close (untestable locally; verified only here).
+  - type: worker
+    name: recruitment-agent-worker
+    runtime: python
+    region: singapore # same region as the API — worker→backend calls stay fast
+    plan: starter
+    rootDir: agent-worker
+    buildCommand: pip install -r requirements.txt && python agent.py download-files
+    startCommand: python agent.py start
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      # Production LiveKit project (NOT the dev one in agent-worker/.env locally).
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      # Same keys the API holds — the worker is the server-side mouth and ears.
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # The public API URL (dispatch metadata carries it too; this is the fallback).
+      - key: BACKEND_URL
+        sync: false
+      # MUST match the API's LIVEKIT_AGENT_NAME, or dispatches summon an agent that
+      # doesn't exist and candidates wait out the watchdog in an empty room.
+      - key: AGENT_NAME
+        value: recruitment-interviewer
 
   # ---------------------------------------------------------------- Redis / Key Value
   # Backs the Socket.io adapter, the BullMQ email queue, distributed cron locks and

@@ -84,6 +84,50 @@ export function stageTone(stage) {
 export const ROUND_STAGES = ["hr_interview", "technical_interview", "manager_interview"];
 export const TERMINAL_STAGES = ["joined", "rejected"];
 
+// Stages whose transition puts an EMAIL in the candidate's inbox, as opposed to
+// only writing an in-app notification. Mirrors
+// backend/services/pipelineService.js — `STAGE_NOTIFICATIONS[stage].candidate.email`
+// for the eight direct ones, plus the two whose invitation mail is minted by a
+// service instead of the notification config (`ensureInterviewInvite` →
+// interview_scheduled, `ensureAssessmentInvite` → assessment_scheduled).
+//
+// This exists so the stage menu can say, before the click, that a move reaches
+// the candidate. Moving someone is not an internal bookkeeping act when it ends
+// with a rejection letter, and a recruiter should not have to know the
+// notification matrix by heart to find that out.
+//
+// Two nuances the UI deliberately does not spell out, because they change
+// nothing about what the recruiter is deciding: the invite mails are idempotent
+// (a candidate who already holds a live interview link is not re-sent one), and
+// every send still passes the recipient's NotificationPreference.
+//
+// Keep in sync with the backend. A stage listed here that no longer mails is a
+// promise the UI cannot keep.
+const CANDIDATE_EMAIL_STAGES = new Set([
+  "assessment_scheduled",
+  "interview_scheduled",
+  "shortlisted",
+  "hr_interview",
+  "technical_interview",
+  "manager_interview",
+  "selected",
+  "offer_sent",
+  "joined",
+  "rejected",
+]);
+
+export function notifiesCandidate(stage) {
+  return CANDIDATE_EMAIL_STAGES.has(normalizeStage(stage));
+}
+
+// Where a stage sits in the pipeline, 1-indexed, or null for the off-ramp.
+// Surfaced next to a stage name so a list of twelve destinations reads as an
+// ordered pipeline rather than an arbitrary menu.
+export function stageStep(stage) {
+  const i = STAGES.indexOf(normalizeStage(stage));
+  return i === -1 ? null : i + 1;
+}
+
 export function isTerminal(stage) {
   return TERMINAL_STAGES.includes(normalizeStage(stage));
 }

@@ -33,6 +33,23 @@
 // null is not a failure path; it is how a topic that is usually answerable stays honest in the
 // session where it is not.
 
+// "Why are you asking me this?"
+//
+// Exported as a constant because BOTH interview pipelines have to say the identical sentence: the
+// turn-based path reads it from this bank, and the realtime agent is handed it verbatim inside its
+// instructions (services/voiceAgentService.agentPrompt). One string, so the two can never drift
+// into giving different accounts of where the questions come from.
+//
+// WHAT THIS SENTENCE DELIBERATELY IS NOT: a justification. The temptation is to answer with the
+// rubric criterion's `rationale` — it is right there, it is human-approved, and it would be
+// perfectly defensible. It is still wrong to say out loud. Explaining WHY a question is
+// job-related, mid-interview, to the candidate who just asked, does two bad things at once: it
+// sounds like an instrument defending itself rather than a person talking, and it inevitably drifts
+// toward what a good answer would contain — which is coaching, delivered only to the candidates who
+// thought to ask. Stating where the question CAME FROM carries none of that and is the true answer
+// anyway. The rationale stays where it belongs: in the rubric, for a human reviewer.
+const WHY_THIS_QUESTION = "That's just what the role asks for — no rush at all.";
+
 const TOPICS = {
   // "How many more?" — the single most common process question there is, and the one the room's
   // own progress display has always been slightly dishonest about (the denominator is a ceiling,
@@ -105,6 +122,17 @@ const TOPICS = {
   can_i_come_back: {
     build: () =>
       "I'll be moving forward through the questions rather than coming back — but if you'd rather skip this one, just say so, and it's recorded as a skip rather than as an attempt.",
+  },
+
+  // "Why are you asking me this?" / "What's this got to do with the job?"
+  //
+  // Asked most often by the candidates who are most uneasy, and what settles them is the register
+  // rather than the content: a recruiter answers this without breaking stride, because to them it
+  // genuinely is not a loaded question. A careful, complete, well-structured answer would be worse
+  // — it treats the question as an accusation and tells the candidate they were right to be
+  // suspicious. Hence "just", and hence the reassurance being about time rather than about them.
+  why_this_question: {
+    build: () => WHY_THIS_QUESTION,
   },
 
   // "Can I use notes / look something up?" Answered conservatively and identically for everyone,
@@ -213,4 +241,4 @@ function stateFromSession(session, { job } = {}) {
   };
 }
 
-module.exports = { TOPICS, TOPIC_NAMES, DEFERRAL, answerFor, stateFromSession };
+module.exports = { TOPICS, TOPIC_NAMES, DEFERRAL, WHY_THIS_QUESTION, answerFor, stateFromSession };

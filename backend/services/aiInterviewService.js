@@ -168,6 +168,11 @@ function coverageStats(ai) {
     asked: ai.questionCount || 0,
     answered: answers.length - declined,
     declined,
+    // Of those declines, how many were an ABSENCE rather than an act — nothing captured, cause
+    // unknown (handleNoResponse). Reported separately because "the candidate told us they couldn't
+    // answer" and "we have no recording of this question" are different findings, and only the
+    // first is about the candidate. Both stay out of the score either way.
+    noResponse: answers.filter((t) => t.declineAct === "no_response").length,
   };
 }
 
@@ -198,6 +203,21 @@ function reviewRequiredReason(ai) {
   }
   if (ai.status === "ended_early") {
     return "the candidate chose to end the interview before it finished, so most of the instrument was never run";
+  }
+  // A question where nothing was captured at all. Checked BEFORE the decline share, and with no
+  // threshold, because it is a different kind of fact: a decline is evidence (the candidate told
+  // us something), whereas this is a hole where evidence should be, and we cannot say whose fault
+  // the hole is. A dead microphone and a candidate sitting silent produce identical records.
+  //
+  // Guessing costs asymmetrically — guess "they declined" and a candidate is marked down for our
+  // audio failing — so it is not guessed. One occurrence is enough: a person looks.
+  const noResponse = (ai.turns || []).filter((t) => t.declineAct === "no_response" && t.kind === "answer").length;
+  if (noResponse > 0) {
+    return (
+      `no answer was captured at all for ${noResponse} question${noResponse === 1 ? "" : "s"} — this looks ` +
+      `identical whether the candidate stayed silent or their microphone failed, and that is not a ` +
+      `distinction this system can make. It must be checked by a person before any decision`
+    );
   }
   const c = coverageStats(ai);
   if (c.asked > 0 && c.declined / c.asked > MAX_DECLINE_SHARE) {
@@ -1011,8 +1031,70 @@ async function submitDialogueAct(session, act, opts = {}) {
 
   if (act === "pause") return handlePause(session, opts);
   if (act === "decline") return handleDecline(session, opts);
+  if (act === "no_response") return handleNoResponse(session, opts);
   if (act === "withdraw") return handleWithdraw(session, opts);
   throw Object.assign(new Error("Unknown conversational act"), { status: 400 });
+}
+
+// Nothing was said, and nothing was heard.
+//
+// WHY THIS IS NOT A DECLINE. A decline is something the candidate DID: they spoke, and what they
+// said was "I can't answer this one". Silence is the absence of any act, and the same silence is
+// produced by a candidate who chose not to answer, a microphone that stopped working, a dropped
+// audio track, and an STT model that returned nothing for speech it did receive. We cannot tell
+// those apart — not from the transcript, not from the audio evidence, not from anything we hold —
+// and so the record does not pretend to. It says what is true: no answer was captured.
+//
+// Recording it at all is the point. Before this existed the interviewer simply could not move past
+// a silent question: submitAnswer rejected the empty text and the model re-asked forever, which is
+// how a candidate with a dead microphone spends their interview being asked question three.
+//
+// CONSEQUENCES, and they are all protective:
+//   - `declined: true` keeps it out of every scoring path, exactly as a spoken decline is.
+//   - It is NOT scored zero. A zero says "they answered badly"; this says "we have nothing".
+//   - Any occurrence routes the whole interview to a human (reviewRequiredReason). That is
+//     deliberate and deliberately unconditional: the only alternative to escalating an ambiguity
+//     we cannot resolve is guessing, and the adverse guess here would penalise a candidate for our
+//     audio path failing. Rule 4 and rule 6, at the point they actually bite.
+const NO_RESPONSE_TEXT = "[no answer captured]";
+
+async function handleNoResponse(session, opts = {}) {
+  const ai = session.aiInterview;
+  const precedingAi = [...ai.turns].reverse().find((t) => t.role === "ai");
+  if (precedingAi?.kind === "warmup") {
+    // Silence on "tell me about yourself" is not a missing answer to anything scored — there is no
+    // rubric criterion behind the warmup. Record it and move on without flagging the interview.
+    ai.turns.push({
+      role: "candidate",
+      kind: "warmup_answer",
+      text: NO_RESPONSE_TEXT,
+      declined: true,
+      declineAct: "no_response",
+      inputMode: "voice",
+    });
+    ai.modality = "voice";
+    return advance(session);
+  }
+
+  ai.turns.push({
+    role: "candidate",
+    kind: "answer",
+    // Code-authored, and marked as such by its brackets. It is NOT a transcript and must never be
+    // read as one: nobody said these words. `text` is required by the schema, and the honest thing
+    // to put in a required field describing an absence is a statement that there was one.
+    text: NO_RESPONSE_TEXT,
+    declined: true,
+    declineAct: "no_response",
+    inputMode: "voice",
+    // How much voiced audio the worker captured while this question was open. Zero (or absent)
+    // means we heard nothing at all; a positive value with no transcript means we heard speech and
+    // failed to transcribe it. Both are recorded because they point at different failures, and
+    // neither changes the outcome — a reviewer decides, not this code.
+    ...(opts.audioDurationMs !== undefined ? { audioDurationMs: opts.audioDurationMs } : {}),
+  });
+  if (opts.inputMode === "voice" || opts.inputMode === undefined) ai.modality = "voice";
+
+  return advance(session);
 }
 
 // "Give me a second." Nothing to decide and nothing to record on the instrument — the interviewer
@@ -1213,7 +1295,18 @@ function scheduleFinalization(sessionId) {
   runInBackground(`finalize interview ${sessionId}`, () =>
     tenantContext
       .runAsSystem(() => runFinalization(sessionId))
-      .catch((err) => console.error("[aiInterview] finalization failed:", err.message))
+      .catch((err) => {
+        // The realtime pipelines' metering close (client /end, webhook) can save the session
+        // while the slow evaluation holds a now-stale doc — a VersionError, not a real failure.
+        // One retry on a fresh load resolves it; runFinalization is idempotent on generatedAt.
+        if (err?.name === "VersionError") {
+          console.warn(`[aiInterview] finalization raced a concurrent write on ${sessionId} — retrying once`);
+          return tenantContext
+            .runAsSystem(() => runFinalization(sessionId))
+            .catch((err2) => console.error("[aiInterview] finalization retry failed:", err2.message));
+        }
+        console.error("[aiInterview] finalization failed:", err.message);
+      })
   );
 }
 

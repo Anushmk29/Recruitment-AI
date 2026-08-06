@@ -132,6 +132,15 @@ app.post(
   webhook
 );
 
+// LiveKit room_finished webhook — the authoritative meter for realtime interview sessions
+// (LIVEKIT-REALTIME-PLAN.md LK-1). Same raw-body rule as Razorpay above: LiveKit signs the exact
+// request bytes (JWT in the Authorization header), so this must stay ahead of express.json().
+app.post(
+  "/api/webhooks/livekit",
+  express.raw({ type: "application/json" }),
+  require("./controllers/livekitController").livekitWebhook
+);
+
 // Bounded JSON body — resumes/photos go through multer (multipart), so a small limit
 // here is safe and caps a cheap DoS vector (huge JSON bodies). Configurable via env.
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "1mb" }));
@@ -166,11 +175,15 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/admin-notifications", adminNotificationRoutes);
 app.use("/api/notification-preferences", notificationPreferenceRoutes);
 app.use("/api/interview-portal", interviewPortalRoutes);
-// Realtime (speech-to-speech) interview — services/voiceAgentService.js. Mounted under the portal
-// path because it runs on the same candidate session auth, but kept as its own router: it is
-// behind VOICE_MODE=realtime / CompanySettings.ai.voiceMode and defaults OFF, so it must be
-// reviewable and removable as one unit without touching the live turn-based pipeline.
+// Realtime interview ENGINE endpoints (function dispatch + transcript/guardrail) — called by the
+// LiveKit agent worker on the candidate's portal JWT. Mounted under the portal path because it
+// runs on the same candidate session auth. The path name predates the LiveKit pipeline and the
+// deployed worker posts to it — do not rename.
 app.use("/api/interview-portal/realtime", require("./routes/voiceAgentRoutes"));
+// LiveKit realtime pipeline (LIVEKIT-REALTIME-PLAN.md) — availability probe, session mint, worker
+// brief, and metering close. Behind VOICE_MODE=livekit / CompanySettings.ai.voiceMode="livekit",
+// defaults OFF; with it off, every tenant runs the turn-based pipeline.
+app.use("/api/interview-portal/livekit", require("./routes/livekitRoutes"));
 app.use("/api/auth", authRoutes);
 app.use("/api/companies", companyAuthRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);

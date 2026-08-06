@@ -3,10 +3,10 @@ import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Users, AlertTriangle } from "lucide-react";
 import api from "../api/client.js";
 import { Card, Badge, Avatar, Skeleton, EmptyState } from "../components/ui/Card.jsx";
-import { RecordCard, RecordGrid } from "../components/ui/Panels.jsx";
-import { Select } from "../components/ui/Field.jsx";
+import { RecordRow, RecordList } from "../components/ui/Panels.jsx";
+import StageMenu from "../components/ui/StageMenu.jsx";
 import { useToast } from "../components/ui/Toast.jsx";
-import { allowedNextStages, stageLabel } from "../lib/pipeline.js";
+import { stageLabel, stageTone } from "../lib/pipeline.js";
 
 export default function CandidateList() {
   const { id } = useParams();
@@ -14,6 +14,7 @@ export default function CandidateList() {
   const [job, setJob] = useState(null);
   const [candidates, setCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [movingId, setMovingId] = useState(null);
 
   function load() {
     setLoading(true);
@@ -29,12 +30,15 @@ export default function CandidateList() {
 
   async function handleStatusChange(candidateId, currentStatus, stage) {
     if (!stage || stage === currentStatus) return;
+    setMovingId(candidateId);
     try {
       await api.patch(`/candidates/${candidateId}/stage`, { stage });
       toast.success(`Moved to ${stageLabel(stage)}`);
       load();
     } catch (err) {
       toast.error(err.response?.data?.error || "Could not move candidate");
+    } finally {
+      setMovingId(null);
     }
   }
 
@@ -63,34 +67,38 @@ export default function CandidateList() {
       )}
 
       {loading ? (
-        <RecordGrid>
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Card key={i} padding="compact">
-              <Skeleton className="h-24 w-full" />
-            </Card>
+        <Card padding="none" className="divide-y divide-slate-100 overflow-hidden">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="px-4 py-3">
+              <Skeleton className="h-9 w-full" />
+            </div>
           ))}
-        </RecordGrid>
+        </Card>
       ) : candidates.length === 0 ? (
         <EmptyState icon={Users} title="No candidates yet" description="Applicants for this job will appear here." />
       ) : (
-        <RecordGrid>
+        <RecordList label={`Candidates for ${job?.title || "this job"}`}>
           {candidates.map((c) => (
-            <RecordCard
+            <RecordRow
               key={c._id}
-              avatar={<Avatar name={c.basicDetails?.name} />}
+              avatar={<Avatar name={c.basicDetails?.name} size="sm" />}
               title={c.basicDetails?.name || "Unnamed applicant"}
               subtitle={c.basicDetails?.email}
               link={{ as: Link, to: `/candidates/${c._id}` }}
+              meta={[{ label: "Applied", value: new Date(c.createdAt).toLocaleDateString() }]}
               trailing={
-                c.ats?.overallScore != null ? (
-                  <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
-                    {c.ats.overallScore}%
-                  </Badge>
-                ) : (
-                  <Badge tone="slate">Not scored</Badge>
-                )
+                <>
+                  {c.ats?.overallScore != null ? (
+                    <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
+                      {c.ats.overallScore}%
+                    </Badge>
+                  ) : (
+                    <Badge tone="slate">Not scored</Badge>
+                  )}
+                  <Badge tone={stageTone(c.status)}>{stageLabel(c.status)}</Badge>
+                </>
               }
-              footer={
+              note={
                 // The old table showed this as a lone amber triangle with a
                 // `title` tooltip — invisible on touch, invisible to a screen
                 // reader, and exactly the kind of caveat the Honest Reading
@@ -100,28 +108,19 @@ export default function CandidateList() {
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     Legacy keyword match — rubric not approved
                   </span>
-                ) : (
-                  <span>Stage: {stageLabel(c.status)}</span>
-                )
+                ) : null
               }
               actions={
-                <Select
-                  value=""
-                  onChange={(e) => handleStatusChange(c._id, c.status, e.target.value)}
-                  aria-label={`Move ${c.basicDetails?.name || "candidate"} to another stage`}
-                  className="w-auto py-1.5 text-xs"
-                >
-                  <option value="">Move from {stageLabel(c.status)}…</option>
-                  {allowedNextStages(c.status).map((s) => (
-                    <option key={s} value={s}>
-                      → {stageLabel(s)}
-                    </option>
-                  ))}
-                </Select>
+                <StageMenu
+                  status={c.status}
+                  name={c.basicDetails?.name}
+                  busy={movingId === c._id}
+                  onMove={(stage) => handleStatusChange(c._id, c.status, stage)}
+                />
               }
             />
           ))}
-        </RecordGrid>
+        </RecordList>
       )}
     </div>
   );

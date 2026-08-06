@@ -18,7 +18,7 @@ import {
 import api from "../api/client.js";
 import { getAuth, authHeader } from "../portal/portalAuth.js";
 import { useVoiceInterview } from "../portal/useVoiceInterview.js";
-import { useRealtimeInterview } from "../portal/useRealtimeInterview.js";
+import { useLiveKitInterview } from "../portal/useLiveKitInterview.js";
 import { useProctoring } from "../portal/useProctoring.js";
 import { Card, Skeleton } from "../components/ui/Card.jsx";
 import { Textarea } from "../components/ui/Field.jsx";
@@ -431,20 +431,17 @@ export default function InterviewRoom() {
     await submitAct({ act: "withdraw", confirmedBy: "explicit" });
   }, [cancelListening, submitAct]);
 
-  // ---- Realtime (speech-to-speech) pipeline ----------------------------------
+  // ---- LiveKit realtime pipeline (LK-4) --------------------------------------
   //
-  // Off unless the tenant has it on (VOICE_MODE / CompanySettings.ai.voiceMode), and everything
-  // below this line is untouched when it is off. `checkAvailable` answers 404 for "not enabled",
-  // which is a normal answer — a tenant that has not adopted realtime gets exactly the interview
-  // it gets today, including if this probe fails for any other reason.
-  const realtime = useRealtimeInterview({
-    onStateChange: (result) => {
-      // The agent's function calls are what advance the interview, so the room's copy of the
-      // state follows them rather than polling. Only the fields the UI reads are taken.
-      if (result?.interview_complete) setState((s) => (s ? { ...s, completed: true } : s));
-    },
+  // The realtime pipeline. Off unless the tenant has it on (VOICE_MODE /
+  // CompanySettings.ai.voiceMode) — `checkAvailable` answers 404 for "not enabled", which is a
+  // normal answer: a tenant that has not adopted it gets the turn-based interview, including if
+  // this probe fails for any other reason. The worker owns audio, evidence, and the guardrail;
+  // this client is a WebRTC join, a speaker, and captions. On any end (complete, withdrawn,
+  // halted, worker death) the room is closed server-side and we refetch — the server knows which
+  // one happened, we never guess.
+  const lk = useLiveKitInterview({
     onEnded: async () => {
-      await realtimeRef.current?.disconnect?.();
       try {
         const fresh = await api.get("/interview-portal/interview", { headers: authHeader() });
         setState(fresh.data);
@@ -453,50 +450,51 @@ export default function InterviewRoom() {
       }
     },
   });
-  const realtimeRef = useRef(realtime);
-  useEffect(() => { realtimeRef.current = realtime; }, [realtime]);
+  const lkRef = useRef(lk);
+  useEffect(() => { lkRef.current = lk; }, [lk]);
 
   // Ask once, before any microphone opens, so the room knows which pipeline it is running.
   useEffect(() => {
-    if (!supported || realtime.available !== null) return;
-    void realtime.checkAvailable();
-  }, [supported, realtime]);
+    if (!supported || lk.available !== null) return;
+    void lk.checkAvailable();
+  }, [supported, lk]);
 
   // WHICH PIPELINE IS LIVE. Declared BEFORE the effects that read them, and it has to stay that
-  // way: a dependency array is evaluated during render, so an effect listing `realtimeMode` above
-  // this line throws "Cannot access 'realtimeMode' before initialization" and takes the whole room
+  // way: a dependency array is evaluated during render, so an effect listing `livekitMode` above
+  // this line throws "Cannot access 'livekitMode' before initialization" and takes the whole room
   // down on first paint — the interview never renders at all. `const` gives no hoisting grace here,
   // and neither does the bundler.
-  const realtimeMode = mode === "voice" && supported && realtime.available === true;
-  const voiceMode = mode === "voice" && supported && !realtimeMode;
+  // Precedence livekit → turn-based; the lower tier is defined with the negation of the tier
+  // above it, so exactly one is ever true.
+  const livekitMode = mode === "voice" && supported && lk.available === true;
+  const voiceMode = mode === "voice" && supported && !livekitMode;
 
   // EXACTLY ONE PIPELINE HOLDS THE MICROPHONE. Enforced here rather than left to the render tree.
   //
   // Two orchestrators both driving a live interview is the worst failure this room can produce —
   // two open mics, two voices talking over each other, and two independent paths submitting an
-  // answer for the same question. The render branches (`realtimeMode ? … : voiceMode ? …`) make it
+  // answer for the same question. The render branches (`livekitMode ? … : voiceMode ? …`) make it
   // look impossible, but they only decide what is DRAWN; effects and callbacks are what actually
-  // open microphones, and one of them was gated on `mode` rather than `voiceMode`.
+  // open microphones — so the connect/disconnect below is gated on the pipeline flags, and the
+  // turn-based orchestrator reads `voiceMode`, which is defined as `... && !livekitMode` —
+  // mutually exclusive by construction.
   //
-  // So: realtime connects when it is the chosen pipeline and the candidate has started, and
-  // disconnects the moment it is not. The turn-based orchestrator reads `voiceMode`, which is
-  // defined as `... && !realtimeMode` — mutually exclusive by construction.
+  // The LiveKit failure path is self-falling-back: the 10s agent-join watchdog (and any connect
+  // error) flips lk.available to false, livekitMode recomputes false on the next render, and the
+  // microphone lands with the turn-based pipeline — no candidate ever waits in an empty room.
   useEffect(() => {
-    const rt = realtimeRef.current;
-    if (!rt) return;
-    if (realtimeMode && started) {
-      // connect() is idempotent — the consent button races this deliberately.
-      if (rt.phase === "idle") {
-        void rt.connect().catch(() => {
+    const l = lkRef.current;
+    if (!l) return;
+    if (livekitMode && started) {
+      if (l.phase === "idle") {
+        void l.connect().catch(() => {
           setError("Couldn't start the live interview — switching to the standard voice interview.");
         });
       }
       return;
     }
-    // Not the chosen pipeline any more (switched to typing, or realtime was disabled). Release the
-    // microphone and close the billing window rather than leaving a socket open behind the UI.
-    if (rt.phase !== "idle" && rt.phase !== "ended" && rt.phase !== "halted") void rt.disconnect();
-  }, [realtimeMode, started, realtime.phase]);
+    if (l.phase !== "idle" && l.phase !== "ended" && l.phase !== "failed") void l.disconnect();
+  }, [livekitMode, started, lk.phase]);
 
   // Voice orchestration: for each new AI question, ask it and listen. On devices where the
   // pre-check measured an isolated mic the two overlap, so the candidate can cut in mid-question;
@@ -505,12 +503,12 @@ export default function InterviewRoom() {
   useEffect(() => {
     // `voiceMode`, NOT `mode` — the two pipelines must never both be live.
     //
-    // This gated on `mode === "voice"` and realtime also runs with mode "voice", so with realtime
-    // enabled BOTH orchestrators ran: this one opened a second microphone and spoke the question
-    // through the turn-based TTS while the agent was already asking it and listening. Two voices,
-    // two open mics, and two independent paths submitting an answer for the same question.
-    // `voiceMode` is defined as `... && !realtimeMode`, so reading it here is what makes the
-    // pipelines mutually exclusive by construction rather than by coincidence.
+    // This gated on `mode === "voice"` and the realtime pipeline also runs with mode "voice", so
+    // with it enabled BOTH orchestrators ran: this one opened a second microphone and spoke the
+    // question through the turn-based TTS while the agent was already asking it and listening.
+    // Two voices, two open mics, and two independent paths submitting an answer for the same
+    // question. `voiceMode` is defined as `... && !livekitMode`, so reading it here is what makes
+    // the pipelines mutually exclusive by construction rather than by coincidence.
     if (!voiceMode || !started || !state) return;
     if (state.completed || state.status === "not_started") return;
     const q = state.currentQuestion;
@@ -732,7 +730,7 @@ export default function InterviewRoom() {
         </Button>
       </Card>
     );
-  } else if (state.halted || realtime.halted) {
+  } else if (state.halted || lk.halted) {
     // WE stopped this, not them. Everything on this screen follows from that: no "unfortunately",
     // no explanation of what the interviewer said (repeating an unlawful question in order to
     // apologise for it is worse than the original), and an explicit promise that it will not count
@@ -745,7 +743,7 @@ export default function InterviewRoom() {
         </div>
         <h1 className="text-lg font-semibold text-slate-900">Interview stopped</h1>
         <p className="mt-2 text-sm text-slate-500">
-          {realtime.haltMessage ||
+          {lk.haltMessage ||
             "We've had to stop this interview early for a technical reason on our side. This is not about your answers, and it will not count against you. A member of the hiring team will review your application and be in touch about next steps."}
         </p>
         <Button variant="outline" className="mt-5" onClick={() => navigate("/portal/dashboard")}>
@@ -908,7 +906,7 @@ export default function InterviewRoom() {
               the recruiter reads. Typed interviews are unchanged, because there the text IS how
               the candidate answers. */}
           {state.turns.map((t, i) =>
-            (voiceMode || realtimeMode) && (t.role === "candidate" || t.kind === "warmup_answer") ? null : (
+            (voiceMode || livekitMode) && (t.role === "candidate" || t.kind === "warmup_answer") ? null : (
               <Bubble key={i} role={t.role} text={t.text} />
             )
           )}
@@ -916,7 +914,7 @@ export default function InterviewRoom() {
           {/* What the interviewer is saying, shown as well as spoken. In realtime mode this is the
               live caption from the agent's own transcript — a candidate who is deaf or hard of
               hearing, or whose audio output has failed, must still receive the question. */}
-          {realtimeMode && realtime.caption && <Bubble role="ai" text={realtime.caption} />}
+          {livekitMode && lk.caption && <Bubble role="ai" text={lk.caption} />}
 
           {/* The indicator must never claim to be listening when it isn't. It used to keep
               pulsing green over a socket that had already died, which is how a truncated answer
@@ -1039,7 +1037,7 @@ export default function InterviewRoom() {
             </p>
           )}
 
-          {realtimeMode ? (
+          {livekitMode ? (
             /* Realtime: one continuous conversation. There is no Done button and no per-question
                control, because there are no turns to control — the interviewer hears and responds
                the way a person on a call does. Interrupt it, ask it to repeat, tell it you don't
@@ -1052,10 +1050,10 @@ export default function InterviewRoom() {
                   point; it won&apos;t affect your evaluation.
                 </p>
                 <p className="max-w-md text-xs text-slate-400">
-                  By starting, you consent to your voice being captured and processed in real time by a third-party
-                  speech service (Deepgram) to conduct this interview. Audio is streamed and not stored by this
-                  platform — only the text transcript is kept. If you&apos;d rather not, typing your answers is always
-                  available and is evaluated identically.
+                  By starting, you consent to your voice being captured and processed in real time by third-party
+                  speech services (Deepgram, carried over LiveKit&apos;s real-time infrastructure) to conduct this
+                  interview. Audio is streamed and not stored by this platform — only the text transcript is kept. If
+                  you&apos;d rather not, typing your answers is always available and is evaluated identically.
                 </p>
                 <Button
                   size="lg"
@@ -1063,12 +1061,12 @@ export default function InterviewRoom() {
                   onClick={async () => {
                     await acceptVoiceConsent();
                     try {
-                      await realtime.connect();
+                      await lk.connect();
                     } catch {
-                      // Never a dead end: fall back to the turn-based pipeline, which is the
-                      // interview every candidate gets today.
+                      // Never a dead end: fall back to the turn-based interview every candidate
+                      // gets today.
                       setError("Couldn't start the live interview — switching to the standard voice interview.");
-                      await realtime.disconnect();
+                      await lk.disconnect();
                     }
                   }}
                 >
@@ -1085,39 +1083,29 @@ export default function InterviewRoom() {
             ) : (
               <div className="flex flex-col items-center gap-3 py-1">
                 <div role="status" aria-live="polite" className="flex flex-col items-center gap-2">
-                  {realtime.phase === "connecting" && (
+                  {(lk.phase === "connecting" || lk.phase === "waiting_agent") && (
                     <p className="flex items-center gap-2 text-sm text-slate-500">
                       <Loader2 className="h-4 w-4 animate-spin" /> Connecting you to{" "}
-                      {realtime.personaName || "your interviewer"}…
+                      {lk.personaName || "your interviewer"}…
                     </p>
                   )}
-                  {realtime.phase === "speaking" && (
-                    <p className="flex items-center gap-2 text-sm font-medium text-brand-700">
-                      <Volume2 className="h-4 w-4 animate-pulse" />
-                      {realtime.personaName ? `${realtime.personaName} is speaking` : "Interviewer is speaking"} — you
-                      can cut in any time
-                    </p>
-                  )}
-                  {realtime.phase === "thinking" && (
-                    <p className="flex items-center gap-2 text-sm text-slate-500">
-                      <Loader2 className="h-4 w-4 animate-spin" /> One moment…
-                    </p>
-                  )}
-                  {realtime.phase === "listening" && (
+                  {/* The pipeline has no speaking/thinking granularity — the worker owns
+                      turn-taking — so the whole conversation is one "live" state. */}
+                  {lk.phase === "live" && (
                     <p className="flex items-center gap-2 text-sm font-medium text-emerald-700">
                       <span className="relative flex h-2.5 w-2.5">
                         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                         <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
                       </span>
-                      Listening — just talk
+                      In conversation — just talk, you can cut in any time
                     </p>
                   )}
-                  {realtime.error && <p className="text-sm font-medium text-red-600">{realtime.error}</p>}
+                  {lk.error && <p className="text-sm font-medium text-red-600">{lk.error}</p>}
                 </div>
                 <button
                   type="button"
                   onClick={async () => {
-                    await realtime.disconnect();
+                    await lk.disconnect();
                     switchToTyping();
                   }}
                   className="rounded py-1 text-xs font-medium text-slate-500 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-100"

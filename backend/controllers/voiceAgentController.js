@@ -1,20 +1,20 @@
-// HTTP surface for the realtime (speech-to-speech) interview — services/voiceAgentService.js.
+// The realtime interview's ENGINE endpoints — services/voiceAgentService.js.
 //
-// Deliberately a SEPARATE controller from interviewPortalController rather than three more
-// handlers on the end of it. The realtime path is behind a flag and defaults off, and it has to be
-// possible to read, review, and delete it as one unit without disturbing the turn-based pipeline
-// that every live interview currently runs on.
+// These two handlers (/realtime/function and /realtime/transcript) are the LiveKit worker's whole
+// reach into the interview engine: every question it asks, every answer it records, and the
+// transcript the guardrail scans arrive here on the candidate's own portal JWT. The Deepgram
+// Voice Agent transport that this controller originally fronted (session mint + browser Settings
+// relay) was retired in favour of the LiveKit pipeline — see livekitController for the session
+// surface that replaced it.
 //
-// Auth is the portal's existing session JWT (requireCandidateAuth), so a realtime session is bound
-// to exactly one InterviewSession the same way every other portal request is.
+// Auth is the portal's existing session JWT (requireCandidateAuth), so every call is bound to
+// exactly one InterviewSession the same way every other portal request is.
 
 const CompanySettings = require("../models/CompanySettings");
-const Candidate = require("../models/Candidate");
 const voiceAgent = require("../services/voiceAgentService");
+const livekitService = require("../services/livekitService");
 const guardrail = require("../utils/agentGuardrail");
 const aiInterview = require("../services/aiInterviewService");
-const usageService = require("../services/usageService");
-const personaService = require("../services/personaService");
 
 // How many of the agent's own utterances to retain per session. This is the audit record that
 // replaces exact-match speech authorization, so it is generous — but bounded, because a candidate's
@@ -26,133 +26,16 @@ const MAX_GUARDRAIL_HITS = 100;
 const MAX_UTTERANCE_CHARS = 2000;
 const MAX_UTTERANCES_PER_FLUSH = 50;
 
-// Is realtime on for this tenant? Nothing more.
-//
-// A SEPARATE endpoint from realtimeSession, and it has to be. The room needs to know which
-// pipeline it is running before it opens anything, and asking that question by attempting to mint
-// a session had two bugs baked in: it burned a Deepgram credential and started the billing clock
-// on a probe, and it ran BEFORE voice consent, so it always came back 403 — meaning realtime could
-// never activate at all, on any tenant, however it was configured.
-//
-// Deliberately requires no consent: this discloses nothing about the candidate and grants nothing.
-async function realtimeAvailable(req, res) {
-  const settings = await CompanySettings.findOne({ company: req.interviewSession.company }).select("ai compliance");
-  res.json({ enabled: voiceAgent.isEnabled(settings) });
-}
-
-// Mint the connection credential + the Settings message the browser must relay.
-//
-// The browser receives a fully-formed Settings object it did not author and cannot meaningfully
-// edit without the server noticing (the questions still come from function calls, which are
-// re-derived from the session server-side). What it must NOT receive is anything reusable: the
-// token is short-lived, and the OpenRouter key inside `settings.agent.think.endpoint.headers` is
-// the one genuine secret on this path — see the note in the route file about why this endpoint is
-// consent-gated and rate-limited exactly like the turn-based token.
-async function realtimeSession(req, res) {
-  const session = req.interviewSession;
-  const settings = await CompanySettings.findOne({ company: session.company }).select("ai compliance");
-
-  if (!voiceAgent.isEnabled(settings)) {
-    // Not an error the candidate should ever see: the client falls back to the turn-based
-    // pipeline, which is the interview everyone gets today.
-    return res.status(404).json({ error: "Realtime voice interview is not enabled", code: "REALTIME_DISABLED" });
-  }
-  // Same hard gate as the turn-based path (Phase 9.5): no voice consent ⇒ no credential ⇒ the
-  // microphone can never open.
-  if (!session.voiceConsent?.given) {
-    return res.status(403).json({ error: "Voice consent has not been given for this interview", code: "VOICE_CONSENT_REQUIRED" });
-  }
-
-  const candidate = await Candidate.findById(session.candidate).populate("job");
-  if (!candidate) return res.status(404).json({ error: "Candidate not found for this interview" });
-
-  // ---- The two gates the realtime path bypassed ---------------------------
-  //
-  // On the turn-based path `aiUsable()` checks AI-processing consent and the tenant's budget
-  // before any model call, and falls back to the deterministic engine when either fails. Realtime
-  // has no such fallback — the agent IS the model — so the checks have to happen here, at the one
-  // moment the session can still be refused. Without them a candidate who declined AI processing
-  // would have their voice sent to a model anyway (the agent's own calls go Deepgram → OpenRouter,
-  // never through our metering), and a tenant past its cap could run unbounded spend.
-  //
-  // Refusing is not adverse: 404 is what the client reads as "not enabled", and it falls back to
-  // the turn-based pipeline, which is the interview everyone gets today.
-  if (!aiInterview.consentOk(candidate, settings)) {
-    return res.status(403).json({
-      error: "AI processing consent has not been given for this interview",
-      code: "AI_CONSENT_REQUIRED",
-    });
-  }
-  try {
-    if (await usageService.isOverBudget(session.company, settings?.ai)) {
-      console.warn(`[voiceAgent] company ${session.company} over LLM budget — refusing a realtime session`);
-      return res.status(402).json({ error: "This workspace is over its AI budget", code: "OVER_BUDGET" });
-    }
-  } catch (err) {
-    // Metering failure must not block an interview — fail open, exactly as aiUsable does.
-    console.error("[voiceAgent] budget check failed, proceeding:", err.message);
-  }
-
-  const persona = await personaService.resolveForSession(session);
-  await personaService.stampOnSession(session, persona);
-
-  const payload = await voiceAgent.buildSession(session, { candidate, job: candidate.job, persona });
-  // When the session opened, so its billable minutes can be closed out on disconnect.
-  session.aiInterview.realtimeStartedAt = new Date();
-  session.markModified("aiInterview.realtimeStartedAt");
-  await session.save();
-  res.json({ ...payload, persona: { name: persona.name, source: persona.source } });
-}
-
-// Close out a realtime session and meter what it cost.
-//
-// Realtime bills by SESSION-MINUTE, not by token, so none of it is visible to the per-call metering
-// that covers every other model call in the system — the agent's reasoning goes Deepgram →
-// OpenRouter and never passes through llmService at all. Without this the tenant's budget cap is
-// bypassed by construction and the unit economics of a realtime interview are unreadable.
-//
-// Best-effort and idempotent: a candidate closing the tab must never fail, and a double-report
-// must not double-bill.
-async function realtimeEnd(req, res) {
-  const session = req.interviewSession;
-  const ai = session.aiInterview;
-  const startedAt = ai?.realtimeStartedAt;
-  if (!startedAt || ai?.realtimeMeteredAt) return res.json({ metered: false });
-
-  const durationMs = Math.max(0, Date.now() - new Date(startedAt).getTime());
-  ai.realtimeMeteredAt = new Date();
-  ai.realtimeDurationMs = durationMs;
-  session.markModified("aiInterview");
-  await session.save();
-
-  try {
-    await usageService.recordUsage({
-      company: session.company,
-      session: session._id,
-      candidate: session.candidate,
-      kind: "realtime",
-      provider: "deepgram",
-      model: "voice-agent",
-      usage: { costCents: voiceAgent.sessionCostCents(durationMs) },
-      latencyMs: durationMs,
-      engine: "ai",
-    });
-  } catch (err) {
-    console.error("[voiceAgent] session metering failed:", err.message);
-  }
-  res.json({ metered: true, durationMs });
-}
-
 function clampNum(v, min, max) {
   const n = Number(v);
   if (!Number.isFinite(n)) return undefined;
   return Math.max(min, Math.min(max, n));
 }
 
-// What the BROWSER measured during the turn, sanitised. Mirrors the turn-based path's handling in
-// interviewPortalController, and the trust model is the same: raw measurements are accepted (a
-// client gains nothing by lying about them, and every derived SCORE is computed server-side), but
-// every value is clamped so a bad one cannot land in the document.
+// What the transport (the LiveKit worker) measured during the turn, sanitised. Mirrors the
+// turn-based path's handling in interviewPortalController, and the trust model is the same: raw
+// measurements are accepted (a caller gains nothing by lying about them, and every derived SCORE
+// is computed server-side), but every value is clamped so a bad one cannot land in the document.
 //
 // The transcript is the important field — it is the verbatim speech-to-text, and it displaces the
 // agent's own rendering as the candidate's evidence. See voiceAgentService.submitAnswer.
@@ -192,14 +75,18 @@ function sanitizeEvidence(e) {
 
 // Execute one function the agent asked for, and hand back the result it will speak from.
 //
-// The browser relays the request; it does not answer it. Every field that decides anything — which
+// The worker relays the request; it does not answer it. Every field that decides anything — which
 // question comes next, whether a probe is covered, whether the interview may close — is re-derived
 // from the InterviewSession here. The only thing taken from the agent is the candidate's answer
 // text, which is the one thing only it heard.
 async function realtimeFunction(req, res) {
   const session = req.interviewSession;
   const settings = await CompanySettings.findOne({ company: session.company }).select("ai compliance");
-  if (!voiceAgent.isEnabled(settings)) {
+  // The engine contract for the LiveKit pipeline. (When two realtime pipelines coexisted this
+  // gate was "either is on" — gating on one pipeline's flag alone 404'd every function call for
+  // livekit tenants, found live in the LK-2 e2e. With one pipeline left the lesson survives as:
+  // this gate must track the pipeline that actually calls it.)
+  if (!livekitService.isEnabled(settings)) {
     return res.status(404).json({ error: "Realtime voice interview is not enabled", code: "REALTIME_DISABLED" });
   }
 
@@ -225,31 +112,55 @@ async function realtimeFunction(req, res) {
   }
 }
 
-// Store what the agent actually said, in batches.
+// Store what was actually said, in batches — the interviewer's words and the candidate's, kept
+// apart.
 //
-// This is the audit record that replaces exact-match speech authorization once the interviewer is
-// allowed to improvise. It is what makes "what did the interviewer say to this candidate?"
+// The interviewer's half is the audit record that replaces exact-match speech authorization once
+// it is allowed to improvise. It is what makes "what did the interviewer say to this candidate?"
 // answerable — the question a discrimination claim turns on, and the one an unconstrained
 // speech-to-speech competitor cannot answer at all.
+//
+// The candidate's half makes the other direction answerable: "what did I actually say, and did it
+// reach you?" Stored, shown, never scored.
 async function realtimeTranscript(req, res) {
   const session = req.interviewSession;
   const incoming = Array.isArray(req.body?.utterances) ? req.body.utterances : [];
 
+  // Both sides are stored, in two separate arrays that are treated completely differently.
+  //
+  // The AGENT's speech is the guardrail's input and the answer to "what did the interviewer say to
+  // this candidate?". The CANDIDATE's speech is the audit record and nothing else: never
+  // guardrailed, never scored (see candidateUtterances on the model). Keeping them apart is what
+  // stops a record of what a candidate said from ever becoming a judgement about them.
+  //
+  // This is deliberately a second, differently-segmented copy of the candidate's words — `turns`
+  // holds the engine's segmentation of the ANSWERS. The two can disagree, and that disagreement is
+  // information: it is how "the transcript shows one sentence but I talked for a minute" becomes
+  // checkable instead of a candidate's word against a database row.
   const clean = [];
+  const candidate = [];
   for (const item of incoming) {
-    if (clean.length >= MAX_UTTERANCES_PER_FLUSH) break;
+    if (clean.length + candidate.length >= MAX_UTTERANCES_PER_FLUSH) break;
     const text = String(item?.text || "").trim().slice(0, MAX_UTTERANCE_CHARS);
     if (!text) continue;
-    // Only the AGENT's speech is stored here. The candidate's words are already recorded as turns
-    // by the engine (submit_answer), and storing a second, differently-segmented copy would create
-    // two records of what a candidate said that can disagree with each other.
-    if (item?.role !== "assistant") continue;
+    const role = item?.role;
+    if (role !== "assistant" && role !== "candidate") continue;
     const at = Number(item?.at);
-    clean.push({ text, at: Number.isFinite(at) ? new Date(at) : new Date() });
+    const row = { text, at: Number.isFinite(at) ? new Date(at) : new Date() };
+    (role === "assistant" ? clean : candidate).push(row);
   }
-  if (!clean.length) return res.json({ stored: 0 });
+  if (!clean.length && !candidate.length) return res.json({ stored: 0 });
 
   const ai = session.aiInterview;
+  if (candidate.length) {
+    ai.candidateUtterances = [...(ai.candidateUtterances || []), ...candidate].slice(-MAX_AGENT_UTTERANCES);
+  }
+  if (!clean.length) {
+    // Candidate-only flush: nothing for the guardrail to scan, so save and return without
+    // pretending a scan happened.
+    await session.save();
+    return res.json({ stored: candidate.length, findings: 0 });
+  }
   ai.agentUtterances = [...(ai.agentUtterances || []), ...clean].slice(-MAX_AGENT_UTTERANCES);
 
   // ---- The guardrail ------------------------------------------------------
@@ -300,7 +211,7 @@ async function realtimeTranscript(req, res) {
       console.error(`[guardrail] halt failed on session ${session._id}: ${err.message}`);
     }
     return res.json({
-      stored: clean.length,
+      stored: clean.length + candidate.length,
       halted: true,
       // The client disconnects and shows this. It does not repeat what the interviewer said —
       // reading an unlawful question back to the candidate to apologise for it is worse than the
@@ -309,15 +220,12 @@ async function realtimeTranscript(req, res) {
     });
   }
 
-  res.json({ stored: clean.length, findings: found.length });
+  res.json({ stored: clean.length + candidate.length, findings: found.length });
 }
 
 module.exports = {
-  realtimeAvailable,
-  realtimeSession,
   realtimeFunction,
   realtimeTranscript,
-  realtimeEnd,
   sanitizeEvidence,
   MAX_AGENT_UTTERANCES,
   MAX_UTTERANCES_PER_FLUSH,

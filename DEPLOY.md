@@ -472,3 +472,39 @@ is not bound to any host. Replace just the hostname:
 ```
 https://recruitment-user.vercel.app/interview/<the 64-char token from the old email>
 ```
+
+---
+
+## Part 5 — LiveKit realtime interviews (optional; LK-series)
+
+Skip this entirely unless you are enabling the self-orchestrated realtime pipeline
+([LIVEKIT-REALTIME-PLAN.md](LIVEKIT-REALTIME-PLAN.md)). Everything ships inert: with the
+env vars unset, the pipeline is dead code and no candidate experience changes.
+
+### Step 13 — LiveKit Cloud production project
+
+Create a **separate** project from the dev one (`recruitment-ai-prod`), note the
+`wss://…livekit.cloud` URL and mint an API key/secret. Then configure the webhook:
+**dashboard → Webhooks → `https://<your-api>.onrender.com/api/webhooks/livekit`**. This
+webhook is the authoritative metering close for killed tabs and crashed workers — it is
+**untestable locally** (LiveKit Cloud cannot reach localhost), so verify it here: finish
+one interview, then confirm the session's `UsageEvent` (kind `realtime`, provider
+`livekit`) exists even when the client never called `/end`.
+
+### Step 14 — deploy the worker + API vars
+
+The Blueprint already defines `recruitment-agent-worker` (Python, Singapore, no public
+port). Fill its env vars and the API's `LIVEKIT_*` vars from the dashboard — both sides
+use the SAME production project keys, and `AGENT_NAME` must equal the API's
+`LIVEKIT_AGENT_NAME` (default `recruitment-interviewer`). Deploy order: API → worker →
+SPAs. All inert until a tenant is flipped.
+
+### Step 15 — pilot one tenant, validate the cost, then charge
+
+Flip ONE demo tenant: `CompanySettings.ai.voiceMode = "livekit"`. Run ≥10 full interviews
+(a phone on mobile data is the real test — reconnect in an elevator, barge in mid-question,
+say "I want to stop"). Then pull LiveKit + Deepgram + OpenRouter billing for those
+sessions, divide by the metered minutes from our own UsageEvents, and set
+`LIVEKIT_CENTS_PER_MIN` to the measured number. **If it exceeds 6¢/min, stop and reconcile
+before enabling any paying tenant** — the migration's premise is the price
+(details: LIVEKIT-REALTIME-PLAN.md LK-5).

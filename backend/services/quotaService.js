@@ -28,6 +28,11 @@ const DIMENSIONS = {
   // expire untouched consume neither quota nor money. Enforced at start, never
   // mid-flight. Plans without a maxAssessments limit are simply unmetered.
   assessments: { limitKey: "maxAssessments", label: "skills assessments this billing period", window: "period" },
+  // LIVEKIT-REALTIME-PLAN §4: a FAIRNESS cap, not a billing one — how many realtime voice
+  // interviews a tenant may run at the same moment, so one company's hiring drive cannot starve
+  // the shared worker fleet. Plans without maxConcurrentRealtime fall back to the deployment
+  // default (LIVEKIT_MAX_CONCURRENT_SESSIONS) in livekitController rather than being unmetered.
+  concurrentRealtime: { limitKey: "maxConcurrentRealtime", label: "concurrent live voice interviews", window: "concurrent" },
 };
 
 async function planContext(companyId) {
@@ -52,6 +57,14 @@ async function measureUsage(companyId, dimension, periodStart) {
       return require("../models/AssessmentSession").countDocuments({ company: companyId, startedAt: { $gte: periodStart } });
     case "resumeParsing":
       return Candidate.countDocuments({ company: companyId, createdAt: { $gte: periodStart }, resumePath: { $ne: null } });
+    case "concurrentRealtime":
+      // Live right now = started inside the crash-recovery window and not yet metered closed.
+      // Mirrors livekitService.activeSessionCount — keep the two queries identical.
+      return InterviewSession.countDocuments({
+        company: companyId,
+        "aiInterview.realtimeStartedAt": { $gte: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+        "aiInterview.realtimeMeteredAt": null,
+      });
     case "storageMb": {
       const rows = await Candidate.aggregate([
         { $match: { company: companyId } },

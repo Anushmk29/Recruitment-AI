@@ -20,14 +20,15 @@ import { Card, IconTile, toneText } from "./Card.jsx";
  *
  * The reference deck runs these on near-black. This system deliberately has no
  * dark surface left (DESIGN.md § Neutral — the dashboard sidebar gave the last
- * one up), so the emphasis comes from the violet fill instead. White on
- * brand-600 is 5.46:1, and the body line drops to white/90 rather than the
- * /70 a mock would use, which lands at 3.8:1 and fails at this size.
+ * one up), so the emphasis comes from the ink fill instead. White on brand-600
+ * is 15.66:1, and the body line still drops to white/90 rather than the /70 a
+ * mock would use — on the previous violet fill that measured 3.8:1, and keeping
+ * it is what makes the treatment survive the next repaint too.
  *
- * The eyebrow inverts to a white pill with violet ink rather than the
- * `white/15` chip used behind icons elsewhere on a fill: white text on that
- * chip measures 4.12:1, under AA for 12px. A translucent chip is fine behind a
- * glyph and wrong behind a word.
+ * The eyebrow inverts to a white pill with ink text rather than the `white/15`
+ * chip used behind icons elsewhere on a fill: white text on that chip measured
+ * 4.12:1 on the old fill, under AA for 12px. A translucent chip is fine behind
+ * a glyph and wrong behind a word.
  */
 export function PageHero({
   eyebrow,
@@ -367,6 +368,120 @@ export function RecordCard({
 }
 
 /**
+ * The record ROW — <RecordCard>'s slots, laid out as one line.
+ *
+ *   ┌──────────────────────────────────────────────────────────────────────┐
+ *   │ ⬤ Title                      Label   [trailing]  [actions]           │
+ *   │   subtitle                   value                                   │
+ *   │   note                                                               │
+ *   └──────────────────────────────────────────────────────────────────────┘
+ *
+ * Same information, same order, same fixed slots as the card — this is a
+ * density choice, not a different component with different rules.
+ *
+ * A card grid is right when a record carries several fields worth reading
+ * together. It is wrong for a queue you are *scanning*: three-up cards put the
+ * third candidate's score in a different screen position than the first's, and
+ * the eye loses the column. Rows give the columns back. Screens where a
+ * recruiter compares many people at a glance — the candidate lists — use these;
+ * screens where a record is a subject in its own right keep the card.
+ *
+ * `note` is the row's answer to the card's footer strip, and it exists for the
+ * same non-negotiable reason: a degraded reading ("this score came from the
+ * legacy keyword engine") needs somewhere to be a sentence, not a glyph. It
+ * takes its own full-width line rather than being squeezed between columns,
+ * because a caveat that only fits when the viewport is wide is a caveat that
+ * silently disappears.
+ *
+ * Hover tints the row and nothing moves — The Row-Doesn't-Jump Rule, which was
+ * written for the card and applies with more force here.
+ */
+export function RecordRow({
+  title,
+  subtitle,
+  link,
+  avatar,
+  icon,
+  iconTone = "brand",
+  meta = [],
+  trailing,
+  note,
+  actions,
+  className = "",
+  children,
+  ...props
+}) {
+  return (
+    <li
+      className={`relative bg-white px-4 py-3 transition-colors duration-150 hover:bg-brand-50/50 ${className}`}
+      {...props}
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          {avatar}
+          {icon && <IconTile icon={icon} tone={iconTone} size="sm" />}
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-sm font-semibold text-slate-900">
+              <RecordLink link={link}>{title}</RecordLink>
+            </h3>
+            {subtitle && <p className="truncate text-xs text-slate-500">{subtitle}</p>}
+          </div>
+        </div>
+
+        {/* The meta columns are the first thing to go on a narrow viewport:
+            they are supporting detail, and the row's job below `lg` is name,
+            outcome, action. Everything dropped here is still on the record's
+            own page. */}
+        {meta.length > 0 && (
+          <dl className="hidden shrink-0 items-start gap-6 lg:flex">
+            {meta.map((m) => (
+              <div key={m.label} className="min-w-0">
+                <dt className="text-[11px] font-semibold text-slate-500">{m.label}</dt>
+                <dd className="mt-0.5 truncate text-sm text-slate-700">
+                  {/* An em dash, never a blank — see <RecordCard>. */}
+                  {m.value == null || m.value === "" ? "—" : m.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {(trailing || actions) && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {trailing}
+            {/* `relative z-10` so a control sits above the stretched title link
+                rather than under it. */}
+            {actions && <div className="relative z-10 flex items-center gap-2">{actions}</div>}
+          </div>
+        )}
+      </div>
+
+      {note && <div className="mt-2 text-xs text-slate-500 [overflow-wrap:anywhere]">{note}</div>}
+      {children}
+    </li>
+  );
+}
+
+/**
+ * The container <RecordRow>s sit in — a real <ul>, so the number of records is
+ * announced and the rows are navigable as a list.
+ *
+ * `overflow-hidden` clips the rows' hover fill to the panel's corners. It does
+ * not clip an open <Menu>: those render through a portal precisely so a row
+ * action can escape its container.
+ */
+export function RecordList({ children, label, className = "" }) {
+  return (
+    <ul
+      aria-label={label}
+      className={`divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 shadow-card ${className}`}
+    >
+      {children}
+    </ul>
+  );
+}
+
+/**
  * The record's title, optionally as a stretched link.
  *
  * `link` is `{ as: Link, to }` (or `{ as: "a", href }`) — the same `as`-passing
@@ -481,8 +596,8 @@ export function StepTrack({ steps, currentKey, reached, label, className = "" })
  * reference — with an overflow count once the list runs long.
  *
  * These are slate, never brand or verdict tinted. A skill token is a fact about
- * the posting, not a judgement about the reader, and a row of violet pills next
- * to a match score reads as "these are the ones you have".
+ * the posting, not a judgement about the reader, and a row of brand-toned pills
+ * next to a match score reads as "these are the ones you have".
  */
 export function TokenList({ items = [], max = 6, label, className = "" }) {
   if (!items.length) return null;

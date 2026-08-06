@@ -4,7 +4,9 @@
 > Companion docs: [CLAUDE.md](CLAUDE.md) (product thesis + engineering rules — **read first**),
 > [STATUS.md](STATUS.md) (accurate record of what exists), [UPDATES.md](UPDATES.md) (change history),
 > [ASSESSMENT-ENGINE-PLAN.md](ASSESSMENT-ENGINE-PLAN.md) (the A-series track: agentic probe-driven
-> skills assessments — planned 2026-07-30, not started).
+> skills assessments — planned 2026-07-30, not started),
+> [LIVEKIT-REALTIME-PLAN.md](LIVEKIT-REALTIME-PLAN.md) (the LK-series track: self-orchestrated
+> realtime voice on LiveKit — planned 2026-08-04, not started).
 > [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) is **stale** — it lists the AI interview, evaluation,
 > PDF report, and proctoring as missing. All four are built. Do not plan from it.
 >

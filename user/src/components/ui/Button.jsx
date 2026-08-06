@@ -1,27 +1,52 @@
 import { forwardRef } from "react";
 import { Loader2 } from "lucide-react";
 
+// Focus rings are one step darker than a "tint" would suggest, across every
+// variant. A ring is only an affordance if it is visible against the surface
+// BEHIND the control, and the surface is bone (#f6f2ea): tint-weight rings
+// measured 1.4–1.9:1 against it, i.e. the loudest treatment in the system had
+// quietly become the faintest. Each value below clears the 3:1 floor WCAG 2.2
+// sets for a focus indicator — brand-300 3.37:1, slate-400 3.04:1, red-500
+// 3.37:1, accent-500 3.33:1.
+//
+// Every FILLED variant disables to the same greige, and that uniformity is the
+// point. Each used to disable into its own ramp's 300, which worked while those
+// were tints and broke the moment brand-300 became the (necessarily dark) petrol
+// focus step: a disabled primary rendered as a solid mid-teal block that read as
+// a live button — louder than the real secondary beside it. A disabled control
+// must not be able to out-shout an enabled one, so the disabled surface is
+// neutral and shared, and the label goes muted with it rather than staying
+// white. slate-500 on slate-200 is 4.14:1: unmistakably inert, still readable.
+const DISABLED_FILL = "disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none";
+
 const variants = {
   primary:
-    "bg-brand-600 text-white shadow-soft hover:bg-brand-700 focus-visible:ring-brand-300 disabled:bg-brand-300",
+    `bg-brand-600 text-white shadow-soft hover:bg-brand-700 focus-visible:ring-brand-300 ${DISABLED_FILL}`,
   secondary:
-    "bg-white text-brand-700 border border-brand-200 hover:bg-brand-50 focus-visible:ring-brand-200 disabled:opacity-50",
+    "bg-white text-brand-700 border border-brand-200 hover:bg-brand-50 focus-visible:ring-brand-300 disabled:opacity-50",
   outline:
-    "bg-transparent text-slate-700 border border-slate-300 hover:bg-slate-50 focus-visible:ring-slate-200 disabled:opacity-50",
-  ghost: "bg-transparent text-slate-600 hover:bg-slate-100 focus-visible:ring-slate-200 disabled:opacity-50",
-  danger: "bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-300 disabled:bg-red-300",
-  // Ember CTA — marketing surfaces only (hero, pricing, conversion prompts),
+    "bg-transparent text-slate-700 border border-slate-300 hover:bg-slate-50 focus-visible:ring-slate-400 disabled:opacity-50",
+  ghost: "bg-transparent text-slate-600 hover:bg-slate-100 focus-visible:ring-slate-400 disabled:opacity-50",
+  // The verdict token, not raw `red-600`. DESIGN.md § Buttons always specified
+  // "Verdict Negative"; the implementation had drifted to a brighter Tailwind
+  // red, which on the bone canvas was the loudest thing on any screen it
+  // appeared on — louder than an actual rejection badge.
+  danger: `bg-verdict-negative text-white hover:bg-red-900 focus-visible:ring-red-500 ${DISABLED_FILL}`,
+  // Clay CTA — marketing surfaces only (hero, pricing, conversion prompts),
   // where the job is "draw the eye", not "state an outcome". It stays inside
   // the Ember Containment Rule because emphasis is not a status.
   //
-  // Two constraints are load-bearing here. It ships accent-700, not the
-  // brighter accent-600: button labels are 14px semibold, i.e. normal text at
-  // AA, and accent-600 on white is 3.86:1 — it only clears for large text.
-  // And it must never sit beside `danger` in the same control group; two warm
+  // It ships accent-700 (6.93:1 on white) rather than accent-600 (4.99:1).
+  // Both now clear AA for the 14px semibold label, unlike the old coral ramp
+  // where 600 was 3.86:1 and only legal at large sizes — but 700 is what keeps
+  // this readable as a *considered* CTA rather than a bright one, which is the
+  // whole reason the ramp was muted to clay.
+  //
+  // It must never sit beside `danger` in the same control group: two warm
   // saturated buttons side by side is how someone destroys a record they meant
   // to promote.
   accent:
-    "bg-accent-700 text-white shadow-soft hover:bg-accent-800 focus-visible:ring-accent-300 disabled:bg-accent-300",
+    `bg-accent-700 text-white shadow-soft hover:bg-accent-800 focus-visible:ring-accent-500 ${DISABLED_FILL}`,
 };
 
 const sizes = {

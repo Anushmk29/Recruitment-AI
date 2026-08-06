@@ -662,6 +662,119 @@ _Last updated: 2026-07-31._
 - [ ] **Runbook**: deploy, rollback, backup/restore, tenant suspend/offboard, incident response.
 - [ ] Set production env: `NODE_ENV=production`, `REDIS_URL`, `S3_*`, `RUN_WORKERS_IN_API=false` + run `npm run worker`.
 
+## E. LiveKit realtime track (LK-series — [LIVEKIT-REALTIME-PLAN.md](LIVEKIT-REALTIME-PLAN.md))
+
+- [~] **LK-0 skeleton** (2026-08-04): `agent-worker/` created — Python 3.12 worker (`agent.py`
+  connection-test entrypoint with Silero prewarm, empty-room shutdown, auto/explicit dispatch via
+  `AGENT_NAME`), `backend_client.py` bound to the verified `/api/interview-portal/realtime/*`
+  contracts (`{name, arguments, evidence}` / `{utterances:[{text, role, at}]}` / bare `/end`),
+  `requirements.txt`, Dockerfile with build-time model prefetch, `.env.example` runbook, compose
+  `agent` profile (`docker compose --profile agent up`). Python files syntax-checked; compose
+  validates. _Left to pass the LK-0 gate (owner actions — needs the LiveKit account): create the
+  `recruitment-ai-dev` LiveKit Cloud project, copy `.env.example` → `agent-worker/.env` with the
+  three `LIVEKIT_*` values + `DEEPGRAM_API_KEY`, run `python agent.py dev` in a 3.12 venv, join
+  from meet.livekit.io, confirm the spoken line + live captions, and verify no key reaches the
+  browser._ **Update 2026-08-04 (same day) — gate substantially GREEN, verified live:** LiveKit
+  Cloud project created (region **India South**); keys placed in `agent-worker/.env` +
+  `backend/.env` (owner supplied; template scrubbed); Python **3.11** venv (3.12 guidance in
+  `.env.example` superseded — livekit-agents 1.6.8 runs on 3.11); worker registers with LiveKit
+  Cloud; automated probe (`agent-worker/probe_room.py`) confirms auto-dispatch join, Aura TTS
+  audio flowing, and the greeting captioned **word-for-word** over the transcription channel;
+  empty-room shutdown fires. One worker bug found+fixed live: plugin imports must be module-level
+  ("Plugins must be registered on the main thread"). _Left: a human joining meet.livekit.io to
+  hear the audio with ears + the Docker image build check (running)._
+- [~] **LK-1 backend plumbing** (2026-08-04): `services/livekitService.js` (gate with
+  by-construction mutual exclusion vs the Deepgram agent — an explicit `voiceMode` pins a tenant
+  to exactly one pipeline, `voiceAgentService.isEnabled` updated to match; join-only candidate
+  token with session-bound TTL clamp; explicit agent dispatch carrying `{sessionId, portalToken,
+  backendUrl}` with a duplicate-dispatch guard; idempotent `meterSession` shared by /end +
+  sendBeacon + webhook, `UsageEvent` provider `"livekit"`, `LIVEKIT_CENTS_PER_MIN`);
+  `controllers/livekitController.js` (consent/AI-consent/budget gate parity with the Deepgram
+  path + per-tenant concurrency cap with reconnect exemption, 429 `REALTIME_BUSY` is a
+  scheduling message, never adverse); `routes/livekitRoutes.js` mounted at
+  `/api/interview-portal/livekit` (worker reuses the existing `/realtime/function|transcript`);
+  `POST /api/webhooks/livekit` raw-body signature-verified metering backstop in `server.js`;
+  `CompanySettings.ai.voiceMode` enum += `"livekit"`; `quotaService` `concurrentRealtime`
+  dimension (`maxConcurrentRealtime`); `.env.example` documented. 14 new unit tests
+  (`livekitPipeline.test.js`) — full suite 731/731. _Left for the LK-1 gate: the two live checks
+  (minted token joins only its own room on real LiveKit; webhook fires end-to-end from LiveKit
+  Cloud with replay)._
+- [~] **LK-2 interview loop** (2026-08-04): backend half done — `voiceAgentService.sessionBrief`
+  extracted as the provider-neutral single source of truth (prompt, function contract, keyterms,
+  approved voice; `buildSession` refactored to consume it, so the two realtime pipelines cannot
+  drift), exposed at `GET /interview-portal/livekit/brief` (worker-only consumer, portal JWT,
+  carries no credentials — asserted by test). Worker half written — `agent-worker/agent.py`
+  interview mode: `InterviewAgent` whose whole power surface is the three engine tools
+  (`get_next_question`/`submit_answer` with verbatim-transcript evidence from session history /
+  `end_interview` confirm-gated), per-utterance transcript relay into the guardrail with
+  halt-and-close handling, close-out via room deletion (fires the metering webhook), empty-room
+  and brief-failure teardowns that are never adverse; Deepgram STT keyterm bias; semantic
+  turn-detector wired. Suite 733/733. **Update (same day) — LIVE E2E CORE LOOP PASSED** on
+  LiveKit Cloud + Atlas + OpenRouter: `agent-worker/interview_probe.py` (scripted speaking
+  candidate; `_seedLiveKitE2E.js` seeds the session) sat a full 10-answer spoken interview —
+  authored intro delivered verbatim, engine-authored adaptive questions, warm close, worker
+  deleted the room, metering recorded (343s, UsageEvent provider `livekit`), verbatim STT stored
+  as turn evidence, `agentUtterances` audit populated, zero guardrail hits. Decline architecture
+  proven: model sent `declined=true`, server deterministically overruled (16 other words > max)
+  and logged the disagreement — as designed. **Two real bugs found live and fixed:**
+  (1) `/realtime/function` gated on the Deepgram flag alone → 404'd every livekit-tenant call;
+  now "either pipeline is on" (regression test 1.4). (2) metering's doc-save raced the detached
+  finalization → VersionError; metering is now an atomic test-and-set and finalization retries
+  once on version conflict. Suite 734/734 (an earlier note said 736 — arithmetic, not failures).
+  **Switching (2026-08-05):** `ai.voiceMode` added to the PUT /api/company-settings whitelist
+  (enum-validated; empty ⇒ env default) + `scripts/setVoiceMode.js` CLI
+  (`node scripts/setVoiceMode.js <admin-email|companyId> <turn_based|realtime|livekit|unset>`);
+  guide: [VOICE-PIPELINE-GUIDE.md](VOICE-PIPELINE-GUIDE.md). **Drills (same evening):** _Withdraw drill PASSED_ —
+  terse "I don't know." recorded as `act: "decline"` (deterministic agreement this time), "I
+  want to stop" → confirmation asked and given → `ended_early {by: candidate, confirmedBy:
+  explicit}`, warm goodbye, room deleted, metered, never adverse. _Worker-kill drill PASSED
+  (local scope)_ — worker killed 50s into a live interview: session survived `in_progress` with
+  4 turns intact, and re-mint recovery issued a fresh token into the same room without resetting
+  the billing clock. **Learned:** (1) the `room_finished` webhook is untestable locally (LiveKit
+  Cloud can't reach localhost; dashboard webhook unset) — moved explicitly to the LK-5
+  production gate; (2) the e2e seeder deleted the previous probe session each run, destroying a
+  completed interview pre-finalization — now mints a unique candidate per run. **Gate closure
+  (same evening):** a second full run auto-finalized on the fixed path —
+  `overallScore 75, recommendation "maybe"` computed in code with full provenance,
+  `questionsAsked 8 / answered 8 / declined 0`, and **`questionsNotAskedVerbatim: 0`** — the
+  `verifyQuestionsAsked` fidelity check confirmed every question was delivered word-for-word by
+  the live renderer. Barge-in drill: functionally PASSED (two interruptions absorbed mid-speech,
+  interview completed faster and cleanly), stop-latency measurement inconclusive (probe measures
+  received-audio tail, which can't separate slow-stop from stop-and-resume) — latency tuning
+  moved to the LK-5 pilot with human listening. **LK-2 gate: GREEN** (the fallback-UI half of
+  the worker-death story is LK-4's watchdog, by design).
+- [~] **LK-4 candidate room UI** (2026-08-05): `user/src/portal/useLiveKitInterview.js` —
+  deliberately the same surface as `useRealtimeInterview` so `InterviewRoom` treats the two as
+  interchangeable; a WebRTC join + speaker + captions and two endpoints, nothing sensitive
+  client-side. 10s agent-join watchdog fails the PIPELINE, not the candidate (flips
+  `available:false` → mode flags recompute → next pipeline takes the mic automatically); same
+  self-fallback on any connect error. `InterviewRoom.jsx`: three-tier precedence
+  livekit → deepgram-agent → turn-based, each tier defined with the negation of the tiers above
+  (exactly one true by construction); `liveVoice` alias drives one shared live-conversation UI
+  branch (consent copy discloses LiveKit transport when active); mirrored single-pipeline
+  enforcement effect; halted/ended screens driven by refetched server state (the client never
+  guesses why a room closed); pagehide keepalive metering flush with the webhook as production
+  backstop. `npm run build` green. _Left: real-device smoke on the deployed stack (with LK-5)._
+- [x] **Deepgram Voice Agent pipeline REMOVED** (2026-08-06, owner decision): the middle
+  pipeline (`voiceMode: "realtime"`) was strictly dominated by LiveKit — higher per-minute cost
+  (~$1.50 vs ~$0.40–1.00 / 20-min), WebSocket vs WebRTC, and the OpenRouter key rode toward the
+  browser in the relayed Settings where LiveKit ships a join-token only. What was deleted: the
+  transport (`buildSession`/`thinkProvider`/`isEnabled`/`sessionCostCents` in
+  `voiceAgentService`, the `/realtime/available|session|end` endpoints + their controller
+  handlers, `user/src/portal/useRealtimeInterview.js`, the InterviewRoom middle tier,
+  `DEEPGRAM_AGENT_*` / `VOICE_AGENT_THINK_*` env vars). What deliberately SURVIVES in
+  `voiceAgentService` because the LiveKit worker runs through it: `sessionBrief`, `dispatch`
+  (the three-function power surface), `agentPrompt`/`functionSchemas`,
+  `verifyQuestionsAsked`, and the `/realtime/function|transcript` engine endpoints (path kept —
+  the deployed worker's `backend_client.py` posts there; now gated on `livekitService.isEnabled`
+  alone). Enum shrunk to `["turn_based","livekit"]` everywhere (model, settings API whitelist,
+  `setVoiceMode.js`); a legacy stored `"realtime"` value is treated as an explicit non-livekit
+  pin → turn_based (defensive test livekitPipeline 1.3), and a DB sweep found 0 tenants pinned
+  to it. Fallback ladder is now simply **livekit → turn_based** (watchdog unchanged); turn-based
+  stays permanently as the floor — it alone has the deterministic no-LLM fallback, and removing
+  it would turn worker outages into adverse candidate outcomes. Suite: **737/737**, user SPA
+  build green.
+
 ---
 
 ### Next recommended step

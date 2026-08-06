@@ -44,15 +44,20 @@ const companySettingsSchema = new mongoose.Schema(
       // Per-tenant evidence-engine rollout (Phase 6): legacy | shadow | live.
       // Unset ⇒ the ATS_ENGINE env default applies.
       atsEngine: { type: String, enum: ["legacy", "shadow", "live"] },
-      // How the spoken interview is conducted (services/voiceAgentService.js):
-      //   turn_based — ask → listen → close mic → next question. The current default everywhere.
-      //   realtime   — one persistent speech-to-speech session; the agent owns turn-taking and
-      //                barge-in, while every question still comes from the rubric-bound engine
-      //                by function call and scoring stays deterministic.
-      // Unset ⇒ the VOICE_MODE env default applies (turn_based). Never a global flip: realtime
+      // How the spoken interview is conducted (services/livekitService.js + voiceAgentService.js):
+      //   turn_based — ask → listen → close mic → next question. The default everywhere and the
+      //                always-available fallback floor (it alone degrades to the deterministic
+      //                no-LLM engine).
+      //   livekit    — one continuous speech-to-speech conversation carried by a LiveKit room and
+      //                the agent-worker (LIVEKIT-REALTIME-PLAN.md); the worker owns turn-taking
+      //                and barge-in, while every question still comes from the rubric-bound
+      //                engine by function call and scoring stays deterministic.
+      // (A third mode, "realtime" — the Deepgram Voice Agent transport — was retired; legacy
+      // stored values are treated as an explicit non-livekit pin, i.e. turn_based.)
+      // Unset ⇒ the VOICE_MODE env default applies (turn_based). Never a global flip: livekit
       // costs more per minute and changes what the candidate experiences, so it is adopted one
       // tenant at a time with turn_based as the always-available fallback.
-      voiceMode: { type: String, enum: ["turn_based", "realtime"] },
+      voiceMode: { type: String, enum: ["turn_based", "livekit"] },
     },
 
     // Phase 14 — integrity-evidence rollout, per tenant. Unset ⇒ the

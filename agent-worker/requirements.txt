@@ -1,0 +1,10 @@
+# LiveKit agent worker — Python 3.12 (see Dockerfile; livekit-agents does not yet
+# support 3.14, so local dev on this machine needs a 3.12 venv: `py -3.12 -m venv .venv`).
+#
+# The plugin extras pull Deepgram (Flux STT + Aura TTS), the OpenAI-compatible LLM
+# client (pointed at OpenRouter), Silero VAD, and the semantic turn-detector model.
+# `python agent.py download-files` prefetches the VAD/turn-detector weights — run it
+# in the Docker build, never at job time.
+livekit-agents[deepgram,openai,silero,turn-detector]~=1.0
+httpx~=0.27
+python-dotenv~=1.0

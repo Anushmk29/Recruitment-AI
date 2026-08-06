@@ -4,51 +4,106 @@
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Lexend", "Inter", system-ui, sans-serif;
 
-  /* Signal Violet — the owned brand ramp. This replaces the provisional Tailwind
-     `blue` that DESIGN.md § Colors flagged as temporary under the Inherited
-     Palette Rule; because every surface reads `brand-*` rather than a raw hue,
-     these eleven values are the only place the brand colour is decided.
+  /* ---- Neutral: Bone -----------------------------------------------------
+     Tailwind's `slate` remapped from cold blue-grey to warm bone/greige.
 
-     Contrast-checked at the two pairings that actually ship:
-       brand-600 #6d4fe0 + white  → 5.46:1  (primary button)
-       brand-700 #5b3fc4 on brand-100 #eae6ff → 5.85:1  (brand badge, 12px) */
-  --color-brand-50: #f4f2ff;
-  --color-brand-100: #eae6ff;
-  --color-brand-200: #d8d2fe;
-  --color-brand-300: #bcb1fb;
-  --color-brand-400: #9c8bf6;
-  --color-brand-500: #7f66ee;
-  --color-brand-600: #6d4fe0;
-  --color-brand-700: #5b3fc4;
-  --color-brand-800: #4a34a0;
-  --color-brand-900: #3e2d82;
-  --color-brand-950: #261a52;
+     This is an override, not a new ramp, and that is the point: 1596 `slate-*`
+     utilities across the two apps are the product's actual neutral, so the only
+     way to change the temperature of the whole system in one place is to change
+     what `slate` means. Nothing else had to move.
 
-  /* Ember — the secondary brand ramp, and the one rule worth stating loudly:
-     it is DECORATIVE ONLY. See § The Ember Containment Rule in DESIGN.md.
+     Lightness is held within a step of Tailwind's original at every stop, so
+     every contrast figure documented elsewhere in this file still holds — most
+     improve, because warm greys at the same lightness carry slightly more ink.
+       slate-500 #6e675c on white → 5.61:1  (was 4.76:1)
+       slate-600 #4f4a42 on white → 8.80:1
+       slate-400 #9c9384 on white → 3.04:1  — decorative/disabled only, as before */
+  --color-slate-50: #faf8f4;
+  --color-slate-100: #f3f0e9;
+  --color-slate-200: #e3ddd1;
+  --color-slate-300: #cdc5b6;
+  --color-slate-400: #9c9384;
+  --color-slate-500: #6e675c;
+  --color-slate-600: #4f4a42;
+  --color-slate-700: #3a362f;
+  --color-slate-800: #262320;
+  --color-slate-900: #1a1815;
+  --color-slate-950: #0d0c0a;
 
-     Orange sits next door to the reserved `verdict-pending` amber, which means
-     "awaiting a human / not yet verified". If ember were allowed onto a badge,
-     a chip, or a score tile, the fastest channel a recruiter reads would stop
-     being trustworthy. So ember is hue-separated from amber on purpose — amber
-     is gold (~45°), ember is red-orange (~14°) — and it is confined to
-     illustrative fills, icon tiles, marketing emphasis, and chart series.
+  /* ---- Primary: Petrol ---------------------------------------------------
+     A DUOTONE ramp, and the split is the whole idea. Steps 50–200 are warm
+     greige from the bone family; 300–950 are deep teal-blue. One ramp, two
+     materials, divided exactly where the product's meaning changes.
+
+     WHY A SPLIT RAMP. The tint end of a brand ramp is where status pills land —
+     `bg-brand-100 text-brand-700` is the in-progress <Badge>. Give that end a
+     hue and it starts competing with the reserved verdict tints sitting on the
+     same row: a pale petrol pill reads as the mint pass-tint beside it, and a
+     pale oxblood pill was very nearly the rejected-red tint. Both were built
+     and looked at before this was written. Keeping 50–200 neutral removes every
+     adjacency collision at once and spends the colour where it belongs — the
+     active nav pill, primary buttons, links, icon glyphs, filled panels and
+     chart marks. If you ever "finish" this ramp by tinting 100 petrol, you will
+     reintroduce the exact bug it was designed around.
+
+     WHY PETROL. Hue 197° is the furthest workable point from all three verdict
+     hues (red 28°, amber 55°, emerald 165°). It is also not the category's
+     colour: HR tech's blue is azure/royal at 230–250° (Indeed, LinkedIn, Lever,
+     Naukri), and this is half that lightness and green-leaning. It reads as
+     gauge, calibration and instrument — which is the literal claim the product
+     makes about itself — rather than as the 2023–25 AI-violet wave.
 
      Contrast:
-       accent-600 #e64d1f + white → 3.86:1 — LARGE bold text only (≥18.66px)
-       accent-700 #bd3a14 + white → 5.18:1 — required for any small white text
-       accent-700 on accent-50    → 5.18:1 */
-  --color-accent-50: #fff5f1;
-  --color-accent-100: #ffe6dc;
-  --color-accent-200: #ffcbb6;
-  --color-accent-300: #ffa885;
-  --color-accent-400: #ff8256;
-  --color-accent-500: #f96436;
-  --color-accent-600: #e64d1f;
-  --color-accent-700: #bd3a14;
-  --color-accent-800: #963117;
-  --color-accent-900: #7a2b16;
-  --color-accent-950: #421107;
+       brand-600 #0f5a6b + white          → 7.81:1   (primary button, filled nav)
+       brand-700 #0b4353 + white          → 10.8:1   (links, emphasis text)
+       brand-700 on brand-100 #e8e2d6     → 8.39:1   (brand badge, 12px)
+       brand-300 #5b8c98 on bone #f6f2ea  → 3.37:1   (focus ring)
+
+     brand-300 is the bridge step and is deliberately darker than a tint-weight
+     300 would be. It is the focus-ring value, and a ring is only an affordance
+     if it is visible against the surface BEHIND it; a pale 300 measured 1.4:1
+     on bone and made the loudest treatment in the system invisible. */
+  --color-brand-50: #f5f2ec;
+  --color-brand-100: #e8e2d6;
+  --color-brand-200: #d3caba;
+  --color-brand-300: #5b8c98;
+  --color-brand-400: #2f7385;
+  --color-brand-500: #136b7f;
+  --color-brand-600: #0f5a6b;
+  --color-brand-700: #0b4353;
+  --color-brand-800: #0a3440;
+  --color-brand-900: #082935;
+  --color-brand-950: #04181f;
+
+  /* ---- Secondary: Clay ---------------------------------------------------
+     The decorative ramp, and the one rule worth stating loudly: it is
+     DECORATIVE ONLY. See § The Ember Containment Rule in DESIGN.md.
+
+     Retuned from the previous vivid coral to a muted terracotta, because on a
+     bone canvas the coral was the loudest thing on screen — and the one colour
+     in the system that is forbidden from meaning anything does not get to shout
+     over the three that do.
+
+     Clay still sits next door to the reserved `verdict-pending` amber, which
+     means "awaiting a human / not yet verified", so the containment rule binds
+     harder than before: never on a badge, a chip, or a score tile. Illustrative
+     fills, icon tiles, marketing emphasis and chart series only.
+
+     Contrast:
+       accent-600 #a85b2e + white → 4.99:1 — clears AA for small text (was 3.86)
+       accent-700 #8a4824 + white → 6.93:1
+       accent-700 on accent-50    → 6.6:1 */
+  --color-accent-50: #fdf6f1;
+  --color-accent-100: #f7e6da;
+  --color-accent-200: #eecdb6;
+  --color-accent-300: #e0aa86;
+  --color-accent-400: #d08757;
+  --color-accent-500: #c0703e;
+  --color-accent-600: #a85b2e;
+  --color-accent-700: #8a4824;
+  --color-accent-800: #6e3a1e;
+  --color-accent-900: #59301b;
+  --color-accent-950: #26120a;
 
   /* Outcome — the system's only semantic colour. Mirrored from
      user/src/index.css so both apps state verdicts in the same voice, and so
@@ -60,29 +115,70 @@
      Each pair is contrast-checked against its own tint at 12px, the size these
      actually ship at inside a badge:
        positive  #047857 on #d1fae5 → 4.83:1
-       pending   #92400e on #fef3c7 → 6.37:1   (amber-700 was 4.35:1, under AA)
-       negative  #b91c1c on #fee2e2 → 5.25:1 */
+       pending   #92400e on #fbe8b8 → 5.86:1
+       negative  #b91c1c on #fee2e2 → 5.25:1
+
+     The pending tint moved off #fef3c7 with the bone repaint. Cream on cool
+     slate was an obvious tint; cream on a bone canvas was very nearly the
+     canvas, and a badge that does not read as a badge is the worst possible
+     home for "a human is owed something here". #fbe8b8 is deep enough to
+     separate from bone without becoming the amber it sits on. */
   --color-verdict-positive: #047857;
   --color-verdict-positive-tint: #d1fae5;
   --color-verdict-pending: #92400e;
-  --color-verdict-pending-tint: #fef3c7;
+  --color-verdict-pending-tint: #fbe8b8;
   --color-verdict-negative: #b91c1c;
   --color-verdict-negative-tint: #fee2e2;
 
-  /* Canvas — the app background. A faint violet wash rather than a cold slate,
-     so white cards read as lifted off a tinted plane instead of floating on
-     near-white. Kept within a hair of slate-50's lightness so the existing
-     `bg-slate-50` fills still sit on it without banding. */
-  --color-canvas: #f6f5fb;
-  --color-canvas-deep: #edeaf7;
+  /* ---- Chart fills: pastel -----------------------------------------------
+     Chart MARKS only — bars, segments, plot areas. Never text, never a badge,
+     never a border on its own.
 
-  /* Elevation — four planes, all cool-tinted so layering reads as lift rather
-     than as drop shadow. Planes 3 and 4 extend the original two-shadow
-     vocabulary; see DESIGN.md § Elevation & Depth. */
-  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -8px rgba(15, 23, 42, 0.08);
-  --shadow-lift: 0 2px 4px rgba(15, 23, 42, 0.04), 0 18px 40px -12px rgba(15, 23, 42, 0.13);
-  --shadow-deep: 0 4px 8px rgba(15, 23, 42, 0.05), 0 36px 64px -20px rgba(15, 23, 42, 0.18);
+     A chart mark and a status pill have different jobs and now have different
+     weights. A pill is small and carries a word, so it wants the saturated
+     verdict ink; a bar is a large field the eye rests on, and at verdict weight
+     five of them in a column read as an alarm rather than as a measurement.
+     These are the same three meanings at pastel weight.
+
+     Two facts about them, both measured rather than judged:
+
+     1. A pastel cannot clear the 3:1 non-text contrast floor against a white
+        card — that needs a relative luminance ≤ 0.30, which is not a pastel by
+        definition. These sit at 1.4–2.2:1. The relief the rule allows is a
+        visible label, and every mark in this product has one: the role map
+        prints the percentage, the verdict word and the evidence sentence on
+        every row, and the stacked bar's legend carries the glyph, the word, the
+        share and the criterion count. Colour is the fourth redundant channel
+        here, never the carrier. If a chart is ever added that CANNOT label its
+        marks, it does not get these fills.
+     2. Pastel mint against pastel rose separates at only ΔE 3.6 under
+        deuteranopia — red and green at this lightness cannot be told apart, and
+        no amount of tuning fixes it. So every mark is drawn with a 1px inset
+        ring in its own RESERVED verdict hue, and those separate at ΔE 8.4. The
+        ring is what makes the mark legible and the family obvious: the legend
+        chip, the ring, and the fill are one hue at three weights. Removing the
+        ring to "clean up" the bars removes the accessibility of the chart. */
+  --color-chart-positive: #5fcfa0;
+  --color-chart-neutral: #e0d9cc;
+  --color-chart-negative: #fb8f8a;
+  --color-chart-brand: #6ec3d8;
+
+  /* Canvas — the app background. Bone: a warm paper plane that white cards read
+     as lifted off, rather than the near-white they floated on. Kept within a
+     hair of slate-50's lightness so the existing `bg-slate-50` fills still sit
+     on it without banding. */
+  --color-canvas: #f6f2ea;
+  --color-canvas-deep: #ece5d8;
+
+  /* Elevation — four planes, warm-tinted to match the bone ground so layering
+     reads as lift rather than as a grey smudge; a cool shadow on a warm surface
+     is the tell that a palette was swapped and the depth left behind. Planes 3
+     and 4 extend the original two-shadow vocabulary; see DESIGN.md
+     § Elevation & Depth. */
+  --shadow-card: 0 1px 3px rgba(38, 35, 32, 0.07), 0 1px 2px rgba(38, 35, 32, 0.05);
+  --shadow-soft: 0 1px 2px rgba(38, 35, 32, 0.05), 0 8px 24px -8px rgba(38, 35, 32, 0.1);
+  --shadow-lift: 0 2px 4px rgba(38, 35, 32, 0.05), 0 18px 40px -12px rgba(38, 35, 32, 0.15);
+  --shadow-deep: 0 4px 8px rgba(38, 35, 32, 0.06), 0 36px 64px -20px rgba(38, 35, 32, 0.2);
 
   /* Motion. Three curves cover the whole system; the browser default `ease` is
      never used, and nothing overshoots — bounce reads as a toy. */
@@ -111,6 +207,24 @@
     font-family: var(--font-display);
     @apply tracking-tight;
   }
+
+  /* Underlined prose links. This arrived as a necessity under the ink primary,
+     where `text-brand-700` was indistinguishable from the sentence around it,
+     and it stays under petrol as redundancy rather than as the only cue: colour
+     alone is not a signal for the ~8% of men with a colour-vision deficiency,
+     and this product's whole posture is that a signal should not depend on one
+     channel. So any anchor inside running text is underlined.
+
+     Scoped to <p> on purpose, and that scope is the whole trick: links that ARE
+     a surface — nav rows, card titles, chips, buttons-as-links — live in <h*>,
+     <li>, or a flex row, never in a paragraph, so they are untouched and do not
+     need to opt out. A utility class still wins over a base layer, so a
+     one-off `no-underline` remains available. */
+  p a {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-thickness: 1px;
+  }
 }
 
 @layer utilities {
@@ -127,25 +241,30 @@
     box-shadow: var(--shadow-deep);
   }
   .bg-grid {
-    background-image: radial-gradient(circle at 1px 1px, rgba(109, 79, 224, 0.13) 1px, transparent 0);
+    background-image: radial-gradient(circle at 1px 1px, rgba(15, 90, 107, 0.14) 1px, transparent 0);
     background-size: 28px 28px;
   }
 
-  /* Ambient brand wash for hero and section backdrops. Two violet stops carry
-     the field and a single low-opacity ember stop warms one corner — the ratio
-     is deliberate, since ember at parity would start competing with the
-     reserved amber channel for attention. Static, so it costs nothing to
-     paint and has no reduced-motion story to tell. */
+  /* Ambient wash for hero and section backdrops. A petrol stop carries the
+     field, a low-opacity clay stop warms one corner, and a greige stop grounds
+     the base — the ratio is deliberate, since clay at parity would start
+     competing with the reserved amber channel for attention. Static, so it
+     costs nothing to paint and has no reduced-motion story to tell.
+
+     What this deliberately is NOT, since it is the one place in the app that
+     could be: a purple-to-blue gradient. See DESIGN.md § Don'ts — looking
+     futuristic actively undermines the claim that a code path computed the
+     score. Petrol at 0.16 on bone is weather over water, not a neural mesh. */
   .bg-aurora {
     background-image:
-      radial-gradient(58rem 32rem at 12% -10%, rgba(124, 92, 240, 0.3), transparent 62%),
-      radial-gradient(46rem 28rem at 92% 6%, rgba(249, 100, 54, 0.16), transparent 64%),
-      radial-gradient(52rem 34rem at 50% 108%, rgba(157, 140, 246, 0.34), transparent 66%);
+      radial-gradient(58rem 32rem at 12% -10%, rgba(15, 90, 107, 0.16), transparent 62%),
+      radial-gradient(46rem 28rem at 92% 6%, rgba(192, 112, 62, 0.14), transparent 64%),
+      radial-gradient(52rem 34rem at 50% 108%, rgba(205, 197, 182, 0.5), transparent 66%);
   }
 
-  /* The reference deck's signature: a soft violet-to-white card face. Used on
-     panels that group content rather than on panels that state a result — a
-     tinted surface must never be mistaken for a verdict tint. */
+  /* A soft greige-to-white card face. Used on panels that group content rather
+     than on panels that state a result — a tinted surface must never be
+     mistaken for a verdict tint. */
   .surface-brand {
     background-image: linear-gradient(160deg, var(--color-brand-50) 0%, #ffffff 58%);
   }
@@ -154,34 +273,31 @@
     background-image: linear-gradient(160deg, var(--color-accent-50) 0%, #ffffff 58%);
   }
 
-  /* Filled feature tiles — the violet and ember blocks in the reference deck.
+  /* Filled feature tiles — the petrol and clay blocks.
 
      A gradient gives its text no single background to measure against, so each
      fill is checked at whichever stop is WORST for the text sitting on it.
      fill-brand carries white, so its binding stop is the lightest:
 
-       brand-600 #6d4fe0 + white → 5.46:1   ← lightest stop of fill-brand
+       brand-600 #0f5a6b + white → 7.81:1   ← lightest stop of fill-brand
 
-     brand-500 is deliberately not a stop: 4.17:1 against white would have put
-     14px body copy under AA across the top third of the card, which is exactly
-     the failure that looks fine on a designer's monitor and is unreadable on a
-     phone in daylight. It stays available for borders and tints, where nothing
-     is written on it. */
+     brand-500 (#136b7f, 6.6:1) would still pass, and it is still not a stop:
+     600 → 900 is the range that gives a large filled panel depth without the
+     top edge drifting toward a mid-teal that reads as a different colour from
+     the buttons beside it. The gradient is doing depth here, not contrast. */
   .fill-brand {
-    background-image: linear-gradient(150deg, var(--color-brand-600) 0%, var(--color-brand-800) 100%);
+    background-image: linear-gradient(150deg, var(--color-brand-600) 0%, var(--color-brand-900) 100%);
   }
 
-  /* Ember inverts: vivid coral ground, near-black ink. This is the one place
-     the two fills do not behave alike, and it is forced rather than chosen.
-     No orange light enough to still read as *coral* can carry white body text
-     at AA — accent-500 tops out at 3.04:1 against white, and darkening it far
-     enough to pass (accent-700, 5.56:1) turns it brown, which is not the
-     colour anybody asked for. Flipping the text is what buys the vividness
-     back.
+  /* Clay inverts: warm terracotta ground, near-black ink. This is the one place
+     the two fills do not behave alike, and it is forced rather than chosen. No
+     orange light enough to still read as *clay* can carry white body text at
+     AA, and darkening it far enough to pass turns it brown — which is not the
+     colour anybody asked for. Flipping the text is what buys the warmth back.
 
      So the binding stop here is the DARKEST one, not the lightest:
-       accent-950 #421107 on accent-500 #f96436 →  5.25:1   ← darkest stop
-       accent-950 #421107 on accent-400 #ff8256 → 12.40:1 */
+       accent-950 #26120a on accent-500 #c0703e → 4.84:1   ← darkest stop
+       accent-950 #26120a on accent-400 #d08757 → 6.44:1 */
   .fill-ember {
     background-image: linear-gradient(150deg, var(--color-accent-400) 0%, var(--color-accent-500) 100%);
   }

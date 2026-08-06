@@ -1,17 +1,16 @@
 /**
  * Table primitives.
  *
- * **The table primitives below are currently unused.** Every list screen — jobs,
- * candidates, interview queue, tenants, audit trail, reports — now renders
+ * **Do not reach for these to build a list screen.** Every list screen — jobs,
+ * candidates, interview queue, tenants, audit trail, reports — renders
  * `<RecordCard>` from `Panels.jsx` instead of rows; see DESIGN.md § The
- * Record-Card Rule for why. `RowAction` at the bottom of this file is still very
- * much live: it is the icon-only action affordance, and it moved onto the cards
- * intact.
+ * Record-Card Rule for why. `RowAction` at the bottom of this file is the
+ * icon-only action affordance and moved onto the cards intact.
  *
- * They are kept rather than deleted because a genuinely columnar surface may yet
- * need them (a reconciliation view, a diff), and because both accessibility
- * fixes below are hard-won and would be re-lost if someone hand-rolled a
- * `<table>` from scratch later. Do not reach for these to build a list screen.
+ * These were kept unused for a year on the argument that "a genuinely columnar
+ * surface may yet need them", and one arrived: the interview report's role map
+ * is criterion × evidence source, which is the 2-D matrix the Record-Card Rule
+ * names as its own exception. That is the bar. One axis must not be "records".
  *
  * Two fixes baked in, because every page had drifted into the same two bugs:
  *
@@ -41,9 +40,28 @@ export function THead({ children }) {
   );
 }
 
-export function TH({ children, align = "left", className = "" }) {
+/**
+ * Cell padding is a PROP, not a `className` override — the third time this trap
+ * has been paid for in this codebase, after `<Card>`'s padding and its surface.
+ * Tailwind resolves two competing `px-*` utilities by its own stylesheet order,
+ * which sorts the spacing scale ascending, so `px-6` from the component beats
+ * `px-3` from a call site no matter which appears later in the string.
+ *
+ * It earns its keep here rather than being theoretical: `default` is right for a
+ * four-column list, and a seven-column matrix like the role map spends 84px per
+ * row on gutters alone at that setting. See DESIGN.md § The Bring-Your-Own-
+ * Surface Rule for the general form.
+ */
+const thPadding = { default: "px-6 py-3", compact: "px-3 py-2.5", tight: "px-2 py-2.5", none: "px-0 py-2.5" };
+const tdPadding = { default: "px-6 py-4", compact: "px-3 py-3", tight: "px-2 py-3", none: "px-0 py-3" };
+const cellAlign = { left: "", right: "text-right", center: "text-center" };
+
+export function TH({ children, align = "left", padding = "default", className = "" }) {
   return (
-    <th scope="col" className={`px-6 py-3 font-semibold ${align === "right" ? "text-right" : ""} ${className}`}>
+    <th
+      scope="col"
+      className={`font-semibold ${thPadding[padding] ?? thPadding.default} ${cellAlign[align] ?? ""} ${className}`}
+    >
       {children}
     </th>
   );
@@ -57,13 +75,21 @@ export function TR({ children, className = "" }) {
   // One hover signal — a background tint. Not a lift, not a shadow, not a
   // scale: a row is a line in a list, and rows that jump make a queue hard to
   // track with the eye.
+  //
+  // The explicit `bg-white` is what lets a sticky first column work: a sticky
+  // cell needs an opaque background or the scrolling columns slide visibly
+  // underneath it, and `bg-inherit` on that cell then picks up this row's
+  // background — including the hover tint, which a hardcoded white would have
+  // frozen out of the one column that stays on screen.
   return (
-    <tr className={`transition-colors duration-150 hover:bg-slate-50/80 ${className}`}>{children}</tr>
+    <tr className={`bg-white transition-colors duration-150 hover:bg-slate-50/80 ${className}`}>{children}</tr>
   );
 }
 
-export function TD({ children, align = "left", className = "" }) {
-  return <td className={`px-6 py-4 ${align === "right" ? "text-right" : ""} ${className}`}>{children}</td>;
+export function TD({ children, align = "left", padding = "default", className = "" }) {
+  return (
+    <td className={`${tdPadding[padding] ?? tdPadding.default} ${cellAlign[align] ?? ""} ${className}`}>{children}</td>
+  );
 }
 
 /**

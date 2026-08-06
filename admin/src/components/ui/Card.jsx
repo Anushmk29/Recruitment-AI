@@ -20,16 +20,62 @@
  * is stated by <Badge>, on the specific claim it applies to.
  */
 const cardTones = {
-  default: "border-slate-200 bg-white",
-  brand: "border-brand-100 surface-brand",
-  ember: "border-accent-100 surface-ember",
+  default: { border: "border-slate-200", surface: "bg-white" },
+  brand: { border: "border-brand-100", surface: "surface-brand" },
+  ember: { border: "border-accent-100", surface: "surface-ember" },
   // The two filled tones invert in OPPOSITE directions, which is the one
-  // asymmetry in the system. Violet is dark enough to carry white; coral is
-  // not, at any brightness that still reads as coral, so ember takes near-black
-  // ink instead. index.css shows the arithmetic. Never assume "filled ⇒ white".
-  "filled-brand": "border-transparent fill-brand text-white",
-  "filled-ember": "border-transparent fill-ember text-accent-950",
+  // asymmetry in the system. Ink is dark enough to carry white; clay is not, at
+  // any brightness that still reads as clay, so ember takes near-black ink
+  // instead. index.css shows the arithmetic. Never assume "filled ⇒ white".
+  "filled-brand": { border: "border-transparent", surface: "fill-brand text-white" },
+  "filled-ember": { border: "border-transparent", surface: "fill-ember text-accent-950" },
 };
+
+/**
+ * Does the caller's `className` bring its own background?
+ *
+ * Border and surface are separate fields above for exactly this test. A call
+ * site that passes `className="bg-amber-50"` is asking for an amber card, but
+ * Tailwind resolves two competing `bg-*` utilities by ITS OWN stylesheet order,
+ * not the order they appear in the class string — and `bg-white` sorts after
+ * every `bg-<hue>-<shade>`. So every such call site silently rendered white:
+ * six of them, including a red alert panel and a "Recommended action" card that
+ * was white text on white and had been invisible in production.
+ *
+ * This is the same trap DESIGN.md documents for `p-*`, which is why padding is a
+ * prop. Backgrounds could have become a prop too, but a card legitimately wants
+ * arbitrary one-off tints, so the primitive stands down instead: if you brought
+ * a surface, ours is not emitted and there is nothing left to lose the race to.
+ */
+const OWN_SURFACE = /(^|\s)(bg-|surface-|fill-)/;
+
+/**
+ * The same trap, one property over.
+ *
+ * `border-brand-200` in a `className` silently lost to the tone's own
+ * `border-slate-200` for exactly the reason above — Tailwind's stylesheet order,
+ * not the class string's. Caught by measuring a card that had asked for a greige
+ * border and rendered a hairline one.
+ *
+ * Written as a token scan rather than one regex, because the first attempt was a
+ * regex and it quietly failed on `border-verdict-pending/50`: a two-segment
+ * colour name matches none of the shapes you reach for when you assume colours
+ * look like `border-red-200`. Enumerating what is NOT a colour is the smaller,
+ * checkable set.
+ *
+ * Width, side and style (`border-2`, `border-t`, `border-x-2`, `border-dashed`)
+ * compose fine with the tone's colour and must not suppress it.
+ */
+const BORDER_NON_COLOR = /^(?:\d+|[xytrbles]|[xytrbles]-\d+|solid|dashed|dotted|double|hidden|none)$/;
+
+function ownsBorderColor(className) {
+  return className.split(/\s+/).some((token) => {
+    // Strip any variant prefix (`sm:`, `hover:`) before testing the utility.
+    const util = token.slice(token.lastIndexOf(":") + 1);
+    if (!util.startsWith("border-")) return false;
+    return !BORDER_NON_COLOR.test(util.slice("border-".length).split("/")[0]);
+  });
+}
 
 /**
  * Text and icon-tile classes for a given card tone.
@@ -79,11 +125,12 @@ export function Card({
 }) {
   // `interactive` is opt-in: a card that lifts on hover but does nothing when
   // clicked is a false affordance. Only pass it when the whole card is a target.
+  const t = cardTones[tone] ?? cardTones.default;
   return (
     <Component
       className={`rounded-2xl border shadow-card ${cardPadding[padding] ?? cardPadding.default} ${
-        cardTones[tone] ?? cardTones.default
-      } ${
+        ownsBorderColor(className) ? "" : t.border
+      } ${OWN_SURFACE.test(className) ? "" : t.surface} ${
         interactive
           ? "transition-[box-shadow,transform] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-lift motion-reduce:hover:translate-y-0"
           : ""

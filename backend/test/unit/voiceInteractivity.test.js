@@ -297,6 +297,41 @@ test("3.7: a malformed state costs the candidate a fact, never a reply", () => {
   assert.ok(a.text.length > 0, "they always get an answer of some kind");
 });
 
+test("3.8: 'why are you asking me this?' is answerable in any session state", () => {
+  // Unlike every other topic here, this one needs nothing loaded — where the questions come from
+  // is true of the interview before a single field is read. So it must answer on an empty state,
+  // which is exactly the state a session in trouble is in.
+  const a = metaAnswers.answerFor("why_this_question", {});
+  assert.equal(a.answered, true);
+  assert.equal(a.text, metaAnswers.WHY_THIS_QUESTION);
+  assert.match(a.text, /role asks for/, "it says where the question came from");
+  // Short on purpose. A long answer to this question implies the question needed defending, which
+  // tells an uneasy candidate they were right to be uneasy.
+  assert.ok(a.text.split(/\s+/).length <= 14, "it stays a passing remark, not a statement");
+});
+
+test("3.9: the answer states where the question came from and never argues for it", () => {
+  // The regression this guards is a well-meaning one: someone later "improves" this sentence by
+  // adding the reason — the rubric criterion's rationale is right there and it reads well. It is
+  // still wrong to say. Justifying a question in front of the candidate who asked drifts into
+  // describing what a good answer contains, and only the candidates who thought to ask would get
+  // it. Where the question came from is the whole permitted answer.
+  const text = metaAnswers.WHY_THIS_QUESTION.toLowerCase();
+  for (const banned of [
+    "because",
+    "looking for",
+    "we want to",
+    "measure",
+    "assess",
+    "evaluate",
+    "test",
+    "important",
+    "sorry",
+  ]) {
+    assert.ok(!text.includes(banned), `the answer must not justify the question — found "${banned}"`);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 4. The reply bank grew — and the guarantees on it did not weaken
 // ---------------------------------------------------------------------------

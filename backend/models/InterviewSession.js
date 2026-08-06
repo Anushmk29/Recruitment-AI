@@ -578,6 +578,37 @@ const aiInterviewSchema = new mongoose.Schema(
       ],
       default: () => [],
     },
+    // The candidate's half of the same conversation — everything they said, as the STT heard it,
+    // in the order they said it. Empty on every turn-based interview.
+    //
+    // `turns` records the ANSWERS: what was said in reply to a question, segmented by the engine,
+    // scored against the rubric. That is deliberately not everything a person says in an
+    // interview. "Sorry, can you repeat that?", "is my mic working?", "hang on, my dog" — none of
+    // it is an answer, and until this field existed none of it was kept, which meant a candidate
+    // spending two minutes asking whether they had been heard left a record showing two minutes of
+    // nothing. That is the exact failure this platform is supposed to make impossible: the record
+    // has to be able to show the interview going wrong, not just the candidate doing badly.
+    //
+    // TWO HARD RULES, both structural rather than conventional:
+    //   1. NEVER READ BY ANY SCORING PATH. Not as a feature, not as a tie-breaker, not as
+    //      "context". How often someone asks for a repeat tracks their accent, their hearing and
+    //      their bandwidth, not their ability — same exclusion as `intents` above, same reason.
+    //      test/unit/livekitPipeline.test.js asserts scoring inputs never carry it.
+    //   2. NEVER GUARDRAILED. utils/agentGuardrail scans for the INTERVIEWER going off-script.
+    //      Running it over the candidate would turn a control on the machine into surveillance of
+    //      the person, which is a different product and not one worth building.
+    candidateUtterances: {
+      type: [
+        new mongoose.Schema(
+          {
+            text: { type: String, required: true },
+            at: { type: Date, default: Date.now },
+          },
+          { _id: false }
+        ),
+      ],
+      default: () => [],
+    },
     // Every time the realtime interviewer said something it was not allowed to say
     // (utils/agentGuardrail.js). Normally empty — a hit means the prompt did not hold, which is
     // exactly the thing you cannot find out by asking the model whether it behaved.
@@ -608,6 +639,13 @@ const aiInterviewSchema = new mongoose.Schema(
     realtimeStartedAt: { type: Date },
     realtimeMeteredAt: { type: Date },
     realtimeDurationMs: { type: Number },
+    // Which AGENT_PROMPT_VERSION the realtime interviewer ran under
+    // (services/voiceAgentService.AGENT_PROMPT_VERSION, bumped whenever the instructions change).
+    // Without storing it, a bump silently makes every earlier session unattributable — "which
+    // interviewer did this candidate sit?" stops having an answer at exactly the moment the answer
+    // starts to differ, which is also the moment two candidates stop being comparable. Same
+    // contract as `promptVersion` on the turn-based path.
+    agentPromptVersion: { type: String, trim: true },
     // Set when status is "halted". Why the interview was stopped, and how much of it had run.
     // Read by reviewRequiredReason, which withholds the automated recommendation entirely — a
     // transcript produced outside the approved script cannot support a conclusion either way.

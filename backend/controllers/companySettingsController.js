@@ -92,6 +92,16 @@ async function updateSettings(req, res) {
       // Empty string ⇒ unset ⇒ the ATS_ENGINE env default applies (evidenceAtsService.resolveEngineMode).
       set("ai.atsEngine", mode || undefined);
     }
+    if ("voiceMode" in ai) {
+      // The per-tenant pipeline switch (livekitService.isEnabled). An explicit value pins the
+      // tenant to exactly one pipeline; empty string ⇒ unset ⇒ the VOICE_MODE env default
+      // applies. This is THE designed rollout lever — one tenant at a time, no deploy.
+      const mode = asString(ai.voiceMode, { max: 12, field: "Voice mode" }).toLowerCase();
+      if (mode && !["turn_based", "livekit"].includes(mode)) {
+        throw new Error('Voice mode must be "turn_based" or "livekit"');
+      }
+      set("ai.voiceMode", mode || undefined);
+    }
   }
 
   if (body.compliance && typeof body.compliance === "object") {

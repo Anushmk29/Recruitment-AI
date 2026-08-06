@@ -13,6 +13,7 @@
     "@hookform/resolvers": "^5.4.0",
     "axios": "^1.7.2",
     "framer-motion": "^12.42.2",
+    "livekit-client": "^2.21.0",
     "lucide-react": "^1.24.0",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",

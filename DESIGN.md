@@ -2,30 +2,36 @@
 name: HireFlow AI
 description: Evidence-bound hiring intelligence — a ledger-grade interface for screening, interviewing, and defending hiring decisions.
 colors:
-  signal-violet: "#6d4fe0"
-  signal-violet-deep: "#5b3fc4"
-  signal-violet-pale: "#d8d2fe"
-  signal-violet-tint: "#eae6ff"
-  signal-violet-wash: "#f4f2ff"
-  ember: "#bd3a14"
-  ember-bright: "#f96436"
-  ember-tint: "#ffe6dc"
-  ember-wash: "#fff5f1"
-  ink: "#0f172a"
-  ink-body: "#334155"
-  slate-reading: "#475569"
-  slate-muted: "#64748b"
-  slate-faint: "#94a3b8"
-  field-stroke: "#cbd5e1"
-  hairline: "#e2e8f0"
-  canvas: "#f6f5fb"
+  petrol: "#0f5a6b"
+  petrol-deep: "#0b4353"
+  petrol-bridge: "#5b8c98"
+  greige: "#d3caba"
+  greige-tint: "#e8e2d6"
+  greige-wash: "#f5f2ec"
+  clay: "#8a4824"
+  clay-mid: "#c0703e"
+  clay-tint: "#f7e6da"
+  clay-wash: "#fdf6f1"
+  text-ink: "#1a1815"
+  text-ink-body: "#3a362f"
+  slate-reading: "#4f4a42"
+  slate-muted: "#6e675c"
+  slate-faint: "#9c9384"
+  field-stroke: "#cdc5b6"
+  hairline: "#e3ddd1"
+  canvas: "#f6f2ea"
+  canvas-deep: "#ece5d8"
   surface: "#ffffff"
-  verdict-positive: "#059669"
+  verdict-positive: "#047857"
   verdict-positive-tint: "#d1fae5"
-  verdict-pending: "#b45309"
-  verdict-pending-tint: "#fef3c7"
-  verdict-negative: "#dc2626"
+  verdict-pending: "#92400e"
+  verdict-pending-tint: "#fbe8b8"
+  verdict-negative: "#b91c1c"
   verdict-negative-tint: "#fee2e2"
+  chart-positive: "#5fcfa0"
+  chart-neutral: "#e0d9cc"
+  chart-negative: "#fb8f8a"
+  chart-brand: "#6ec3d8"
 typography:
   display:
     fontFamily: "Lexend, Inter, system-ui, sans-serif"
@@ -72,24 +78,24 @@ spacing:
   section: "96px"
 components:
   button-primary:
-    backgroundColor: "{colors.signal-violet}"
+    backgroundColor: "{colors.petrol}"
     textColor: "{colors.surface}"
     rounded: "{rounded.xl}"
     padding: "10px 16px"
     typography: "{typography.label}"
   button-primary-hover:
-    backgroundColor: "{colors.signal-violet-deep}"
+    backgroundColor: "{colors.petrol-deep}"
   button-primary-disabled:
-    backgroundColor: "#bcb1fb"
+    backgroundColor: "{colors.petrol-bridge}"
     textColor: "{colors.surface}"
   button-secondary:
     backgroundColor: "{colors.surface}"
-    textColor: "{colors.signal-violet-deep}"
+    textColor: "{colors.petrol-deep}"
     rounded: "{rounded.xl}"
     padding: "10px 16px"
   button-outline:
     backgroundColor: "transparent"
-    textColor: "{colors.ink-body}"
+    textColor: "{colors.text-ink-body}"
     rounded: "{rounded.xl}"
     padding: "10px 16px"
   button-ghost:
@@ -104,23 +110,23 @@ components:
     padding: "10px 16px"
   card:
     backgroundColor: "{colors.surface}"
-    textColor: "{colors.ink}"
+    textColor: "{colors.text-ink}"
     rounded: "{rounded.2xl}"
     padding: "24px"
   input:
     backgroundColor: "{colors.surface}"
-    textColor: "{colors.ink}"
+    textColor: "{colors.text-ink}"
     rounded: "{rounded.xl}"
     padding: "10px 14px"
     typography: "{typography.body}"
   badge:
-    backgroundColor: "{colors.signal-violet-tint}"
-    textColor: "{colors.signal-violet-deep}"
+    backgroundColor: "{colors.greige-tint}"
+    textColor: "{colors.petrol-deep}"
     rounded: "{rounded.full}"
     padding: "4px 10px"
     typography: "{typography.label}"
   nav-item-active:
-    backgroundColor: "{colors.signal-violet}"
+    backgroundColor: "{colors.petrol}"
     textColor: "{colors.surface}"
     rounded: "{rounded.xl}"
     padding: "10px 14px"
@@ -150,90 +156,242 @@ has to learn a new visual language to do their job, and it carries enough weight
 screens decide people's livelihoods. Restraint here is not timidity; it is the correct register for a
 product whose entire claim is trustworthiness.
 
-The implemented system is a light, violet-accented SaaS environment: a faintly tinted canvas, white cards
-on hairline borders, one violet accent, one rationed warm secondary, and a small semantic set for outcome.
-The same UI kit ships byte-identical in both frontends. The palette is now **authored rather than
-inherited** — the ramp was swapped from Tailwind `blue` to Signal Violet in one edit, which is the whole
-argument for the One-Place Rule below.
+The implemented system is a warm paper environment: a bone canvas, white cards on hairline borders, a
+deep petrol primary on a duotone ramp, one rationed clay secondary, and a small semantic set for outcome.
+The same UI kit ships byte-identical in both frontends. The palette is **authored rather than
+inherited** — it has now been swapped three times in single edits, Tailwind `blue` → Signal Violet → Ink
+on Bone → Petrol on Bone, which is the whole argument for the One-Place Rule below.
 
 **Key Characteristics:**
 
-- Light, faintly violet canvas (`#f6f5fb`) with pure-white surfaces and hairline slate borders
-- A single violet accent carrying navigation, primary action, and focus — restrained, never decorative
-- One warm secondary (Ember) for emphasis and rhythm, structurally barred from every status surface
+- Warm bone canvas (`#f6f2ea`) with pure-white surfaces and hairline greige borders
+- A deep petrol primary on a **duotone ramp** — warm greige tints where status pills live, teal-blue where
+  actions, navigation, links and filled panels live, so brand colour never lands beside a verdict tint
+- One warm secondary (Clay) for emphasis and rhythm, structurally barred from every status surface
 - Two-family type: Lexend for headings and the wordmark, Inter for everything else
 - Soft radii (12px controls, 16px containers) with pill-shaped status badges
 - A generous 4px focus ring — the single loudest element in the system, and deliberately so
-- Outcome color is semantic and reserved: emerald, amber, red mean *stage and verdict*, never decoration
+- Outcome color is semantic and reserved: emerald, amber, red mean *stage and verdict*, never decoration —
+  and the duotone split is what keeps that true while the brand is chromatic
+- Chart marks are **pastel**, each ringed 1px in its own reserved verdict hue: soft enough that five bars
+  in a column read as a measurement rather than an alarm, edged so they stay legible and CVD-separable
 
 ## Colors
 
-A quiet violet environment with one warm secondary held on a short leash, and three outcome hues held in
-reserve for meaning.
+**Petrol on Bone.** A warm paper environment, a deep teal-blue primary on a duotone ramp, one clay
+secondary on a short leash, and three outcome hues that colour is never allowed to compete with.
 
-### Primary
+*Repainted 2026-08-05: Signal Violet → Ink → Petrol.* Violet went first because violet-on-white is the
+house style of every AI product shipped since 2023, and looking like the category is a bad trade for a
+product whose whole claim is that a code path — not a vibe — computed the score.
 
-- **Signal Violet** (`#6d4fe0`, `brand-600`): The primary accent. Carries the active navigation item,
-  primary buttons, focus borders, link hovers, and the icon tiles on marketing cards. 5.46:1 against
-  white, so it can hold small white text anywhere it appears.
-- **Signal Violet Deep** (`#5b3fc4`, `brand-700`): Hover state for primary buttons; text color for
-  secondary buttons and brand-toned badges, where the flat accent would fail on a tint background.
-  5.85:1 on `brand-100`.
-- **Signal Violet Pale** (`#d8d2fe`, `brand-200`): Borders on secondary buttons and the `::selection`
-  background.
-- **Signal Violet Tint** (`#eae6ff`, `brand-100`): Badge and avatar backgrounds, the icon-tile fill in
-  empty states.
-- **Signal Violet Wash** (`#f4f2ff`, `brand-50`): The lightest surface tint — `surface-brand` card faces,
-  secondary button hover, nav hover pills, feature icon tiles.
+Ink came next on the argument that green, amber and red are reserved for hiring outcomes, so *any*
+chromatic primary must compete with one of them. That argument turned out to be **half right, and the
+correct half is narrower than it looked.** A brand does not collide with a verdict because it is
+chromatic; it collides at the **tint** end, where `bg-brand-100 text-brand-700` is the in-progress
+`<Badge>` sitting on the same row as a mint pass-tint and a rose reject-tint. Three candidates were built
+and looked at side by side to establish this: pale petrol read as the mint pass-tint beside it, pale
+oxblood was very nearly the reject-tint, and only the dark end of any ramp was ever safe.
 
-### Secondary — Ember
+Hence the duotone. Steps 50–200 stay warm greige; 300–950 are petrol. The collision is designed out at
+the ramp rather than by giving up colour, and the product keeps a real brand hue on every surface that
+should carry one.
 
-One warm hue, and it is rationed. Ember exists so the system has a second voice for *emphasis and
-rhythm* — the filled orange block in a row of white cards, the icon tile that breaks up a grid of eight.
+### Primary — Petrol (duotone)
 
-- **Ember** (`#bd3a14`, `accent-700`): The value anything with small white text must use — 5.18:1. The
-  marketing CTA button, the "Most Popular" pricing flag, the lightest stop of `fill-ember`.
-- **Ember Bright** (`#f96436`, `accent-500`): Borders, tints, and chart marks only. 3.04:1 against white,
-  so nothing small is ever written on it.
-- **Ember Tint** (`#ffe6dc`, `accent-100`) / **Ember Wash** (`#fff5f1`, `accent-50`): Icon-tile fills and
+A single ramp made of two materials, split exactly where the product's meaning changes: neutral where the
+system reports **state**, chromatic where it offers **action**.
+
+- **Greige Wash** (`#f5f2ec`, `brand-50`): `surface-brand` card faces, secondary-button hover, nav hover
+  pills, row hover.
+- **Greige Tint** (`#e8e2d6`, `brand-100`): Badge and avatar backgrounds, empty-state icon tiles. *This is
+  the step that must never be tinted petrol* — see the note above.
+- **Greige** (`#d3caba`, `brand-200`): Secondary-button borders, field focus ring, `::selection`.
+- **Petrol Bridge** (`#5b8c98`, `brand-300`): The focus-ring value and the disabled primary. Deliberately
+  darker than a tint-weight 300, because a ring is only an affordance if it is visible against the surface
+  BEHIND it: 3.37:1 on bone, clearing the 3:1 floor WCAG 2.2 sets for focus indicators. A pale 300
+  measured 1.4:1 and made the loudest treatment in the system invisible.
+- **Petrol** (`#0f5a6b`, `brand-600`): Primary buttons, the active navigation pill, filled panels, chart
+  marks, field focus borders. 7.81:1 against white.
+- **Petrol Deep** (`#0b4353`, `brand-700`): Primary-button hover; text colour for links, secondary buttons,
+  icon glyphs and brand-toned badges. 10.8:1 on white, 8.39:1 on `brand-100`.
+- **900 / 950** (`#082935` / `#04181f`): The far stop of `fill-brand`, doing depth rather than contrast.
+
+**Why petrol specifically.** Hue 197° is the furthest workable point from all three verdict hues (red 28°,
+amber 55°, emerald 165°) — the answer-run chart's brand-vs-degraded pair separates at ΔE 11.6 under
+protanopia where the ink pair managed 5.3. It is also not the category's colour: HR tech's blue is
+azure/royal at 230–250° (Indeed, LinkedIn, Lever, Naukri) and this is half that lightness and
+green-leaning. It reads as gauge, calibration and instrument, which is the literal claim the product makes
+about itself, and it is cool — which matters, because two of the three audiences arrive stressed and the
+stated mood is *calm under pressure*.
+
+### Secondary — Clay
+
+One warm hue, rationed. Clay exists so the system has a second voice for *emphasis and rhythm* — the
+filled block in a row of white cards, the icon tile that breaks up a grid of eight. Retuned from the
+previous vivid coral, which on a bone canvas was the loudest thing on screen: the one colour forbidden
+from meaning anything does not get to shout over the three that do.
+
+- **Clay** (`#8a4824`, `accent-700`): 6.93:1 — the value anything with small white text must use. The
+  marketing CTA, the "Most Popular" pricing flag. Against petrol it is now a true complementary secondary
+  rather than a lone warm note: cool primary, warm secondary, warm paper ground.
+- **Clay Mid** (`#c0703e`, `accent-500`): Borders, tints, focus rings, the darkest stop of `fill-ember`.
+- **Clay Tint** (`#f7e6da`, `accent-100`) / **Clay Wash** (`#fdf6f1`, `accent-50`): Icon-tile fills and
   `surface-ember` card faces.
 
 ### Canvas
 
-- **Canvas** (`#f6f5fb`): The app background behind all cards, and the marketing sections' alternating
-  band. A faint violet wash rather than a cold slate, so a white card reads as lifted off a tinted plane.
+- **Bone** (`#f6f2ea`): The app background behind all cards, and the marketing sections' alternating band.
+  Warm paper rather than near-white, so a white card reads as lifted off a tinted plane.
+- **Bone Deep** (`#ece5d8`): The second band.
 
-### Neutral
+### Neutral — Bone greys
 
-- **Ink** (`#0f172a`): Primary text. The dashboard sidebar used to carry this as a full-bleed background
-  and no longer does — it is now white with a hairline right border, and the active nav item is a filled
-  violet pill. The system has no genuinely dark surface any more.
-- **Ink Body** (`#334155`): Secondary headings and outline-button text.
-- **Slate Reading** (`#475569`): Body copy on marketing surfaces; form labels.
-- **Slate Muted** (`#64748b`): Supporting copy, descriptions, inactive icons.
-- **Slate Faint** (`#94a3b8`): Placeholder text, timestamps, metadata, the quietest tier.
-- **Field Stroke** (`#cbd5e1`): Input and select borders; dashed borders on empty states.
-- **Hairline** (`#e2e8f0`): Card borders, dividers, header underlines. The primary structural line.
-- **Canvas** (`#f8fafc`): App background behind all cards; alternating marketing section bands.
+Tailwind's `slate` is **remapped** in `@theme` from cold blue-grey to warm greige. This is an override
+rather than a new ramp, and that is the point: 1596 `slate-*` utilities across the two apps are the
+product's actual neutral, so the only way to change the temperature of the whole system in one place is
+to change what `slate` means. Nothing else had to move.
+
+Lightness is held within a step of Tailwind's original at every stop, so every contrast figure documented
+here still holds — most improve, because a warm grey at the same lightness carries slightly more ink.
+
+- **Ink** (`#1a1815`, `slate-900`): Primary text.
+- **Ink Body** (`#3a362f`, `slate-700`): Secondary headings and outline-button text.
+- **Slate Reading** (`#4f4a42`, `slate-600`): Body copy on marketing surfaces; form labels. 8.80:1.
+- **Slate Muted** (`#6e675c`, `slate-500`): Supporting copy, descriptions, inactive icons. 5.61:1 —
+  was 4.76:1.
+- **Slate Faint** (`#9c9384`, `slate-400`): Placeholder text, timestamps, the quietest tier, and the
+  neutral midpoint of the evidence-coverage chart. 3.04:1 — decorative and disabled only, as before.
+- **Field Stroke** (`#cdc5b6`, `slate-300`): Input and select borders; dashed borders on empty states.
+- **Hairline** (`#e3ddd1`, `slate-200`): Card borders, dividers, header underlines.
 - **Surface** (`#ffffff`): Cards, inputs, popovers, sticky headers (at 90% with backdrop blur).
 
 ### Tertiary — Outcome
 
-Reserved. These three hues are the system's only semantic color and they carry the pipeline's meaning.
+Reserved, and after the repaint this is the *entire* chromatic vocabulary of the product. These three hues
+carry the pipeline's meaning and nothing else may borrow them.
 
-- **Verdict Positive** (`#059669`, tint `#d1fae5`): Shortlisted, selected, offer accepted, joined; passing
-  ATS scores; success toasts.
-- **Verdict Pending** (`#b45309`, tint `#fef3c7`): Under review, offer sent — anything awaiting a human.
-- **Verdict Negative** (`#dc2626`, tint `#fee2e2`): Rejected, destructive actions, field errors.
+- **Verdict Positive** (`#047857`, tint `#d1fae5`): Shortlisted, selected, offer accepted, joined; passing
+  ATS scores; proven rubric criteria; success toasts.
+- **Verdict Pending** (`#92400e`, tint `#fbe8b8`): Under review, offer sent — anything awaiting a human.
+  The tint deepened from `#fef3c7` with the repaint: cream on cold slate was an obvious tint, cream on a
+  bone canvas was very nearly the canvas, and a badge that does not read as a badge is the worst possible
+  home for "a human is owed something here".
+- **Verdict Negative** (`#b91c1c`, tint `#fee2e2`): Rejected, failed criteria, destructive actions, field
+  errors. The `danger` button reads this token rather than a raw `red-600`, which had drifted brighter
+  than the spec and was louder on bone than an actual rejection badge.
+
+### Quaternary — Chart fills
+
+Chart **marks only**: bars, stacked segments, plot areas. Never text, never a badge, never a border alone.
+
+A chart mark and a status pill have different jobs and now have different weights. A pill is small and
+carries a word, so it wants the saturated verdict ink. A bar is a large field the eye rests on, and five of
+them in a column at verdict weight read as an alarm rather than as a measurement. These are the same three
+meanings, pastel.
+
+- **Chart Positive** (`#5fcfa0`) — proven criteria, verified claims.
+- **Chart Neutral** (`#e0d9cc`) — untested. The diverging midpoint, deliberately the palest mark on the
+  page: no evidence should look like the least ink.
+- **Chart Negative** (`#fb8f8a`) — failed criteria, contradicted claims, degraded audio turns.
+- **Chart Brand** (`#6ec3d8`) — the single-series magnitude mark: competency bars, the answer run, the
+  score-movement pair.
+
+**Every mark carries a 1px inset ring in its own reserved verdict hue** (`ring-verdict-positive/70` and so
+on). The ring is not decoration and removing it breaks the chart — see The Pastel-Needs-An-Edge Rule.
 
 ### Named Rules
 
-**The One-Place Rule.** The `--color-brand-*` and `--color-accent-*` ramps in `src/index.css` are the only
-place a brand colour is decided, and both apps ship them identically. This is not aspirational — it is
-how the palette was swapped from blue to violet in a single edit, because all ~433 brand surfaces read
-`brand-*` rather than a raw Tailwind hue. Never write a raw `blue-600` / `violet-500` / `orange-500` into
-a component. The one permitted exception is documented at its call site: the Razorpay checkout modal is a
-third-party iframe that cannot read our tokens, so `Checkout.jsx` carries a hardcoded hex.
+**The One-Place Rule.** The `--color-brand-*`, `--color-accent-*` and `--color-slate-*` ramps in
+`src/index.css` are the only place a colour is decided, and both apps ship them identically. This is not
+aspirational — it is how the palette was swapped three times, blue → violet → ink → petrol, each time in a
+single edit, because all ~433 brand surfaces read `brand-*` and all 1596 neutral surfaces read `slate-*`
+rather than a raw Tailwind hue. Never write a raw `blue-600` / `violet-500` / `orange-500` / `teal-700`
+into a component. The one permitted exception is documented at its call site: the Razorpay checkout modal
+is a third-party iframe that cannot read our tokens, so `Checkout.jsx` carries a hardcoded hex.
+
+Note that `slate` is an **override**, not a ramp of its own — the bone repaint changed what `slate-*`
+means rather than introducing `stone-*` and rewriting 1596 call sites. Anyone reaching for Tailwind's
+`stone` or `neutral` because "slate is cold" is looking at stale knowledge of this codebase.
+
+**The Duotone Rule.** *Added 2026-08-05.* `brand-50`…`brand-200` are warm greige and carry no hue.
+`brand-300`…`brand-950` are petrol. The split is not a gradient that someone forgot to finish — it is the
+enforcement point for the Reserved Verdict Rule while the brand is chromatic.
+
+The tint end of a brand ramp is precisely where status lands: `bg-brand-100 text-brand-700` is the
+in-progress `<Badge>`, sitting on the same row as a mint pass-tint and a rose reject-tint. Give that end a
+hue and it competes with them — this was built and looked at, and pale petrol read as the mint tint while
+pale oxblood was very nearly the reject-tint. Colour therefore lives on **action** (buttons, nav, links,
+icon glyphs, filled panels, chart marks) and never on **state**. Tinting `brand-100` petrol to "complete"
+the ramp reintroduces the exact bug the split was designed around.
+
+**The Redundant-Link Rule.** *Added 2026-08-05, generalised at the petrol repaint.* Links inside running
+text are underlined by a base-layer `p a` rule. This began as a necessity under the ink primary, where
+`text-brand-700` was indistinguishable from the sentence around it; it stays under petrol because colour
+alone is not a signal for the ~8% of men with a colour-vision deficiency, and a product whose posture is
+"never let one channel carry a claim" does not get to make an exception for its own navigation. The scope
+is the trick: links that ARE a surface (nav rows, card titles, chips, buttons-as-links) live in `<h*>`,
+`<li>` or a flex row, never in a paragraph, so they are untouched and need no opt-out. A one-off
+`no-underline` utility still wins over the base layer.
+
+**The Bring-Your-Own-Surface Rule.** *Added 2026-08-05.* Tailwind resolves two competing `bg-*` utilities
+by its **own stylesheet order**, not by the order they appear in a class string — and `bg-white` sorts
+after every `bg-<hue>-<shade>`. Every `<Card className="bg-amber-50">`-style call site in the repo was
+therefore silently rendering white; six of them existed, including a red alert panel in the candidate app
+and a "Recommended action" card that was white-on-white and had been invisible in production.
+
+`<Card>` now stands down: if `className` carries a `bg-` / `surface-` / `fill-` utility, the tone's own
+surface is not emitted, so there is nothing left to lose the race to. The same applies one property over —
+a `className` carrying a border **colour** suppresses the tone's border, while width, side and style
+(`border-2`, `border-t`, `border-dashed`) still compose. That second half was added after a card asked for
+a greige border and rendered a hairline one; the border case is detected by a token scan rather than a
+regex, because the first regex quietly failed on the two-segment `border-verdict-pending/50`.
+
+This is the same trap that made padding a prop (§ Cards). The general lesson is the rule: **never rely on
+class-string order to override a component's own utility** — either the component exposes a prop, or it
+detects the override and yields.
+
+**The Pastel-Needs-An-Edge Rule.** *Added 2026-08-05.* Chart fills are pastel, and pastel costs two
+things that have to be bought back explicitly. Both were measured, not judged.
+
+*Contrast.* A pastel cannot clear the 3:1 non-text contrast floor against a white card — that needs a
+relative luminance of 0.30 or less, which is not a pastel by definition. These sit at 1.4–2.2:1. The relief
+the rule allows is a visible label, and every mark in this product has one: the role map prints the
+percentage, the verdict word and the evidence sentence on every row; the stacked bar's legend carries the
+glyph, the word, the share and the criterion count. Colour is the fourth redundant channel here, never the
+carrier. **A chart that cannot label its marks does not get these fills.**
+
+*Colour-vision deficiency.* Pastel mint against pastel rose separates at ΔE 3.6 under deuteranopia — below
+even the ΔE 6 floor that secondary encoding can excuse. No tuning fixes it; red and green at this lightness
+are the same colour to a deuteranope. So every mark is drawn with a 1px inset ring in its own **reserved
+verdict hue**, and those separate at ΔE 8.4. The ring is what makes the mark legible against the surface
+and what makes the family obvious: legend chip, ring, and fill are one hue at three weights. "Cleaning up"
+the bars by dropping the ring removes the accessibility of the chart, not a flourish.
+
+The legend chip stays saturated for a third reason: it holds a white glyph at 9px, and a pastel cannot.
+
+**The Role-Map Rule.** *Added 2026-08-05.* The interview report's hero chart is a **table**: one row per
+rubric criterion, sorted heaviest first, with a bar whose width is that criterion's **weight in the role**,
+coloured by what the evidence supports, and one column per evidence source (Résumé · Assessment ·
+Interview). Three constraints are load-bearing and none is a style preference:
+
+- **Bars never normalise to the widest criterion.** Width is share of the rubric, so a 40% requirement
+  fills 40% of the track and the empty remainder is the rest of the role. Normalising makes every role
+  look equally concentrated and destroys the only comparison that matters.
+- **The label, the bar, the percentage and the verdict sit on one row.** An early build put the label at
+  the far left and its value a thousand pixels away at the right; a bar chart whose label cannot be
+  connected to its value by the eye is not a chart.
+- **The evidence sources are columns with headers, not a trail of unlabelled squares.** They were three
+  bare chips needing a sentence underneath to explain what the positions meant. As `<th>`s they explain
+  themselves, and the sentence is gone. The Requirement column is `sticky left-0` so it stays on screen
+  while the matrix scrolls on a narrow viewport — without it a 390px screen showed that column and
+  nothing else.
+
+This is the chart the product exists to draw. Any competitor can render "78% match"; none can render "40%
+of what this role actually requires is the one thing we could not prove" — which is the sentence a
+recruiter owes a hiring manager and an employer owes a tribunal. The aggregate stack sits directly beneath
+it as the same artefact at a lower altitude, and is captioned as the total of the bars rather than as a
+second chart of the same data.
 
 **The Ember Containment Rule.** Ember is decorative. It may appear on filled feature cards, icon tiles,
 marketing CTAs, and chart series. It may **never** appear on a badge, a status pill, a score tile, a
@@ -499,7 +657,7 @@ Shared byte-identical by both apps.
   supporting points and an action. Runs on `fill-brand`, because the reference deck puts these on
   near-black and this system has no dark surface left (see § Neutral). Two contrast facts are baked in and
   must not be "simplified": the body line is `white/90`, not the `/70` a mock uses, which lands at 3.8:1;
-  and the eyebrow is a **white pill with violet ink**, not the `white/15` chip used behind icons on a
+  and the eyebrow is a **white pill with ink text**, not the `white/15` chip used behind icons on a
   fill — white text on that chip measures 4.12:1, under AA at 12px. A translucent chip is fine behind a
   glyph and wrong behind a word.
 - **`StepTrack`** — the numbered pipeline stepper. Takes `steps`, `currentKey`, and a `reached` set;
@@ -508,7 +666,7 @@ Shared byte-identical by both apps.
   day 1 and day 60 and never says what comes next. Scrolls rather than wraps.
 - **`TokenList`** — the wrapped skill/requirement chips with a `+N more` overflow. Always slate, never
   brand or verdict tinted: a skill token is a fact about the posting, not a judgement about the reader, and
-  a row of violet pills beside a match score reads as "these are the ones you have". The overflow keeps
+  a row of brand-toned pills beside a match score reads as "these are the ones you have". The overflow keeps
   the remainder in an `sr-only` span — truncation is a layout decision, not an editorial one.
 - **`MetaItem`** — one icon-and-text fact in a card's meta line. Returns `null` on an empty value rather
   than rendering a lone icon, since every field it displays is optional on the underlying document.
@@ -536,17 +694,67 @@ Shared byte-identical by both apps.
   from the legacy keyword engine, not the evidence engine"* — that caveat had degenerated into a bare
   amber triangle with a `title` tooltip, invisible on touch and to a screen reader, which is precisely the
   failure The Honest Reading Rule exists to prevent. The card gives the caveat a sentence.
+- **`RecordRow`** / **`RecordList`** — the same fixed slots as `RecordCard`, laid out as one line, inside a
+  real `<ul>`. Same information, same order; a density choice, not a second set of rules. `note` is the
+  row's answer to the card's footer strip and takes its own full-width line, because a caveat that only
+  fits when the viewport is wide is a caveat that silently disappears. The `meta` columns are the first
+  thing dropped below `lg` — if a column carries a caveat, the row must restate it in `note`.
+
+### Components — admin only
+
+Not part of the shared kit; these read from `lib/pipeline.js` and exist only in `admin/`.
+
+- **`Menu`** (`components/ui/Menu.jsx`) — the action menu: a trigger plus a `role="menu"` popover with
+  roving focus, arrow/Home/End navigation, Escape-to-close with focus restore, outside-click and
+  scroll dismissal. Rendered through a portal with fixed positioning off the trigger's rect, for a reason
+  worth keeping: the Hiring Pipeline board is an `overflow-x-auto` rail, and `overflow-x: auto` computes
+  `overflow-y` to `auto` as well, so an absolutely-positioned panel would be clipped by the kanban column
+  it opened from. Two details are load-bearing — the pre-measure commit hides the panel with `opacity-0`
+  and **not** `invisible`, because a `visibility: hidden` subtree is not focusable and the menu opened
+  with the keyboard stranded on the trigger; and `footer` renders *outside* the scroll area, so a long
+  menu cannot bury its destructive last item.
+- **`StageMenu`** (`components/ui/StageMenu.jsx`) — the candidate stage control, used by the candidate
+  lists and the pipeline board. Split button: the next stage in pipeline order is a one-click primary
+  action, everything else is in the menu. See The Consequence-Before-Click Rule.
 
 ### Named Rules
 
-**The Record-Card Rule.** *Added 2026-08-03.* App list screens present records as `RecordCard`s, not
-tables. `DataTable.jsx`'s table primitives are retained but unused; reaching for them to build a list
-screen is a regression. The trade is deliberate and it is not free — a card grid gives up some
-column-aligned scanning, which is why the slots are fixed: if every card puts the score in the same
-top-right corner and the state in the same bottom-right corner, the eye still gets its columns.
+**The Consequence-Before-Click Rule.** *Added 2026-08-05.* A control that fires an irreversible or
+candidate-visible action states what it will do **before** it is used, not after. Concretely, in
+`StageMenu`: destinations carry their pipeline ordinal so a menu of twelve reads as an ordered pipeline;
+an envelope marks every move that puts mail in the candidate's inbox, with a legend naming the glyph;
+the terminal stages (`joined`, `rejected` — `canTransition` refuses to leave either) are separated by a
+rule, pinned out of the scroll area, and confirmed in a dialog that says the move cannot be undone.
 
-The exception is a genuine 2-D matrix, where one axis is not "records". The Evidence Ledger is the live
-example: criterion × interview round. It became one card per criterion with the round cells side by side
+Every incumbent ATS ships this as a bare `<select>` of legal statuses, which makes rejecting a candidate
+exactly as cheap a gesture as promoting one, one line apart, with the side effects discovered afterwards
+from the sent folder. The rule is CLAUDE.md's *"every automated adverse action needs a human"* expressed
+at the click: a human owning a decision means a human who could see what the decision does.
+
+**The Menu-Not-Select Rule.** *Added 2026-08-05.* A `<select>` chooses a **value inside a form**. A list
+of **commands** is a `Menu`. A select announces as a combobox, cannot group, annotate, or mark an option
+as destructive, and renders as an undifferentiated column of strings — so an inline action select is both
+a semantic mismatch and, at twelve options, an unusable one. The remaining stage `<select>` on the
+candidate profile page is correct and stays: it sits in a form beside a note field and an offer message,
+and it is choosing a value that a separate submit button then acts on.
+
+**The Record-Card Rule.** *Added 2026-08-03. Amended 2026-08-05.* App list screens present records as
+`RecordCard`s or `RecordRow`s, not tables. `DataTable.jsx`'s table primitives are retained but unused;
+reaching for them to build a list screen is a regression. The trade is deliberate and it is not free — a
+card grid gives up some column-aligned scanning, which is why the slots are fixed: if every card puts the
+score in the same top-right corner and the state in the same bottom-right corner, the eye still gets its
+columns.
+
+The amendment: **a queue being scanned uses rows, not a card grid.** Fixed slots recover the columns
+*within* a card, but three-up cards still put the third record's score in a different screen position
+than the first's, and across forty candidates the eye loses the column entirely. The candidate lists
+(`CandidateList`, `CandidatesAll`) are rows. Screens where a record is a subject in its own right, or
+where the grid is genuinely 2-D, keep the card.
+
+The exception is a genuine 2-D matrix, where one axis is not "records" — and `DataTable.jsx` exists for
+exactly that case, having been kept unused until one arrived. The live example is the interview report's
+**role map**: criterion × evidence source, rendered as a real `<table>` with a `<th>` per source. The
+Evidence Ledger card is the other: It became one card per criterion with the round cells side by side
 *inside* it, because the comparison that matters there runs along the row, and a card per cell would have
 destroyed it.
 

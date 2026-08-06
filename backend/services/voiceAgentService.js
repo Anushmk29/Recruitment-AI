@@ -1,72 +1,42 @@
-// Realtime speech-to-speech interviewing (Deepgram Voice Agent).
+// The realtime interview ENGINE CORE — prompt, function contract, dispatch, and audit.
 //
-// WHY THIS EXISTS. The turn-based client hand-rolls conversation: silence timers, reassurance
-// budgets, echo alignment, barge-in bookkeeping, and trigger-phrase lists for "repeat that" /
-// "I don't know" / "I want to stop". That is ~1900 lines of independent clocks racing each other,
-// and it produces exactly the class of bug it sounds like — a candidate asked for a repeat and
-// heard the question AND "take your time — I'm here" simultaneously, because two code paths each
-// checked a different busy flag. Intent is a fixed phrase list, so anything phrased unusually
-// falls through and is transcribed as part of the answer.
+// This used to be the Deepgram Voice Agent pipeline's service. That transport was retired once
+// the LiveKit pipeline (services/livekitService.js + agent-worker/) proved out the same
+// continuous-conversation experience with better custody (join-token only in the browser, keys
+// server-side) at a lower per-minute cost. What survives here is everything transport-neutral,
+// because the LiveKit worker runs its interview THROUGH this file:
 //
-// A realtime agent collapses listen+think+speak into ONE stream with ONE owner of turn-taking.
-// Two voices at once stops being a bug to fix and becomes structurally impossible, and "could you
-// say that again?" works because a conversational model understands it, not because someone
-// remembered to add that phrasing to an array.
+//   sessionBrief    — the prompt, function schemas, ASR vocabulary and approved voice the worker
+//                     fetches via GET /interview-portal/livekit/brief.
+//   dispatch        — the worker's whole power surface (get_next_question / submit_answer /
+//                     end_interview), reached via POST /interview-portal/realtime/function.
+//   verifyQuestions — the audit replacement for exact-match speech authorization.
 //
-// WHAT DOES NOT CHANGE — and this is the whole point of the design:
+// WHY THE DESIGN LOOKS LIKE THIS. The agent is the MOUTH AND EARS. It is not the interviewer and
+// it is not the examiner. Every question comes from the rubric-bound engine
+// (services/aiInterviewService) through a function call, and is asked verbatim. Every answer goes
+// back through the same engine, so claim-probe coverage, recruiter-approved must-ask questions,
+// decline handling and the deterministic scoring in runFinalization are all untouched. The model
+// never scores anything. That is the line between this and the competing products: they hand a
+// speech model the job description and let it both improvise the test and grade it. Here it
+// improvises only the connective tissue between questions that were authored, versioned and
+// approved elsewhere.
 //
-//   The agent is the MOUTH AND EARS. It is not the interviewer and it is not the examiner.
-//   Every question still comes from the rubric-bound engine (services/aiInterviewService) through
-//   a function call, and is asked verbatim. Every answer goes back through the same engine, so
-//   claim-probe coverage, recruiter-approved must-ask questions, decline handling and the
-//   deterministic scoring in runFinalization are all untouched. The model never scores anything.
-//
-//   That is the line between this and the competing products: they hand a speech model the job
-//   description and let it both improvise the test and grade it. Here it improvises only the
-//   connective tissue between questions that were authored, versioned and approved elsewhere.
-//
-// THE TRADE-OFF, STATED PLAINLY. utils/speechAuthorization.js can currently prove that every word
-// the interviewer spoke was either an authored turn or an approved phrase, by exact match. An
-// agent that converses freely breaks exact match. What replaces it: the questions are provably
+// THE TRADE-OFF, STATED PLAINLY. utils/speechAuthorization.js can prove that every word a
+// turn-based interviewer spoke was either an authored turn or an approved phrase, by exact match.
+// An agent that converses freely breaks exact match. What replaces it: the questions are provably
 // verbatim (verifyQuestionsAsked below, checked against the agent's own transcript) and every
-// other utterance is logged. That is a weaker guarantee than today's and a far stronger one than
-// any competitor's. It was accepted deliberately, not overlooked.
+// other utterance is logged and guardrail-scanned. That is a weaker guarantee than turn-based and
+// a far stronger one than any competitor's. It was accepted deliberately, not overlooked.
 
-const https = require("https");
-const CompanySettings = require("../models/CompanySettings");
-const { resolveRole } = require("../config/models");
 const aiInterview = require("./aiInterviewService");
 const speech = require("./speechService");
-const llm = require("./llmService");
 const asrVocabulary = require("./asrVocabularyService");
+const metaAnswers = require("../utils/metaAnswers");
 
 // Bump when the agent's instructions change, so a stored session records which behaviour it ran
 // under — same contract as utils/interviewPrompts.PROMPT_VERSION.
-const AGENT_PROMPT_VERSION = "2026-08-04.1";
-
-const AGENT_HOST = "agent.deepgram.com";
-const AGENT_PATH = "/v1/agent/converse";
-
-// Off unless explicitly enabled. The turn-based pipeline stays the default and the fallback: a
-// realtime session that cannot connect must drop back to it rather than cost a candidate their
-// interview, which is the same posture as every other capability gate in this codebase.
-function isEnabled(settings) {
-  if (!speech.isEnabled()) return false;
-  // Realtime has NO deterministic fallback — the agent's reasoning is the interview. Without an
-  // LLM key the session would connect, greet the candidate, and then go permanently silent the
-  // first time it tried to think. Turn-based degrades gracefully here (utils/atsEngine-style
-  // deterministic questions); realtime cannot, so it must refuse up front and let the client fall
-  // back to the pipeline that can.
-  if (!llm.isEnabled()) return false;
-  const tenant = settings?.ai?.voiceMode;
-  if (tenant === "realtime") return true;
-  if (tenant === "turn_based") return false;
-  return String(process.env.VOICE_MODE || "").toLowerCase() === "realtime";
-}
-
-function agentUrl() {
-  return `wss://${AGENT_HOST}${AGENT_PATH}`;
-}
+const AGENT_PROMPT_VERSION = "2026-08-06.3";
 
 // ---------------------------------------------------------------------------
 // The instructions
@@ -109,6 +79,57 @@ function agentPrompt({ interviewerName, candidateFirstName, roleTitle, estimated
     `and move on — do not press, do not ask again in a different way, do not offer hints. Call`,
     `submit_answer with declined set to true and their actual words as the answer. Never invent`,
     `an answer they did not give.`,
+    ``,
+    `TELLING THEM THEY CAN MOVE ON — say it, never offer it, and only when the conditions below`,
+    `are met. The difference is not politeness, it is fairness. Asking "would you like to skip`,
+    `this one?" means deciding WHO gets asked, and you would decide that by reading their`,
+    `hesitation — the judgement you are explicitly not permitted to make, arriving by another`,
+    `route. Stating the same fact to every candidate at the same point decides nothing.`,
+    ``,
+    `SAY IT ONCE AT THE START, to everyone, before the first question: "If there's one you'd`,
+    `rather not answer, just tell me and we'll move on — it's better than guessing."`,
+    ``,
+    `AFTER THAT, say it again for a question ONLY when ALL of these are true:`,
+    `  1. You have asked the question, and then asked it once more in the same words.`,
+    `  2. The candidate has still not attempted an answer to it.`,
+    `  3. You have not already said it for this question. Once per question, maximum.`,
+    `Then say, in these words: "We can move on from this one if you'd like — just say so."`,
+    `Say nothing else about it, and do not ask them anything.`,
+    ``,
+    `NEVER trigger it any other way. Not because they paused, not because they sounded unsure, not`,
+    `because their answer seemed thin, not because they said "hmm" or "that's a hard one". A short`,
+    `or hesitant attempt IS an answer — take it and move on. Silence before speaking is thinking.`,
+    ``,
+    `WHAT COUNTS AS MOVING ON. If they then say anything that accepts it — "yes", "let's move on",`,
+    `"skip it", "I don't know this one" — call submit_answer with declined set to true and their`,
+    `own words as the answer. It is recorded as not answered: not a wrong answer, not a zero, and`,
+    `never held against them. If instead they attempt the question, that is an answer like any`,
+    `other. If they say nothing at all, call submit_answer with declined set to true and an empty`,
+    `answer, and continue — do not ask a third time, and do not comment on the silence.`,
+    ``,
+    `Never ask the candidate which question they would like to answer, and never offer them a choice`,
+    `between questions. The running order is the same for every candidate for this role — it is not`,
+    `theirs to set and not yours to negotiate. If they ask to come back to something, tell them`,
+    `warmly that you need to keep to the order, then re-ask the current question.`,
+    ``,
+    `IF THEY ARE NOT SURE YOU HEARD THEM. If the candidate asks whether you heard them, asks you to`,
+    `confirm, or says anything suggesting they think the connection has failed: give ONE short`,
+    `reassurance AND re-ask the current question verbatim, in the same turn. Do not ask a question`,
+    `back, do not offer options, and do not discuss what went wrong. Their uncertainty is about the`,
+    `line, not about the interview, and the way to settle it is to carry on.`,
+    ``,
+    `IF THEY ASK WHY YOU ARE ASKING SOMETHING. "Why are you asking me this?", "what's this got to do`,
+    `with the job?" — a fair question, asked most often by the people who are most uneasy, and it`,
+    `deserves a warm, ordinary answer rather than a careful one. Say this, and essentially only this:`,
+    `"${metaAnswers.WHY_THIS_QUESTION}"`,
+    `Then let them answer. Say it the way you would say anything else — it is not a disclaimer.`,
+    ``,
+    `Do NOT justify the question, explain why the role needs it, describe what it is measuring, or`,
+    `say what you are looking for in an answer. You are telling them where the question came from,`,
+    `not making a case for it — and the moment you start making a case, you are telling them what a`,
+    `good answer looks like, which is help only the candidates who thought to ask would get. Do not`,
+    `apologise for the question either; there is nothing to apologise for. If they press for more,`,
+    `say warmly that the hiring team can go into more detail than you can, and carry on.`,
     ``,
     `IF THEY WANT TO STOP. If the candidate says they want to end the interview, ask once to`,
     `confirm ("just to confirm — would you like to end the interview here?"). If they confirm,`,
@@ -174,12 +195,12 @@ function agentPrompt({ interviewerName, candidateFirstName, roleTitle, estimated
 // The functions the agent may call
 // ---------------------------------------------------------------------------
 //
-// Client-side execution (no `endpoint` field), deliberately. Deepgram would happily call one of
-// our HTTPS endpoints directly, but routing the calls back through the browser means they arrive
-// on the portal's existing session JWT and pass requireCandidateAuth like every other portal
-// request — no second auth scheme, no public callback surface, and it works in local development
-// without a tunnel. The browser is an untrusted relay either way: dispatch() below re-derives
-// everything from the session, so a tampered function call cannot invent an answer or a question.
+// No `endpoint` field, deliberately: the schemas describe the contract, they never hand a speech
+// provider a public callback into our API. The LiveKit worker relays each call to
+// POST /interview-portal/realtime/function on the candidate's own portal JWT, so it passes
+// requireCandidateAuth like every other portal request — no second auth scheme, no public
+// callback surface. The relay is untrusted either way: dispatch() below re-derives everything
+// from the session, so a tampered function call cannot invent an answer or a question.
 
 function functionSchemas() {
   return [
@@ -240,67 +261,15 @@ function functionSchemas() {
 }
 
 // ---------------------------------------------------------------------------
-// The Settings message
+// The session brief
 // ---------------------------------------------------------------------------
 
-// Where the agent's reasoning runs — and the biggest latency lever in the whole pipeline.
-//
-// By default it goes through OpenRouter, which is the right default: the agent then runs on the
-// SAME model registry and the SAME per-tenant override as every other LLM call in the system
-// (config/models.js), so changing the interview model in CompanySettings still changes the
-// interviewer. The cost is a hop — Deepgram → OpenRouter → the model — on every single turn, and
-// on a live call that hop is audible.
-//
-// Set VOICE_AGENT_THINK_PROVIDER to a provider Deepgram hosts natively (open_ai, anthropic,
-// google, groq) with VOICE_AGENT_THINK_MODEL and VOICE_AGENT_THINK_KEY to remove it. The trade is
-// explicit and worth stating: you buy latency and you give up the single model registry, so the
-// tenant's CompanySettings model override no longer applies to the live interviewer.
-function openRouterThink({ resolved, temperature }) {
-  return {
-    provider: { type: "open_ai", model: resolved.model, temperature },
-    endpoint: {
-      url: `${(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "")}/chat/completions`,
-      headers: { authorization: `Bearer ${process.env.OPENROUTER_API_KEY || ""}` },
-    },
-  };
-}
-
-function thinkProvider({ resolved, settings }) {
-  const temperature = settings?.ai?.temperature ?? 0.3;
-  const direct = String(process.env.VOICE_AGENT_THINK_PROVIDER || "").trim();
-  if (!direct) return openRouterThink({ resolved, temperature });
-
-  // A native provider needs ITS OWN key — an OpenRouter key will not authenticate against Groq or
-  // Anthropic. Rather than mint a session that connects fine and then goes silent the moment the
-  // agent first tries to think (the candidate sits in front of a mute interviewer, and the failure
-  // surfaces as "the AI stopped talking"), fall back to the OpenRouter route, which is configured
-  // and works. Latency is the only thing lost, and a slower interview beats a dead one.
-  const key = process.env.VOICE_AGENT_THINK_KEY;
-  if (!key) {
-    console.warn(
-      `[voiceAgent] VOICE_AGENT_THINK_PROVIDER="${direct}" is set but VOICE_AGENT_THINK_KEY is not — ` +
-        `falling back to OpenRouter. Set the provider's own key to get the lower-latency path.`
-    );
-    return openRouterThink({ resolved, temperature });
-  }
-
-  return {
-    provider: {
-      type: direct,
-      model: process.env.VOICE_AGENT_THINK_MODEL || resolved.model,
-      temperature,
-      credentials: { apiKey: key },
-    },
-  };
-}
-
-// Built server-side and handed to the browser with the credential, so the browser relays a
-// configuration it cannot author. The model, the voice, the prompt and the function list are all
-// decided here — a client that edited them would be running a different interview, and the
-// question of "which instrument did this candidate sit?" has to have one answer.
-async function buildSession(session, { candidate, job, persona }) {
-  const settings = await CompanySettings.findOne({ company: session.company }).select("ai compliance");
-  const resolved = resolveRole("interview", settings);
+// The provider-neutral definition of a realtime session: the prompt, the function contract, the
+// transcript vocabulary and the approved voice — everything the interviewer's MOUTH needs and
+// nothing transport-specific. The LiveKit worker fetches exactly this via
+// GET /interview-portal/livekit/brief and renders it verbatim. One source of truth, so a future
+// second transport could never drift into asking a different interview.
+async function sessionBrief(session, { candidate, job, persona }) {
   const ai = session.aiInterview || {};
   const maxQuestions = ai.maxQuestions || 8;
 
@@ -314,55 +283,21 @@ async function buildSession(session, { candidate, job, persona }) {
   } catch (err) {
     console.error("[voiceAgent] keyterm derivation failed, continuing unbiased:", err.message);
   }
-  const cred = await speech.grantStreamingToken({ keyterms });
   const firstName = String(candidate?.basicDetails?.name || "").trim().split(/\s+/)[0] || "";
 
-  const prompt = agentPrompt({
-    interviewerName: persona?.name || "your interviewer",
-    candidateFirstName: firstName,
-    roleTitle: job?.title || "",
-    estimatedMinutes: aiInterview.estimatedMinutes(maxQuestions),
-  });
-
   return {
-    provider: "deepgram",
-    url: agentUrl(),
-    accessToken: cred.accessToken,
-    expiresIn: cred.expiresIn,
     promptVersion: AGENT_PROMPT_VERSION,
-    settings: {
-      type: "Settings",
-      audio: {
-        input: { encoding: "linear16", sample_rate: 24000 },
-        output: { encoding: "linear16", sample_rate: 24000, container: "none" },
-      },
-      agent: {
-        language: process.env.DEEPGRAM_STT_LANGUAGE || "en",
-        listen: {
-          provider: {
-            type: "deepgram",
-            // Flux is the conversational STT: it predicts END OF TURN rather than reporting
-            // silence, which is the single thing the hand-rolled client could never get right.
-            // utils/endpointing.js exists entirely to guess this from transcript shape and energy.
-            model: process.env.DEEPGRAM_AGENT_STT_MODEL || "flux-general-en",
-            keyterms,
-          },
-        },
-        think: {
-          ...thinkProvider({ resolved, settings }),
-          prompt,
-          functions: functionSchemas(),
-        },
-        speak: {
-          provider: {
-            type: "deepgram",
-            // The persona's approved voice, exactly as the turn-based path uses it — the
-            // interviewer a candidate hears is part of the interview's recorded conditions.
-            model: persona?.voice?.model || speech.models().ttsModel,
-          },
-        },
-      },
-    },
+    prompt: agentPrompt({
+      interviewerName: persona?.name || "your interviewer",
+      candidateFirstName: firstName,
+      roleTitle: job?.title || "",
+      estimatedMinutes: aiInterview.estimatedMinutes(maxQuestions),
+    }),
+    functions: functionSchemas(),
+    keyterms,
+    // The persona's approved voice, exactly as the turn-based path uses it — the interviewer a
+    // candidate hears is part of the interview's recorded conditions.
+    voice: persona?.voice?.model || speech.models().ttsModel,
   };
 }
 
@@ -375,10 +310,11 @@ async function buildSession(session, { candidate, job, persona }) {
 // coverage, recruiter-approved must-ask ordering, decline semantics and the closing conditions are
 // hard-won rules with tests behind them, and a realtime transport is not a reason to have a second
 // copy of them that drifts.
-// `evidence` is measured by the BROWSER during the turn and travels alongside the agent's function
-// call — the verbatim speech-to-text of what the candidate actually said, plus the audio
-// measurements only the microphone owner can take. It is not part of the agent's arguments and the
-// agent never sees it; see submitAnswer for why that separation is the whole point.
+// `evidence` is measured by the TRANSPORT (the LiveKit worker, from its own live transcript)
+// during the turn and travels alongside the agent's function call — the verbatim speech-to-text of
+// what the candidate actually said, plus the audio measurements only the audio owner can take. It
+// is not part of the agent's arguments and the model never sees it; see submitAnswer for why that
+// separation is the whole point.
 async function dispatch(session, name, args = {}, evidence = {}) {
   switch (name) {
     case "get_next_question":
@@ -461,9 +397,20 @@ async function submitAnswer(session, args, evidence = {}) {
   const text = verbatim || rendered;
 
   if (!text) {
-    return {
-      error: "No answer text was provided. Ask the candidate to answer before calling submit_answer again.",
-    };
+    // Nothing was heard at all. Two completely different facts share this signature — a candidate
+    // who chose to stay silent, and a candidate whose microphone died — and NOTHING available to
+    // us distinguishes them. So it is recorded as an absence rather than resolved into either.
+    //
+    // It is only recordable when the agent says the candidate declined. An empty answer with
+    // `declined: false` is the agent calling the function too early; it gets told to wait, which
+    // is the pre-existing behaviour and the right one.
+    if (!args?.declined) {
+      return {
+        error: "No answer text was provided. Ask the candidate to answer before calling submit_answer again.",
+      };
+    }
+    const state = await aiInterview.submitDialogueAct(session, "no_response", opts);
+    return questionPayload(state);
   }
 
   const opts = {
@@ -583,25 +530,11 @@ function verifyQuestionsAsked(askedQuestions, agentUtterances) {
   }));
 }
 
-// Estimated cost of a realtime session, for attribution and the tenant budget cap — not for
-// invoicing; the provider's bill wins. Voice Agent is priced per session-MINUTE and bundles STT +
-// LLM + TTS, so it cannot be compared against the per-token metering used everywhere else. That is
-// exactly why it needs its own `kind` on UsageEvent: conflating a per-minute cost curve with a
-// per-question one would make the unit economics of an interview unreadable.
-function sessionCostCents(durationMs) {
-  const perMin = Number(process.env.DEEPGRAM_AGENT_CENTS_PER_MIN || 5);
-  return Math.round((Math.max(0, durationMs) / 60000) * perMin * 100) / 100;
-}
-
 module.exports = {
   AGENT_PROMPT_VERSION,
-  sessionCostCents,
-  thinkProvider,
-  isEnabled,
-  agentUrl,
   agentPrompt,
   functionSchemas,
-  buildSession,
+  sessionBrief,
   dispatch,
   verifyQuestionsAsked,
   spokenContains,

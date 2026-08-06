@@ -167,7 +167,9 @@ test("4.1: coverageStats separates answered from declined", () => {
       { role: "candidate", kind: "answer", text: "No idea", declined: true }
     ),
   };
-  assert.deepEqual(aiInterview.coverageStats(ai), { asked: 4, answered: 2, declined: 2 });
+  // `noResponse` is the subset of declines where nothing was captured at all rather than the
+  // candidate saying something — zero here, because both of these declines were spoken.
+  assert.deepEqual(aiInterview.coverageStats(ai), { asked: 4, answered: 2, declined: 2, noResponse: 0 });
 });
 
 test("4.2: a declined turn carries no answerScore, so it never enters the mean", () => {

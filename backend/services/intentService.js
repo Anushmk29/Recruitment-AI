@@ -81,9 +81,17 @@ Decide what the candidate wants, choosing exactly one action:
 
 - meta_question — they are asking about the interview process rather than answering: how many
   questions are left, how long it takes, whether they can type instead, whether it is recorded,
-  whether they can come back to a question, who sees it. If they ask how they are DOING, or
-  anything about their own performance or chances, that is NOT a meta_question — return
-  answer_continues, because the interviewer must not discuss that.
+  whether they can come back to a question, who sees it, or why they are being asked a particular
+  question ("why are you asking me this?", "what's this got to do with the job?"). If they ask how
+  they are DOING, or anything about their own performance or chances, that is NOT a meta_question —
+  return answer_continues, because the interviewer must not discuss that.
+
+  "Why are you asking this?" and "what are you looking for here?" sound alike and are different
+  requests. The first asks where the question came from — meta_question, metaTopic
+  why_this_question. The second asks what a good answer contains, and that is clarify: the
+  interviewer rewords the question and says nothing about what it wants to hear. When it could be
+  either, choose clarify, which gives them the question again and tells them nothing they should
+  not be told.
 
 - technical_problem — something is broken. They cannot hear us, their microphone is failing, the
   audio is cutting out.

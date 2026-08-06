@@ -1,9 +1,12 @@
-// Realtime (speech-to-speech) interviewing — services/voiceAgentService.js.
+// The realtime interview engine core — services/voiceAgentService.js.
 //
 // The whole design rests on one claim: the agent is the mouth and ears, never the examiner. These
 // tests are about the ways that claim could quietly stop being true — the agent authoring its own
 // questions, scoring an answer, ending an interview it was not told to end, or being handed the
 // freedom to say things no interviewer is allowed to say.
+//
+// (The Deepgram Voice Agent transport this service originally powered was retired; the LiveKit
+// pipeline consumes everything here instead, and its gate/metering live in livekitPipeline.test.js.)
 //
 // Pure and offline: no DB, no socket, no provider.
 
@@ -18,46 +21,9 @@ const InterviewSession = require("../../models/InterviewSession");
 // 1. The gate
 // ---------------------------------------------------------------------------
 
-test("1.1: realtime is OFF unless explicitly turned on", () => {
-  const prevMode = process.env.VOICE_MODE;
-  const prevKey = process.env.DEEPGRAM_API_KEY;
-  const prevOr = process.env.OPENROUTER_API_KEY;
-  process.env.DEEPGRAM_API_KEY = "test-key";
-  // Both keys are preconditions now: realtime needs a speech provider AND a reasoning provider,
-  // because the agent's thinking IS the interview and there is nothing to degrade to (see 4b.7c).
-  process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "sk-or-test";
-  try {
-    delete process.env.VOICE_MODE;
-    assert.equal(voiceAgent.isEnabled(null), false, "no config ⇒ the turn-based pipeline, which is what runs today");
-    process.env.VOICE_MODE = "realtime";
-    assert.equal(voiceAgent.isEnabled(null), true);
-    // A tenant's own setting outranks the deployment default in BOTH directions.
-    assert.equal(voiceAgent.isEnabled({ ai: { voiceMode: "turn_based" } }), false, "a tenant must be able to opt out");
-    delete process.env.VOICE_MODE;
-    assert.equal(voiceAgent.isEnabled({ ai: { voiceMode: "realtime" } }), true, "and opt in");
-  } finally {
-    if (prevMode === undefined) delete process.env.VOICE_MODE; else process.env.VOICE_MODE = prevMode;
-    if (prevKey === undefined) delete process.env.DEEPGRAM_API_KEY; else process.env.DEEPGRAM_API_KEY = prevKey;
-    if (prevOr === undefined) delete process.env.OPENROUTER_API_KEY; else process.env.OPENROUTER_API_KEY = prevOr;
-  }
-});
-
-test("1.2: no speech provider key ⇒ realtime cannot be switched on at all", () => {
-  const prevMode = process.env.VOICE_MODE;
-  const prevKey = process.env.DEEPGRAM_API_KEY;
-  try {
-    process.env.VOICE_MODE = "realtime";
-    delete process.env.DEEPGRAM_API_KEY;
-    assert.equal(voiceAgent.isEnabled({ ai: { voiceMode: "realtime" } }), false);
-  } finally {
-    if (prevMode === undefined) delete process.env.VOICE_MODE; else process.env.VOICE_MODE = prevMode;
-    if (prevKey === undefined) delete process.env.DEEPGRAM_API_KEY; else process.env.DEEPGRAM_API_KEY = prevKey;
-  }
-});
-
-test("1.3: the per-tenant gate is storable", () => {
+test("1.3: the per-tenant gate is storable, and the retired mode is no longer offered", () => {
   const modes = CompanySettings.schema.path("ai.voiceMode").enumValues;
-  assert.deepEqual([...modes].sort(), ["realtime", "turn_based"]);
+  assert.deepEqual([...modes].sort(), ["livekit", "turn_based"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -241,85 +207,11 @@ test("4b.5: the schema can record the agent's rendering separately from the evid
 });
 
 test("4b.6: realtime session minutes are metered on their own cost curve", () => {
+  // Per-minute spend cannot be folded into per-token metering — the UsageEvent kind is what keeps
+  // the unit economics of a realtime interview readable. (The rate itself is livekitService's
+  // costCents, covered in livekitPipeline.test.js 4.3.)
   const kinds = require("../../models/UsageEvent").schema.path("kind").enumValues;
-  assert.ok(kinds.includes("realtime"), "per-minute spend cannot be folded into per-token metering");
-  // 5 cents/min default ⇒ a 20-minute interview is ~100 cents.
-  assert.equal(voiceAgent.sessionCostCents(20 * 60 * 1000), 100);
-  assert.equal(voiceAgent.sessionCostCents(0), 0);
-});
-
-test("4b.7: the agent thinks on the OpenRouter key by default — no second key to configure", () => {
-  const prevP = process.env.VOICE_AGENT_THINK_PROVIDER;
-  const prevK = process.env.OPENROUTER_API_KEY;
-  try {
-    delete process.env.VOICE_AGENT_THINK_PROVIDER;
-    process.env.OPENROUTER_API_KEY = "sk-or-test";
-    const t = voiceAgent.thinkProvider({ resolved: { model: "openai/gpt-4o-mini" }, settings: null });
-    assert.match(t.endpoint.url, /openrouter/, "same registry as every other LLM call");
-    assert.equal(t.endpoint.headers.authorization, "Bearer sk-or-test", "and the same key");
-    assert.equal(t.provider.model, "openai/gpt-4o-mini", "so a CompanySettings model override still applies");
-  } finally {
-    if (prevP === undefined) delete process.env.VOICE_AGENT_THINK_PROVIDER;
-    else process.env.VOICE_AGENT_THINK_PROVIDER = prevP;
-    if (prevK === undefined) delete process.env.OPENROUTER_API_KEY;
-    else process.env.OPENROUTER_API_KEY = prevK;
-  }
-});
-
-test("4b.7b: a native provider removes the hop, but only when it has its own key", () => {
-  const prevP = process.env.VOICE_AGENT_THINK_PROVIDER;
-  const prevK = process.env.VOICE_AGENT_THINK_KEY;
-  try {
-    process.env.VOICE_AGENT_THINK_PROVIDER = "groq";
-    process.env.VOICE_AGENT_THINK_KEY = "gsk-test";
-    const direct = voiceAgent.thinkProvider({ resolved: { model: "openai/gpt-4o-mini" }, settings: null });
-    assert.equal(direct.provider.type, "groq");
-    assert.equal(direct.provider.credentials.apiKey, "gsk-test");
-    assert.equal(direct.endpoint, undefined, "native provider ⇒ no extra hop");
-
-    // THE SILENT-FAILURE GUARD. An OpenRouter key does not authenticate against Groq, so a
-    // provider set without its own key would mint a session that connects, greets the candidate,
-    // and goes permanently mute the first time it tries to think. Fall back instead: a slower
-    // interview beats a dead one.
-    delete process.env.VOICE_AGENT_THINK_KEY;
-    const fallback = voiceAgent.thinkProvider({ resolved: { model: "openai/gpt-4o-mini" }, settings: null });
-    assert.match(fallback.endpoint.url, /openrouter/, "falls back rather than failing mid-interview");
-  } finally {
-    if (prevP === undefined) delete process.env.VOICE_AGENT_THINK_PROVIDER;
-    else process.env.VOICE_AGENT_THINK_PROVIDER = prevP;
-    if (prevK === undefined) delete process.env.VOICE_AGENT_THINK_KEY;
-    else process.env.VOICE_AGENT_THINK_KEY = prevK;
-  }
-});
-
-test("4b.7c: realtime refuses to start with no LLM key — it has no fallback to degrade to", () => {
-  const prevMode = process.env.VOICE_MODE;
-  const prevDg = process.env.DEEPGRAM_API_KEY;
-  const prevOr = process.env.OPENROUTER_API_KEY;
-  const prevReplay = process.env.LLM_REPLAY;
-  try {
-    process.env.VOICE_MODE = "realtime";
-    process.env.DEEPGRAM_API_KEY = "dg-test";
-    delete process.env.LLM_REPLAY;
-    process.env.OPENROUTER_API_KEY = "sk-or-test";
-    assert.equal(voiceAgent.isEnabled(null), true);
-    delete process.env.OPENROUTER_API_KEY;
-    assert.equal(
-      voiceAgent.isEnabled(null),
-      false,
-      "turn-based degrades to deterministic questions here; realtime would just go silent"
-    );
-  } finally {
-    for (const [k, v] of [
-      ["VOICE_MODE", prevMode],
-      ["DEEPGRAM_API_KEY", prevDg],
-      ["OPENROUTER_API_KEY", prevOr],
-      ["LLM_REPLAY", prevReplay],
-    ]) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-  }
+  assert.ok(kinds.includes("realtime"));
 });
 
 test("4b.8: the agent is told to respond to words, never to how the candidate sounds", () => {

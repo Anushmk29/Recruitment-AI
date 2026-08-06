@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Users, Search } from "lucide-react";
+import { Users, Search, AlertTriangle } from "lucide-react";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { Card, Badge, Avatar, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
-import { RecordCard, RecordGrid } from "../../components/ui/Panels.jsx";
+import { RecordRow, RecordList } from "../../components/ui/Panels.jsx";
 import { Input, Select } from "../../components/ui/Field.jsx";
 import { ALL_STAGES, stageLabel, stageTone, normalizeStage } from "../../lib/pipeline.js";
 
@@ -46,13 +46,13 @@ export default function CandidatesAll() {
       </div>
 
       {loading ? (
-        <RecordGrid>
+        <Card padding="none" className="divide-y divide-slate-100 overflow-hidden">
           {Array.from({ length: 6 }).map((_, i) => (
-            <Card key={i} padding="compact">
-              <Skeleton className="h-20 w-full" />
-            </Card>
+            <div key={i} className="px-4 py-3">
+              <Skeleton className="h-9 w-full" />
+            </div>
           ))}
-        </RecordGrid>
+        </Card>
       ) : filtered.length === 0 ? (
         <EmptyState icon={Users} title="No candidates found" description="Applicants will appear here once they apply to your jobs." />
       ) : (
@@ -60,42 +60,55 @@ export default function CandidatesAll() {
           <p className="text-xs text-slate-500">
             {filtered.length} of {allCandidates.length} candidate{allCandidates.length === 1 ? "" : "s"}
           </p>
-          <RecordGrid>
+          <RecordList label="All candidates">
             {filtered.map((c) => (
-              <RecordCard
+              <RecordRow
                 key={c._id}
-                avatar={<Avatar name={c.basicDetails?.name} />}
+                avatar={<Avatar name={c.basicDetails?.name} size="sm" />}
                 title={c.basicDetails?.name || "Unnamed applicant"}
                 subtitle={c.job?.title || "No job on record"}
                 link={{ as: Link, to: `/candidates/${c._id}` }}
+                meta={[
+                  { label: "Applied", value: new Date(c.createdAt).toLocaleDateString() },
+                  // What produced the number, as its own column. `engine !==
+                  // "evidence"` means this job has no approved rubric and the
+                  // legacy keyword matcher carried the decision.
+                  {
+                    label: "Scored by",
+                    value: c.ats?.overallScore == null ? null : c.ats.engine === "evidence" ? "Evidence engine" : "Keyword match",
+                  },
+                ]}
                 trailing={
-                  // The score is the headline figure, so it sits where the eye
-                  // lands first — but it stays a <Badge>, never a card fill.
-                  // The Reserved Verdict Rule holds: green here means the
-                  // engine's own pass decision, not "good candidate".
-                  c.ats?.overallScore != null ? (
-                    <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
-                      {c.ats.overallScore}%
-                    </Badge>
-                  ) : (
-                    <Badge tone="slate">Not scored</Badge>
-                  )
+                  <>
+                    {/* The score is the headline figure, so it sits where the
+                        eye lands first — but it stays a <Badge>, never a fill.
+                        The Reserved Verdict Rule holds: green here means the
+                        engine's own pass decision, not "good candidate". */}
+                    {c.ats?.overallScore != null ? (
+                      <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
+                        {c.ats.overallScore}%
+                      </Badge>
+                    ) : (
+                      <Badge tone="slate">Not scored</Badge>
+                    )}
+                    <Badge tone={stageTone(c.status)}>{stageLabel(c.status)}</Badge>
+                  </>
                 }
-                footer={
-                  // The footer states what produced the number, which the old
-                  // table had no column for. `engine !== "evidence"` means this
-                  // job has no approved rubric and the legacy keyword matcher
-                  // carried the decision — said in words, not a lone glyph.
-                  c.ats?.overallScore == null
-                    ? `Applied ${new Date(c.createdAt).toLocaleDateString()}`
-                    : c.ats.engine === "evidence"
-                      ? `Evidence engine · applied ${new Date(c.createdAt).toLocaleDateString()}`
-                      : `Legacy keyword match · applied ${new Date(c.createdAt).toLocaleDateString()}`
+                note={
+                  // Below `lg` the "Scored by" column is dropped, and a legacy
+                  // score must not silently lose its caveat with it — that is
+                  // the one thing the Honest Reading Rule will not absorb. On a
+                  // narrow viewport it comes back as a sentence.
+                  c.ats?.overallScore != null && c.ats.engine !== "evidence" ? (
+                    <span className="inline-flex items-center gap-1.5 font-medium text-amber-700 lg:hidden">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      Legacy keyword match — rubric not approved
+                    </span>
+                  ) : null
                 }
-                footerTrailing={<Badge tone={stageTone(c.status)}>{stageLabel(c.status)}</Badge>}
               />
             ))}
-          </RecordGrid>
+          </RecordList>
         </>
       )}
     </div>

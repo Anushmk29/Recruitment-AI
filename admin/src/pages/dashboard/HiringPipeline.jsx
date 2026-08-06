@@ -4,15 +4,15 @@ import { KanbanSquare } from "lucide-react";
 import api from "../../api/client.js";
 import { useCompanyData } from "../../context/CompanyDataContext.jsx";
 import { Card, Badge, Skeleton, EmptyState } from "../../components/ui/Card.jsx";
+import StageMenu from "../../components/ui/StageMenu.jsx";
 import { useToast } from "../../components/ui/Toast.jsx";
-import { ALL_STAGES, stageLabel, stageTone, normalizeStage, allowedNextStages } from "../../lib/pipeline.js";
+import { ALL_STAGES, stageLabel, stageTone, normalizeStage } from "../../lib/pipeline.js";
 
 // Stages hidden by default keep the board readable; the automated top-of-funnel
 // stages (applied / ats_passed) are collapsed into their own toggle.
 const PRIMARY_STAGES = ALL_STAGES;
 
 function CandidateCard({ candidate, onMove, busy }) {
-  const nexts = allowedNextStages(candidate.status);
   return (
     <div className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
       <Link to={`/candidates/${candidate._id}`} className="text-sm font-semibold text-slate-800 hover:text-brand-700">
@@ -27,21 +27,17 @@ function CandidateCard({ candidate, onMove, busy }) {
         ) : (
           <span className="text-xs text-slate-500">No ATS</span>
         )}
-        {nexts.length > 0 && (
-          <select
-            disabled={busy}
-            value=""
-            onChange={(e) => e.target.value && onMove(candidate, e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 disabled:opacity-50"
-          >
-            <option value="">Move…</option>
-            {nexts.map((s) => (
-              <option key={s} value={s}>
-                {stageLabel(s)}
-              </option>
-            ))}
-          </select>
-        )}
+        {/* Compact: the column is 288px, so the button label goes generic and
+            the destination lives in the accessible name. The menu itself is
+            portalled — an absolutely-positioned one would be clipped by this
+            board's `overflow-x-auto` rail. */}
+        <StageMenu
+          compact
+          status={candidate.status}
+          name={candidate.basicDetails?.name}
+          busy={busy}
+          onMove={(stage) => onMove(candidate, stage)}
+        />
       </div>
     </div>
   );
