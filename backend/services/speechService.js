@@ -241,6 +241,23 @@ function keytermParamFor(sttModel) {
   return /^nova-3/i.test(String(sttModel || "")) ? "keyterm" : "keywords";
 }
 
+// Whether vocabulary biasing may be sent AT ALL for this model/language pairing.
+//
+// nova-3's keyterm prompting is ENGLISH-ONLY at Deepgram, and this is the one place where the
+// wrong parameter is not silently ignored: sending `keyterm` alongside `language=multi` (or `hi`)
+// is REJECTED at connect time, which takes the entire transcript down rather than degrading it.
+// The interview then has no evidence at all — strictly worse than the unbiased transcript we get
+// by leaving the terms off. Older models' weighted `keywords` carries no such restriction, so
+// nova-2 in Hindi keeps its biasing.
+//
+// The cost of dropping the terms is real and worth naming: an unbiased transcript is where
+// "Kubernetes" becomes "cooper netties" and the claim it evidenced looks unsupported. That is a
+// degraded measurement, so it is logged where it happens rather than absorbed quietly.
+function keytermsSupported(sttModel, language) {
+  if (!/^nova-3/i.test(String(sttModel || ""))) return true;
+  return /^en(-|$)/i.test(String(language || "en").trim());
+}
+
 // Mint a short-lived streaming credential + the client-side STT/TTS config the browser needs.
 // `keyterms` is the deterministic technical vocabulary for this candidate/role pairing (see
 // utils/keyterms.js); passing none is always valid and just means an unbiased transcript.
@@ -252,6 +269,15 @@ async function grantStreamingToken({ keyterms = [] } = {}) {
   const accessToken = resp.access_token || resp.accessToken;
   const expiresIn = resp.expires_in || resp.expiresIn || c.ttlSeconds;
   if (!accessToken) throw new Error("Deepgram grant returned no access_token");
+
+  const terms = Array.isArray(keyterms) ? keyterms : [];
+  const biasable = keytermsSupported(c.sttModel, c.language);
+  if (terms.length && !biasable) {
+    console.warn(
+      `[speech] ${c.sttModel} cannot bias vocabulary in "${c.language}" — dropping ${terms.length} ` +
+        "keyterm(s) and continuing with an UNBIASED transcript"
+    );
+  }
 
   return {
     provider: "deepgram",
@@ -267,7 +293,7 @@ async function grantStreamingToken({ keyterms = [] } = {}) {
       punctuate: true,
       smartFormat: true,
       diarize: c.diarize,
-      keyterms: Array.isArray(keyterms) ? keyterms : [],
+      keyterms: biasable ? terms : [],
       keytermParam: keytermParamFor(c.sttModel),
     },
     tts: { model: c.ttsModel },
@@ -306,4 +332,5 @@ module.exports = {
   sttCostCents,
   models,
   keytermParamFor,
+  keytermsSupported,
 };

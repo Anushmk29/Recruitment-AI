@@ -135,6 +135,23 @@ test("1.10: the provider param name follows the model generation (nova-3 keyterm
   assert.equal(speech.keytermParamFor(undefined), "keywords");
 });
 
+test("1.10b: vocabulary biasing is withheld where the provider would reject the whole stream", () => {
+  // nova-3 keyterm prompting is ENGLISH-ONLY, and Deepgram rejects keyterm+multi at connect time
+  // rather than ignoring it. Getting this wrong does not weaken the transcript, it deletes it —
+  // so the multilingual arms must come back false and lose only the biasing.
+  assert.equal(speech.keytermsSupported("nova-3", "en"), true);
+  assert.equal(speech.keytermsSupported("nova-3", "en-IN"), true, "regional English still biases");
+  assert.equal(speech.keytermsSupported("nova-3", "multi"), false, "code-switching costs the bias");
+  assert.equal(speech.keytermsSupported("nova-3", "hi"), false);
+  // Older models' weighted `keywords` carries no such restriction, so monolingual Hindi on nova-2
+  // keeps its (weaker) biasing — which is the whole reason that arm is still worth measuring.
+  assert.equal(speech.keytermsSupported("nova-2", "hi"), true);
+  assert.equal(speech.keytermsSupported("nova-2", "multi"), true);
+  // An unset language is English, not "unknown" — the default must not silently drop the bias.
+  assert.equal(speech.keytermsSupported("nova-3", ""), true);
+  assert.equal(speech.keytermsSupported("nova-3", undefined), true);
+});
+
 test("1.11: the keyterm vocabulary used is recorded on the session for transcript disputes", () => {
   const path = InterviewSession.schema.path("voiceAsr.keyterms");
   assert.ok(path, "voiceAsr.keyterms exists on the session schema");

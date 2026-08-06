@@ -48,12 +48,26 @@ from livekit.agents import (  # noqa: E402
 from livekit.plugins import deepgram, silero  # noqa: E402
 from livekit.plugins import openai as openai_plugin  # noqa: E402
 
-try:
-    # Semantic end-of-turn model — the component that makes turn-taking feel human. Module-level
-    # import both registers the plugin (main-thread rule above) and lets `download-files` prefetch
-    # the weights for the Docker image.
-    from livekit.plugins.turn_detector.english import EnglishModel
-except Exception:  # pragma: no cover — plugin layout changed; VAD endpointing still works
+# TURN_DETECTOR_ENABLED=0 skips the import entirely — the kill switch for the failure mode
+# below. The try/except in build_turn_detection() CANNOT cover this: importing the plugin
+# registers an inference runner, and livekit-agents initialises that runner in a separate
+# inference process at WORKER STARTUP, before any job exists. If the ONNX session fails to
+# load there (missing HF cache, OOM), the child dies, the parent's initialize() takes the
+# ChannelClosed branch, and the whole worker exits with "worker failed" — no job ever runs,
+# so the job-side guard never gets a chance. Setting this to 0 boots the worker with VAD
+# endpointing instead, which is worse turn-taking but a live interviewer.
+if (os.getenv("TURN_DETECTOR_ENABLED") or "1").strip() != "0":
+    try:
+        # Semantic end-of-turn model — the component that makes turn-taking feel human. Module-level
+        # import both registers the plugin (main-thread rule above) and lets `download-files` prefetch
+        # the weights for the Docker image.
+        from livekit.plugins.turn_detector.english import EnglishModel
+    except Exception:  # pragma: no cover — plugin layout changed; VAD endpointing still works
+        EnglishModel = None
+else:
+    logging.getLogger("agent-worker").warning(
+        "TURN_DETECTOR_ENABLED=0 — semantic end-of-turn disabled, using VAD endpointing"
+    )
     EnglishModel = None
 
 logger = logging.getLogger("agent-worker")
@@ -144,15 +158,30 @@ def build_llm():
 
 def build_stt(keyterms: list | None = None):
     model = os.getenv("DEEPGRAM_STT_MODEL", "nova-3")
-    kwargs = {
-        "model": model,
-        # Accent and code-switching are the two variables actually worth trying against a
-        # transcript that becomes cited evidence ("en-IN", "multi"), and there is no way to pick
-        # between them from documentation — it has to be measured on real audio. Hardcoding "en"
-        # made that comparison a code change; an env var makes it a restart.
-        "language": os.getenv("DEEPGRAM_STT_LANGUAGE", "en"),
-    }
+    # Accent and code-switching are the two variables actually worth trying against a transcript
+    # that becomes cited evidence ("en-IN", "hi", "multi"), and there is no way to pick between
+    # them from documentation — it has to be measured on real audio. Hardcoding "en" made that
+    # comparison a code change; an env var makes it a restart.
+    #
+    # "multi" is the one that matters for Hindi: it transcribes code-switching within a single
+    # utterance, which is how an Indian technical interview is actually spoken ("humne Kubernetes
+    # pe migration kiya tha"). "hi" forces monolingual Hindi and mangles the English half.
+    language = os.getenv("DEEPGRAM_STT_LANGUAGE", "en")
+    kwargs = {"model": model, "language": language}
     terms = [t for t in (keyterms or []) if isinstance(t, str) and t.strip()][:100]
+    if terms and model.startswith("nova-3") and not language.lower().startswith("en"):
+        # nova-3 keyterm prompting is ENGLISH-ONLY, and Deepgram REJECTS the pairing at connect
+        # time rather than ignoring it — so sending it here would cost the whole transcript, not
+        # just the biasing. An unbiased transcript is a degraded measurement; no transcript is a
+        # dead interview. Dropping the terms is the strictly better failure.
+        logger.warning(
+            "keyterm prompting is English-only on %s — dropping %d term(s) for language=%s, "
+            "continuing with an UNBIASED transcript",
+            model,
+            len(terms),
+            language,
+        )
+        terms = []
     if terms:
         # Same transcript-vocabulary bias as every other pipeline: without it the words a scorer
         # later reads as evidence are not the words the candidate said.
