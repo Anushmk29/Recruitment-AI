@@ -707,7 +707,19 @@ Shared byte-identical by both apps.
   real `<ul>`. Same information, same order; a density choice, not a second set of rules. `note` is the
   row's answer to the card's footer strip and takes its own full-width line, because a caveat that only
   fits when the viewport is wide is a caveat that silently disappears. The `meta` columns are the first
-  thing dropped below `lg` — if a column carries a caveat, the row must restate it in `note`.
+  thing dropped below `xl` — if a column carries a caveat, the row must restate it in `note`, at the
+  same breakpoint (`CandidatesAll`'s legacy-engine sentence is `xl:hidden`; raise one without the other
+  and there is a viewport width where the caveat is in neither place).
+
+  The slots are fixed in **width** as well as in order, which is the half of The Record-Card Rule that
+  rows exist to deliver and that the first cut did not: a `meta` column is a fixed `w-32` track and the
+  `trailing` band a fixed `xl:w-72`, so a heading sits at the same x in row one and row eighteen. Sized
+  to content they did not — each row's columns slid by however wide the *next* row's engine name or stage
+  label happened to be, which is a staircase, not a table, and it gives back exactly the column-aligned
+  scanning the card grid was abandoned to recover. Values truncate rather than widen a track. Where a
+  call site puts two things in `trailing` (score + stage), the numeric one takes its own right-aligned
+  `xl:min-w-24` sub-column: `min-w` not `w`, because an unscored row says "Not scored" in words and a
+  fixed track would clip the sentence to make room for a number.
 
 ### Components — admin only
 

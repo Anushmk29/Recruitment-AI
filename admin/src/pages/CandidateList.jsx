@@ -88,13 +88,19 @@ export default function CandidateList() {
               meta={[{ label: "Applied", value: new Date(c.createdAt).toLocaleDateString() }]}
               trailing={
                 <>
-                  {c.ats?.overallScore != null ? (
-                    <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
-                      {c.ats.overallScore}%
-                    </Badge>
-                  ) : (
-                    <Badge tone="slate">Not scored</Badge>
-                  )}
+                  {/* Own sub-column, right-aligned — see CandidatesAll. */}
+                  <span className="flex justify-end xl:min-w-24">
+                    {c.ats?.overallScore != null ? (
+                      <Badge
+                        tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}
+                        className="tabular-nums"
+                      >
+                        {c.ats.overallScore}%
+                      </Badge>
+                    ) : (
+                      <Badge tone="slate">Not scored</Badge>
+                    )}
+                  </span>
                   <Badge tone={stageTone(c.status)}>{stageLabel(c.status)}</Badge>
                 </>
               }

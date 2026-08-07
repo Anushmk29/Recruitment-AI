@@ -30,11 +30,17 @@ export default function CandidatesAll() {
           <p className="mt-1 text-sm text-slate-500">Every applicant across all your jobs.</p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
-          <div className="relative w-full max-w-xs">
+          {/* Explicit widths, not `w-full max-w-xs` beside a `w-auto` select. A
+              percentage-width child inside a shrink-to-fit flex row resolves
+              against a width that row has not settled yet, so the pair broke
+              onto two lines and the native <select> — sized by its longest
+              option, "AI Interview Completed" — stretched across the second
+              one. Two fields of stated width sit on one line. */}
+          <div className="relative w-full sm:w-72">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or email" className="pl-9" />
           </div>
-          <Select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="w-auto">
+          <Select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className="w-full sm:w-56">
             <option value="all">All stages</option>
             {ALL_STAGES.map((s) => (
               <option key={s} value={s}>
@@ -84,23 +90,36 @@ export default function CandidatesAll() {
                         eye lands first — but it stays a <Badge>, never a fill.
                         The Reserved Verdict Rule holds: green here means the
                         engine's own pass decision, not "good candidate". */}
-                    {c.ats?.overallScore != null ? (
-                      <Badge tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}>
-                        {c.ats.overallScore}%
-                      </Badge>
-                    ) : (
-                      <Badge tone="slate">Not scored</Badge>
-                    )}
+                    {/* The score gets its own right-aligned sub-column so the
+                        digits line up down the list and the stage pill next to
+                        it starts at a constant x. `min-w` rather than `w`: an
+                        unscored row says so in words, and a fixed track would
+                        clip the sentence to make a number fit. */}
+                    <span className="flex justify-end xl:min-w-24">
+                      {c.ats?.overallScore != null ? (
+                        <Badge
+                          tone={c.ats.decision === "pass" ? "green" : c.ats.decision === "fail" ? "red" : "slate"}
+                          className="tabular-nums"
+                        >
+                          {c.ats.overallScore}%
+                        </Badge>
+                      ) : (
+                        <Badge tone="slate">Not scored</Badge>
+                      )}
+                    </span>
                     <Badge tone={stageTone(c.status)}>{stageLabel(c.status)}</Badge>
                   </>
                 }
                 note={
-                  // Below `lg` the "Scored by" column is dropped, and a legacy
+                  // Below `xl` the "Scored by" column is dropped, and a legacy
                   // score must not silently lose its caveat with it — that is
                   // the one thing the Honest Reading Rule will not absorb. On a
-                  // narrow viewport it comes back as a sentence.
+                  // narrow viewport it comes back as a sentence. This `xl` must
+                  // track <RecordRow>'s meta breakpoint exactly: raise one
+                  // without the other and there is a window where the caveat is
+                  // in neither place.
                   c.ats?.overallScore != null && c.ats.engine !== "evidence" ? (
-                    <span className="inline-flex items-center gap-1.5 font-medium text-amber-700 lg:hidden">
+                    <span className="inline-flex items-center gap-1.5 font-medium text-amber-700 xl:hidden">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                       Legacy keyword match — rubric not approved
                     </span>

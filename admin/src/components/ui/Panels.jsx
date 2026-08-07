@@ -429,13 +429,27 @@ export function RecordRow({
         </div>
 
         {/* The meta columns are the first thing to go on a narrow viewport:
-            they are supporting detail, and the row's job below `lg` is name,
+            they are supporting detail, and the row's job below `xl` is name,
             outcome, action. Everything dropped here is still on the record's
-            own page. */}
+            own page.
+            `xl`, not `lg`: with the 256px sidebar a 1024px viewport leaves the
+            row ~670px, and two fixed tracks plus the outcome band take enough
+            of it that the candidate's NAME truncates — trading the one column
+            nobody can do without for two that the record's own page repeats. A
+            column that only aligns by starving the title is not aligned, it is
+            just differently broken. */}
         {meta.length > 0 && (
-          <dl className="hidden shrink-0 items-start gap-6 lg:flex">
+          <dl className="hidden shrink-0 items-start gap-x-6 xl:flex">
             {meta.map((m) => (
-              <div key={m.label} className="min-w-0">
+              // A FIXED track, not a content-sized one — this is the whole
+              // reason the queue screens are rows (DESIGN.md § The Record-Card
+              // Rule). "Fixed slots recover the columns" is only true if a slot
+              // is fixed in WIDTH as well as in order: sized to content, the
+              // "Applied" heading slid left or right by however wide the next
+              // row's engine name happened to be, and eighteen rows of that is
+              // a staircase, not a table. Values truncate rather than widen the
+              // track; the record's own page carries the untruncated field.
+              <div key={m.label} className="w-32 min-w-0">
                 <dt className="text-[11px] font-semibold text-slate-500">{m.label}</dt>
                 <dd className="mt-0.5 truncate text-sm text-slate-700">
                   {/* An em dash, never a blank — see <RecordCard>. */}
@@ -446,14 +460,20 @@ export function RecordRow({
           </dl>
         )}
 
-        {(trailing || actions) && (
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
+        {/* The outcome slot takes the same fixed track, at the same breakpoint,
+            so the columns arrive and leave together. Below `xl` the badges stay
+            right-anchored, which is the alignment the row already had.
+            `flex-nowrap` because a verdict that wraps to a second line inside
+            its own column changes the row height and breaks the scan. */}
+        {trailing && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end xl:w-72 xl:flex-nowrap xl:justify-start">
             {trailing}
-            {/* `relative z-10` so a control sits above the stretched title link
-                rather than under it. */}
-            {actions && <div className="relative z-10 flex items-center gap-2">{actions}</div>}
           </div>
         )}
+
+        {/* `relative z-10` so a control sits above the stretched title link
+            rather than under it. */}
+        {actions && <div className="relative z-10 flex shrink-0 items-center gap-2">{actions}</div>}
       </div>
 
       {note && <div className="mt-2 text-xs text-slate-500 [overflow-wrap:anywhere]">{note}</div>}
