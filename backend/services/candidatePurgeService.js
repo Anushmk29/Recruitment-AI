@@ -11,6 +11,7 @@ const Candidate = require("../models/Candidate");
 const InterviewSession = require("../models/InterviewSession");
 const InterviewQueue = require("../models/InterviewQueue");
 const UsageEvent = require("../models/UsageEvent");
+const ReviewItem = require("../models/ReviewItem");
 const storageService = require("./storageService");
 const evidenceClipService = require("./evidenceClipService");
 
@@ -24,7 +25,8 @@ async function deleteObjectSafe(ref, label) {
 }
 
 // Hard-delete a candidate and all associated artifacts (resume file, identity photo,
-// interview session/transcript, queue entry, usage events). Best-effort on storage: a
+// interview session/transcript, queue entry, usage events, open review items).
+// Best-effort on storage: a
 // failed object delete is logged, not fatal, so a stuck file can't strand DB cleanup.
 // Returns a small summary of what was removed.
 async function purgeCandidateArtifacts(candidate) {
@@ -41,6 +43,12 @@ async function purgeCandidateArtifacts(candidate) {
   const sessionResult = await InterviewSession.deleteMany(scope);
   const queueResult = await InterviewQueue.deleteMany(scope);
   const usageResult = await UsageEvent.deleteMany(scope);
+  // The human-review queue holds a pointer to this candidate plus a summary
+  // sentence about them, so it is an artifact by this service's own definition
+  // and dies with the record. It also has to go for a non-privacy reason: an
+  // open item outlives its subject as an unresolvable row that renders a
+  // decision about a candidate who no longer exists.
+  const reviewResult = await ReviewItem.deleteMany(scope);
 
   await deleteObjectSafe(candidate.resumePath, "resume");
   await Candidate.deleteOne({ company: companyId, _id: candidate._id });
@@ -49,6 +57,7 @@ async function purgeCandidateArtifacts(candidate) {
     sessions: sessionResult?.deletedCount || 0,
     queueEntries: queueResult?.deletedCount || 0,
     usageEvents: usageResult?.deletedCount || 0,
+    reviewItems: reviewResult?.deletedCount || 0,
     evidenceClips,
     resumeDeleted: Boolean(candidate.resumePath),
   };

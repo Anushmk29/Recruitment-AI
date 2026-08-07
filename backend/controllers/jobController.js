@@ -117,6 +117,11 @@ async function publishJob(req, res) {
 async function deleteJob(req, res) {
   const job = await Job.findOneAndDelete({ _id: req.params.id, company: req.user.company });
   if (!job) return res.status(404).json({ error: "Job not found" });
+  // Review items for this job can no longer be resolved — `resolveItem` needs
+  // the job to advance anyone into its interview loop, and "advance to an
+  // interview for a role that was deleted" is not a decision. Left behind they
+  // sit in the queue forever asking a recruiter to make it.
+  await require("../models/ReviewItem").deleteMany({ company: req.user.company, job: job._id });
   // Lifecycle sync (Phase 15.8): a deleted job is withdrawn from every board.
   require("../services/jobPublishService")
     .withdrawAllForJob(job._id, req.user.company, "job deleted")

@@ -62,6 +62,11 @@ export default function ReviewQueue() {
       await load();
     } catch (err) {
       toast.error(err.response?.data?.error || "Could not resolve");
+      // A 404 means this item is no longer actionable — resolved in another
+      // tab, or its candidate/job was deleted out from under the queue. The
+      // card is stale either way, so refetch instead of leaving a row on screen
+      // whose only remaining behaviour is to raise the same toast again.
+      if (err.response?.status === 404) await load().catch(() => {});
     } finally {
       setBusy("");
     }

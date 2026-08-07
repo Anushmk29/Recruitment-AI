@@ -357,6 +357,9 @@ async function main() {
       if (ids.candidate) {
         await AtsAssessment.deleteMany({ candidate: ids.candidate });
         await ClaimGraph.deleteMany({ candidate: ids.candidate });
+        // Same list smokeEvidence cleans. Missing this one is how a smoke run
+        // left an unresolvable ghost card in the demo tenant's review queue.
+        await require("../models/ReviewItem").deleteMany({ candidate: ids.candidate });
         await Candidate.deleteOne({ _id: ids.candidate });
       }
       if (ids.job) {

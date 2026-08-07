@@ -737,6 +737,26 @@ Not part of the shared kit; these read from `lib/pipeline.js` and exist only in 
 - **`StageMenu`** (`components/ui/StageMenu.jsx`) — the candidate stage control, used by the candidate
   lists and the pipeline board. Split button: the next stage in pipeline order is a one-click primary
   action, everything else is in the menu. See The Consequence-Before-Click Rule.
+- **The Hiring Pipeline board** (`pages/dashboard/HiringPipeline.jsx`) — sixteen stages in a horizontal
+  rail, which is a navigation problem before it is a visual one. Four decisions carry it, and none of
+  them spends a colour:
+  - **Empty stages are hidden by default**, with the exact hidden count in the toggle's label
+    (`Show 10 empty stages`) and `Showing 6 of 16 stages` beside it. Twelve columns reading "0" is not a
+    picture of a pipeline, it is a scrolling task — and the occupied ones are usually furthest from where
+    the rail starts. The toggle is deliberately *not* an `active` Chip: its label is the action, the
+    sentence next to it is the state, and a filled pill reading "Show all stages" says both and means
+    neither. If nothing is occupied, every stage shows — there is nothing to hide.
+  - **Each column carries its pipeline ordinal** (`02`, `07`), the same numbering `StepTrack` and the
+    stage menu use. In a sideways rail it is the only thing that says how far along you have scrolled.
+  - **The column scrolls, not the page** — header outside a `max-h-[60vh] overflow-y-auto` body, so the
+    stage name never leaves the screen and one busy stage no longer makes the whole board as tall as its
+    longest column. `snap-start` on the columns so a sideways flick lands on a column edge.
+  - **Depth runs one way.** The column is a *well* — slate ground behind a hairline, no shadow; the cards
+    a recruiter acts on sit on it at `shadow-card` and hover to `shadow-soft` + a brand hairline
+    (The Row-Doesn't-Jump Rule — a board of forty cards must not bounce). The cards are `RecordCard`s,
+    not bespoke tiles, so the score is top-right and the stage control at the foot exactly as on every
+    list screen, and the whole card is the target rather than ~120px of name text. `rejected` gets a
+    dashed edge: it is the exit from the pipeline, not step sixteen of it.
 
 ### Named Rules
 

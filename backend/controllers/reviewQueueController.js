@@ -18,7 +18,27 @@ async function listQueue(req, res) {
     .populate("candidate", "basicDetails status ats")
     .populate("job", "title")
     .populate("assessment", "overallScore band reviewReason qa thresholds");
-  res.json(items);
+
+  // An item whose candidate or job has since been deleted is not a decision
+  // anyone can make — the subject is gone, and `resolveItem` below correctly
+  // 404s on it. Serving it anyway put a ghost card in the queue: no name, no
+  // score, and both buttons wired to an error toast, which is precisely the
+  // "render a placeholder as if it were a measurement" failure the Honest
+  // Reading Rule exists to prevent. Populate resolves a dangling ref to null,
+  // and that null is the signal.
+  //
+  // This is defence, not the cure: the cure is that every delete path takes its
+  // review items with it (candidatePurgeService for DPDP erasure + the
+  // retention job, deleteJob for a removed role). The filter stays because rows
+  // orphaned before those fixes are still in the collection, and because a
+  // queue that shows a decision about nobody is worse than one that is short.
+  const live = items.filter((item) => item.candidate && item.job);
+  if (live.length !== items.length) {
+    console.warn(
+      `[reviewQueue] hid ${items.length - live.length} orphaned item(s) for company ${req.user.company} — candidate or job deleted`
+    );
+  }
+  res.json(live);
 }
 
 async function resolveItem(req, res) {
