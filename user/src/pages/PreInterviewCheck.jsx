@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, XCircle, Circle, Camera, Mic, Maximize, Cpu, Gauge, ScanFace, Smartphone, Laptop, Volume2 } from "lucide-react";
+import { PHONE_PAIRING_ENABLED } from "../lib/features.js";
 import { QRCodeCanvas } from "qrcode.react";
 import api from "../api/client.js";
 import { getAuth, authHeader } from "../portal/portalAuth.js";
@@ -576,7 +577,12 @@ export default function PreInterviewCheck() {
           </CheckCard>
         </div>
 
-        {features.secondaryCam && (
+        {/* Two gates, deliberately. `PHONE_PAIRING_ENABLED` is ours and is off:
+            the pairing flow is shelved, not removed. `features.secondaryCam` is
+            the tenant's own server-side setting and stays in the condition so
+            turning the frontend switch back on does not silently override a
+            company that has the feature disabled. */}
+        {PHONE_PAIRING_ENABLED && features.secondaryCam && (
           <CheckCard icon={Smartphone} title="Phone as Second Camera (optional)" state={phonePair ? "ok" : "pending"}>
             <p className="mb-3 text-sm text-slate-500">
               Optionally add your phone as a second camera angle. Scan the QR with your phone — it only sends a

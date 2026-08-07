@@ -396,6 +396,13 @@ _Last updated: 2026-07-31._
       (`EVIDENCE_CLIPS_ENABLED`/`SECONDARY_CAM_ENABLED` + per-tenant
       `CompanySettings.proctoring`). _8 new unit tests; live-browser end-to-end + MinIO purge
       spot-check pending a real camera run._
+
+      **The 14.6 pairing UI is shelved as of 2026-08-07** — hidden, not removed. `user/src/lib/features.js`
+      exports `PHONE_PAIRING_ENABLED` (`VITE_PHONE_PAIRING_ENABLED`, default off), which gates both the
+      pre-check pairing card and the `/phone-cam/:token` route; the whole surface constant-folds out of
+      the production bundle. The backend, its tokens, its heartbeat and its tests are untouched and still
+      pass. Turn it back on with that one Vite var **plus** the tenant's existing server-side
+      `secondaryCam` setting — both gates must agree.
 - [x] **Phase 15 — Distribution: careers pages, feeds, connector framework, source quality**
       _(2026-07-26)_. **15.1 source capture**: `?src=`/`?campaign=` on apply links →
       sanitised `Candidate.source` (analytics-only — source-scan test pins it out of every

@@ -27,6 +27,7 @@ import RequireAccount from "./auth/RequireAccount.jsx";
 // The shell owns the collapsible left rail, the header, the content column, and
 // the notification provider — see components/app/AppShell.jsx.
 import AppShell from "./components/app/AppShell.jsx";
+import { PHONE_PAIRING_ENABLED } from "./lib/features.js";
 
 export default function App() {
   return (
@@ -48,8 +49,11 @@ export default function App() {
           same accidental-exit reasons as the interview room. */}
       <Route path="/assessment-portal/section/:sectionId" element={<AssessmentRoom />} />
       {/* Phase 14.6 — phone companion camera, opened by scanning the pre-check QR.
-          Deliberately outside AppShell: it's a single-purpose kiosk page. */}
-      <Route path="/phone-cam/:token" element={<PhoneCam />} />
+          Deliberately outside AppShell: it's a single-purpose kiosk page.
+          Gated with the card that mints the QR — a live route reachable by a
+          code nothing can issue is a surface that is hidden in the UI and open
+          on the wire. <Routes> ignores falsy children by design. */}
+      {PHONE_PAIRING_ENABLED && <Route path="/phone-cam/:token" element={<PhoneCam />} />}
       {/* Interviewer scorecard (RoundScorecard). Outside AppShell on purpose: the
           person opening this is a hiring manager or external panelist, not a
           candidate — the careers navbar would be confusing chrome, and they have
